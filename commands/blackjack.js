@@ -12,6 +12,7 @@ module.exports = {
     const channelId = interaction.channelId;
 
     try {
+      // One game at a time (per channel)
       if (activeGames.has(channelId)) {
         return interaction.reply({
           content: "❌ A game is already running in this channel.",
@@ -19,6 +20,7 @@ module.exports = {
         });
       }
 
+      // Create session + mark active
       const session = new BlackjackSession({
         channel: interaction.channel,
         hostId: interaction.user.id,
@@ -29,6 +31,7 @@ module.exports = {
       // Host auto-joins
       session.addPlayer(interaction.user);
 
+      // Acknowledge slash command quickly
       await interaction.reply({
         content: "🃏 Blackjack lobby created.",
         flags: MessageFlags.Ephemeral,
@@ -37,7 +40,7 @@ module.exports = {
       // Post the persistent panel
       await session.postOrEditPanel();
 
-      // If panel couldn't post (permissions), bail cleanly
+      // If we couldn't post the panel (usually missing perms), stop cleanly
       if (!session.message) {
         activeGames.delete(channelId);
         return interaction.followUp({
@@ -48,8 +51,9 @@ module.exports = {
         });
       }
 
+      // Collect button presses on the panel message
       const collector = session.message.createMessageComponentCollector({
-        time: 30 * 60_000,
+        time: 30 * 60_000, // 30 minutes
       });
 
       collector.on("collect", async (i) => {
@@ -60,11 +64,14 @@ module.exports = {
 
         const isHost = session.isHost(i.user.id);
 
-        // ---- LOBBY ----
+        // --- LOBBY ACTIONS ---
         if (action === "join") {
           const res = session.addPlayer(i.user);
           if (!res.ok) {
-            return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.followUp({
+              content: `❌ ${res.msg}`,
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
           }
           await session.updatePanel();
           return;
@@ -73,7 +80,10 @@ module.exports = {
         if (action === "leave") {
           const res = session.removePlayer(i.user.id);
           if (!res.ok) {
-            return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.followUp({
+              content: `❌ ${res.msg}`,
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
           }
           await session.updatePanel();
           return;
@@ -81,28 +91,41 @@ module.exports = {
 
         if (action === "start") {
           if (!isHost) {
-            return i.followUp({ content: "❌ Only the host can start.", flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.followUp({
+              content: "❌ Only the host can start.",
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
           }
+
           await session.start();
+
+          // ✅ If start() immediately ended the game (rare, but possible), cleanup
+          if (session.state === "ended") collector.stop("game_finished");
           return;
         }
 
         if (action === "end") {
           if (!isHost) {
-            return i.followUp({ content: "❌ Only the host can end.", flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.followUp({
+              content: "❌ Only the host can end.",
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
           }
+
           collector.stop("ended_by_host");
           return;
         }
 
-        // ---- GAMEPLAY ----
+        // --- GAMEPLAY ACTIONS ---
         if (session.state !== "playing") return;
 
-        // ✅ New: view hand anytime (no commitment)
         if (action === "hand") {
           const p = session.players.get(i.user.id);
           if (!p) {
-            return i.followUp({ content: "❌ You’re not in this game.", flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.followUp({
+              content: "❌ You’re not in this game.",
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
           }
 
           const hand = p.hand.map(cardStr).join(" ");
@@ -115,34 +138,50 @@ module.exports = {
         if (action === "hit") {
           const res = await session.hit(i.user.id);
           if (!res.ok) {
-            return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.followUp({
+              content: `❌ ${res.msg}`,
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
           }
 
           const hand = res.player.hand.map(cardStr).join(" ");
-          return i.followUp({
+          await i.followUp({
             content: `🃏 You hit.\nYour hand: ${hand}\nTotal: **${handValue(res.player.hand)}**`,
             flags: MessageFlags.Ephemeral,
           }).catch(() => {});
+
+          // ✅ If that hit ended the game, stop collector so cleanup runs
+          if (session.state === "ended") collector.stop("game_finished");
+          return;
         }
 
         if (action === "stand") {
           const res = await session.stand(i.user.id);
           if (!res.ok) {
-            return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.followUp({
+              content: `❌ ${res.msg}`,
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
           }
 
           const hand = res.player.hand.map(cardStr).join(" ");
-          return i.followUp({
+          await i.followUp({
             content: `✋ You stood.\nYour hand: ${hand}\nTotal: **${handValue(res.player.hand)}**`,
             flags: MessageFlags.Ephemeral,
           }).catch(() => {});
+
+          // ✅ If standing ended the game, stop collector so cleanup runs
+          if (session.state === "ended") collector.stop("game_finished");
+          return;
         }
       });
 
       collector.on("end", async () => {
+        // Cleanup
         activeGames.delete(channelId);
         if (session.timeout) clearTimeout(session.timeout);
 
+        // Match your bot style: panel auto-delete after 60s
         if (session.message) {
           setTimeout(() => session.message.delete().catch(() => {}), 60_000);
         }
@@ -154,9 +193,14 @@ module.exports = {
       const msg = "❌ Blackjack hit an error — check bot logs for details.";
 
       if (interaction.deferred || interaction.replied) {
-        return interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
+        return interaction
+          .followUp({ content: msg, flags: MessageFlags.Ephemeral })
+          .catch(() => {});
       }
-      return interaction.reply({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
+
+      return interaction
+        .reply({ content: msg, flags: MessageFlags.Ephemeral })
+        .catch(() => {});
     }
   },
 };
