@@ -150,7 +150,7 @@ function buildResultsPanelPayload({ tally, baseEmbed }) {
     const maxVotes = Math.max(...Object.values(tally));
     const losers = Object.keys(tally).filter((id) => tally[id] === maxVotes);
 
-    const sips = Math.random() < 0.15 ? 4 : Math.floor(Math.random() * 3) + 1;
+    const sips = Math.random() < 0.05 ? 2 : 1;
 
     const resultsLines = Object.entries(tally)
       .sort((a, b) => b[1] - a[1])
