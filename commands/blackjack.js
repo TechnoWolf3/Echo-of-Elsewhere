@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require("discord.js");
-const { activeGames } = require("../../utils/gameManager");
-const { BlackjackSession, handValue, cardStr } = require("../../utils/blackjackSession");
+const { activeGames } = require("../utils/gameManager");
+const { BlackjackSession, handValue, cardStr } = require("../utils/blackjackSession");
 
 module.exports = {
   data: new SlashCommandBuilder()
