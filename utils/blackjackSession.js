@@ -1,16 +1,24 @@
 // utils/blackjackSession.js
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
+const {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  EmbedBuilder,
+} = require("discord.js");
 
 const SUITS = ["♠", "♥", "♦", "♣"];
-const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
 function makeDeck() {
   const deck = [];
   for (const s of SUITS) for (const r of RANKS) deck.push({ r, s });
+
+  // shuffle (Fisher-Yates)
   for (let i = deck.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [deck[i], deck[j]] = [deck[j], deck[i]];
   }
+
   return deck;
 }
 
@@ -22,12 +30,24 @@ function cardStr(c) {
 function handValue(hand) {
   let total = 0;
   let aces = 0;
+
   for (const c of hand) {
-    if (c.r === "A") { aces++; total += 11; }
-    else if (["K","Q","J"].includes(c.r)) total += 10;
-    else total += parseInt(c.r, 10);
+    if (c.r === "A") {
+      aces++;
+      total += 11;
+    } else if (["K", "Q", "J"].includes(c.r)) {
+      total += 10;
+    } else {
+      total += parseInt(c.r, 10);
+    }
   }
-  while (total > 21 && aces > 0) { total -= 10; aces--; }
+
+  // downgrade Aces from 11 -> 1 until we're <= 21
+  while (total > 21 && aces > 0) {
+    total -= 10;
+    aces--;
+  }
+
   return total;
 }
 
@@ -37,8 +57,8 @@ class BlackjackSession {
     this.hostId = hostId;
 
     this.state = "lobby"; // lobby | playing | ended
-    this.players = new Map(); // userId -> { user, hand, status }
-    this.turnOrder = [];
+    this.players = new Map(); // userId -> { user, hand:[], status }
+    this.turnOrder = []; // userIds that still need to act
     this.turnIndex = 0;
 
     this.dealerHand = [];
@@ -48,25 +68,34 @@ class BlackjackSession {
     this.gameId = `${Date.now()}`;
     this.timeout = null;
 
+    // ✅ Set max players here
     this.maxPlayers = 10;
   }
 
-  isHost(userId) { return userId === this.hostId; }
-  currentPlayerId() { return this.turnOrder[this.turnIndex] ?? null; }
+  isHost(userId) {
+    return userId === this.hostId;
+  }
+
+  currentPlayerId() {
+    return this.turnOrder[this.turnIndex] ?? null;
+  }
 
   addPlayer(user) {
-    if (this.state !== "lobby") return { ok:false, msg:"Game already started." };
-    if (this.players.has(user.id)) return { ok:false, msg:"You’re already in." };
-    if (this.players.size >= this.maxPlayers) return { ok:false, msg:"Game is full (6 players)." };
+    if (this.state !== "lobby") return { ok: false, msg: "Game already started." };
+    if (this.players.has(user.id)) return { ok: false, msg: "You’re already in." };
+    if (this.players.size >= this.maxPlayers)
+      return { ok: false, msg: `Game is full (${this.maxPlayers} players).` };
+
     this.players.set(user.id, { user, hand: [], status: "Waiting" });
-    return { ok:true };
+    return { ok: true };
   }
 
   removePlayer(userId) {
-    if (!this.players.has(userId)) return { ok:false, msg:"You’re not in the game." };
-    if (this.state !== "lobby") return { ok:false, msg:"Can’t leave after start (host can end)." };
+    if (!this.players.has(userId)) return { ok: false, msg: "You’re not in the game." };
+    if (this.state !== "lobby") return { ok: false, msg: "Can’t leave after start (host can end)." };
+
     this.players.delete(userId);
-    return { ok:true };
+    return { ok: true };
   }
 
   draw() {
@@ -77,13 +106,16 @@ class BlackjackSession {
   dealInitial() {
     this.dealerHand = [this.draw(), this.draw()];
 
-    for (const [id, p] of this.players.entries()) {
+    for (const [, p] of this.players.entries()) {
       p.hand = [this.draw(), this.draw()];
       const v = handValue(p.hand);
-      p.status = (v === 21) ? "Blackjack" : "Playing";
+      p.status = v === 21 ? "Blackjack" : "Playing";
     }
 
-    this.turnOrder = [...this.players.keys()].filter(id => this.players.get(id).status === "Playing");
+    // Only players still "Playing" need turns
+    this.turnOrder = [...this.players.keys()].filter(
+      (id) => this.players.get(id)?.status === "Playing"
+    );
     this.turnIndex = 0;
   }
 
@@ -94,6 +126,7 @@ class BlackjackSession {
     this.state = "playing";
     this.dealInitial();
 
+    // If nobody needs to act (everyone got blackjack), resolve now
     if (this.turnOrder.length === 0) {
       await this.resolveDealerAndFinish();
       return;
@@ -106,6 +139,7 @@ class BlackjackSession {
   armTurnTimeout() {
     if (this.timeout) clearTimeout(this.timeout);
 
+    // 60 seconds per turn
     this.timeout = setTimeout(async () => {
       const pid = this.currentPlayerId();
       if (!pid) return;
@@ -118,11 +152,11 @@ class BlackjackSession {
   }
 
   async hit(userId) {
-    if (this.state !== "playing") return { ok:false, msg:"Game not active." };
-    if (userId !== this.currentPlayerId()) return { ok:false, msg:"Not your turn." };
+    if (this.state !== "playing") return { ok: false, msg: "Game not active." };
+    if (userId !== this.currentPlayerId()) return { ok: false, msg: "Not your turn." };
 
     const p = this.players.get(userId);
-    if (!p || p.status !== "Playing") return { ok:false, msg:"You can’t hit right now." };
+    if (!p || p.status !== "Playing") return { ok: false, msg: "You can’t hit right now." };
 
     p.hand.push(this.draw());
     const v = handValue(p.hand);
@@ -131,24 +165,25 @@ class BlackjackSession {
     else if (v === 21) p.status = "Stood";
 
     await this.advanceTurn();
-    return { ok:true, player:p };
+    return { ok: true, player: p };
   }
 
   async stand(userId) {
-    if (this.state !== "playing") return { ok:false, msg:"Game not active." };
-    if (userId !== this.currentPlayerId()) return { ok:false, msg:"Not your turn." };
+    if (this.state !== "playing") return { ok: false, msg: "Game not active." };
+    if (userId !== this.currentPlayerId()) return { ok: false, msg: "Not your turn." };
 
     const p = this.players.get(userId);
-    if (!p || p.status !== "Playing") return { ok:false, msg:"You can’t stand right now." };
+    if (!p || p.status !== "Playing") return { ok: false, msg: "You can’t stand right now." };
 
     p.status = "Stood";
     await this.advanceTurn();
-    return { ok:true, player:p };
+    return { ok: true, player: p };
   }
 
   async advanceTurn() {
     if (this.timeout) clearTimeout(this.timeout);
 
+    // Move to next player that is still "Playing"
     while (this.turnIndex < this.turnOrder.length) {
       const pid = this.turnOrder[this.turnIndex];
       const p = this.players.get(pid);
@@ -156,6 +191,7 @@ class BlackjackSession {
       else break;
     }
 
+    // If no more players, dealer resolves
     if (this.turnIndex >= this.turnOrder.length) {
       await this.resolveDealerAndFinish();
       return;
@@ -166,6 +202,7 @@ class BlackjackSession {
   }
 
   async resolveDealerAndFinish() {
+    // Dealer hits until 17 (stands on soft 17 because handValue already handles Aces)
     let dv = handValue(this.dealerHand);
     while (dv < 17) {
       this.dealerHand.push(this.draw());
@@ -175,8 +212,10 @@ class BlackjackSession {
     this.state = "ended";
     await this.updatePanel(true);
 
+    // One clean results embed
     await this.channel.send({ embeds: [this.resultsEmbed()] });
 
+    // Auto-delete panel after 60s (matches your bot style)
     setTimeout(() => {
       this.message?.delete().catch(() => {});
     }, 60_000);
@@ -187,7 +226,7 @@ class BlackjackSession {
     const dealerLine = `${this.dealerHand.map(cardStr).join(" ")} (**${dv}**)`;
 
     const lines = [];
-    for (const p of this.players.values()) {
+    for (const [, p] of this.players.entries()) {
       const pv = handValue(p.hand);
       const name = p.user.toString();
 
@@ -210,54 +249,81 @@ class BlackjackSession {
   lobbyComponents() {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:join`).setLabel("Join").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:leave`).setLabel("Leave").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:start`).setLabel("Start").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:end`).setLabel("End").setStyle(ButtonStyle.Danger),
-      )
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:join`)
+          .setLabel("Join")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:leave`)
+          .setLabel("Leave")
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:start`)
+          .setLabel("Start")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:end`)
+          .setLabel("End")
+          .setStyle(ButtonStyle.Danger)
+      ),
     ];
   }
 
   playComponents() {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:hit`).setLabel("Hit").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:stand`).setLabel("Stand").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:end`).setLabel("End").setStyle(ButtonStyle.Danger),
-      )
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:hit`)
+          .setLabel("Hit")
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:stand`)
+          .setLabel("Stand")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:hand`)
+          .setLabel("View Hand")
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`bj:${this.gameId}:end`)
+          .setLabel("End")
+          .setStyle(ButtonStyle.Danger)
+      ),
     ];
   }
 
   panelEmbed(revealDealer = false) {
     let dealerShown;
 
-if (this.dealerHand.length === 0) {
-  // Lobby (not dealt yet)
-  dealerShown = "_Not dealt yet_";
-} else if (revealDealer) {
-  dealerShown = `${this.dealerHand.map(cardStr).join(" ")} (**${handValue(this.dealerHand)}**)`;
-} else {
-  dealerShown = `${cardStr(this.dealerHand[0])}  ?`;
-};
+    if (this.dealerHand.length === 0) {
+      dealerShown = "_Not dealt yet_";
+    } else if (revealDealer) {
+      dealerShown = `${this.dealerHand.map(cardStr).join(" ")} (**${handValue(this.dealerHand)}**)`;
+    } else {
+      dealerShown = `${cardStr(this.dealerHand[0])}  ?`;
+    }
 
-    const playerLines = [...this.players.values()].map(p => {
+    const playerLines = [...this.players.values()].map((p) => {
       const pv = handValue(p.hand);
-      const publicTotal = (this.state === "ended") ? `**${pv}**` : "??";
+      const publicTotal = this.state === "ended" ? `**${pv}**` : "??";
       return `${p.user.toString()} — **${p.status}** — ${publicTotal}`;
     });
 
     const turnId = this.currentPlayerId();
     const turnLine =
-      this.state === "playing" && turnId ? `👉 Turn: <@${turnId}>`
-      : this.state === "lobby" ? "Waiting to start…"
-      : "Game finished.";
+      this.state === "playing" && turnId
+        ? `👉 Turn: <@${turnId}>`
+        : this.state === "lobby"
+        ? "Waiting to start…"
+        : "Game finished.";
 
     return new EmbedBuilder()
       .setTitle("🃏 Blackjack")
       .setDescription(
         `**Dealer:** ${dealerShown}\n\n` +
-        `**Players (${this.players.size}/${this.maxPlayers}):**\n${playerLines.join("\n") || "_None yet_"}\n\n` +
-        `${turnLine}`
+          `**Players (${this.players.size}/${this.maxPlayers}):**\n` +
+          `${playerLines.join("\n") || "_None yet_"}\n\n` +
+          `${turnLine}`
       );
   }
 
@@ -293,4 +359,8 @@ if (this.dealerHand.length === 0) {
   }
 }
 
-module.exports = { BlackjackSession, handValue, cardStr };
+module.exports = {
+  BlackjackSession,
+  handValue,
+  cardStr,
+};
