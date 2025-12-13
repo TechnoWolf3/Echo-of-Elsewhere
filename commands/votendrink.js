@@ -37,14 +37,16 @@ module.exports = {
     session = createSession(interaction);
 
     await interaction.reply({
-      content: "🍻 **Vote & Drink lobby created!**",
+      content: "🍻 **Vote & Drink started!** (Panel posted below)",
       ephemeral: true,
     });
 
-    const lobbyMsg = await interaction.channel.send(buildLobbyMessage());
-    session.lobbyMessageId = lobbyMsg.id;
+    // Create ONE persistent panel message
+    const panel = await interaction.channel.send(buildLobbyPanelPayload());
+    session.panelMessageId = panel.id;
 
-    attachLobbyCollector(lobbyMsg);
+    // Attach one collector to the panel message that lives the whole session
+    attachPanelCollector(panel);
   },
 };
 
@@ -53,24 +55,31 @@ function createSession(interaction) {
     hostId: interaction.user.id,
     channelId: interaction.channelId,
 
-    players: new Map(),
+    // Players who clicked Join
+    players: new Map(), // userId -> User
+
+    // Deck behavior (avoid repeats until exhausted)
     usedQuestions: [],
 
-    lobbyMessageId: null,
-    lobbyCollector: null,
+    // Panel message (single-message UI)
+    panelMessageId: null,
+    panelCollector: null,
 
+    // Round state
+    state: "lobby", // "lobby" | "voting" | "results"
     roundActive: false,
-    roundMessageId: null,
-    roundVotesByVoterId: {},
+    roundVotesByVoterId: {}, // { voterId: votedUserId }
     roundQuestion: null,
 
-    // 🔥 Session-only stats
-    sessionVoteTotals: {}, // { userId: totalVotes }
+    // Session-only stats
+    sessionVoteTotals: {}, // { userId: totalVotesReceived }
     roundsPlayed: 0,
   };
 }
 
-function buildLobbyMessage() {
+/** -------- Panel Builders -------- */
+
+function buildLobbyPanelPayload() {
   const playerList = session.players.size
     ? [...session.players.values()].map((u) => `• ${u}`).join("\n")
     : "_No players yet. Click **Join** to play._";
@@ -80,8 +89,8 @@ function buildLobbyMessage() {
     .setColor(0x8e44ad)
     .setDescription(
       `Click **Join** if you're playing.\n` +
-      `Host can click **Begin Round** once you have at least 2 players.\n\n` +
-      `**Players (${session.players.size}):**\n${playerList}`
+        `Host clicks **Begin Round** when ready (need 2+).\n\n` +
+        `**Players (${session.players.size}):**\n${playerList}`
     )
     .setFooter({ text: "Session-only stats • Party responsibly" });
 
@@ -98,7 +107,7 @@ function buildLobbyMessage() {
       .setCustomId("vnd_begin")
       .setLabel("Begin Round")
       .setStyle(ButtonStyle.Primary)
-      .setDisabled(session.roundActive),
+      .setDisabled(session.roundActive || session.players.size < 2),
     new ButtonBuilder()
       .setCustomId("vnd_end")
       .setLabel("End Game")
@@ -108,48 +117,188 @@ function buildLobbyMessage() {
   return { embeds: [embed], components: [row] };
 }
 
-function attachLobbyCollector(lobbyMsg) {
-  const collector = lobbyMsg.createMessageComponentCollector({
-    time: 2 * 60 * 60 * 1000,
+function buildVotingPanelPayload() {
+  const embed = new EmbedBuilder()
+    .setTitle("🗳️ Vote & Drink")
+    .setColor(0x8e44ad)
+    .setDescription(`**${session.roundQuestion}**\n\nVote below 👇`)
+    .setFooter({ text: "Ends in 30 seconds (or sooner if everyone votes)" });
+
+  const playersArr = [...session.players.values()];
+  const voteRows = buildVoteComponents(playersArr);
+
+  return { embeds: [embed], components: voteRows };
+}
+
+function buildResultsPanelPayload({ tally, baseEmbed }) {
+  const postRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("vnd_next")
+      .setLabel("Next Round")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("vnd_end")
+      .setLabel("End Game")
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  let desc = `**${session.roundQuestion}**\n\n`;
+
+  if (!Object.keys(tally).length) {
+    desc += "❌ No votes were cast.";
+  } else {
+    const maxVotes = Math.max(...Object.values(tally));
+    const losers = Object.keys(tally).filter((id) => tally[id] === maxVotes);
+
+    const sips = Math.random() < 0.15 ? 4 : Math.floor(Math.random() * 3) + 1;
+
+    const resultsLines = Object.entries(tally)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([id, count]) => `• <@${id}> — **${count}** vote(s)`)
+      .join("\n");
+
+    const mentions = losers.map((id) => `<@${id}>`).join(", ");
+
+    desc += `📊 **Results:**\n${resultsLines}\n\n🍺 ${mentions} drink **${sips} sip(s)**!` +
+      (losers.length > 1 ? " (Tie rule)" : "");
+  }
+
+  const embed = EmbedBuilder.from(baseEmbed).setDescription(desc);
+  return { embeds: [embed], components: [postRow] };
+}
+
+/** -------- Collector + Flow -------- */
+
+function attachPanelCollector(panelMsg) {
+  const collector = panelMsg.createMessageComponentCollector({
+    time: 3 * 60 * 60 * 1000, // 3 hours session max
   });
 
-  session.lobbyCollector = collector;
+  session.panelCollector = collector;
 
-  collector.on("collect", async (btn) => {
-    await btn.deferUpdate().catch(() => {});
-    if (!session || btn.channelId !== session.channelId) return;
+  collector.on("collect", async (i) => {
+    // Always ack fast to prevent interaction failed
+    await i.deferUpdate().catch(() => {});
 
-    if (btn.customId === "vnd_join") {
-      session.players.set(btn.user.id, btn.user);
-      return lobbyMsg.edit(buildLobbyMessage());
+    if (!session) return;
+    if (i.channelId !== session.channelId) return;
+    if (i.message.id !== session.panelMessageId) return;
+
+    const id = i.customId;
+
+    // Join/Leave are always allowed in lobby/results (not during voting to keep it stable)
+    if (id === "vnd_join") {
+      if (session.state === "voting") return;
+      session.players.set(i.user.id, i.user);
+      await safeEditPanel(panelMsg, buildLobbyPanelPayload());
+      return;
     }
 
-    if (btn.customId === "vnd_leave") {
-      session.players.delete(btn.user.id);
-      return lobbyMsg.edit(buildLobbyMessage());
+    if (id === "vnd_leave") {
+      if (session.state === "voting") return;
+      session.players.delete(i.user.id);
+      await safeEditPanel(panelMsg, buildLobbyPanelPayload());
+      return;
     }
 
-    if (btn.customId === "vnd_begin") {
-      if (btn.user.id !== session.hostId) return;
-      if (session.roundActive || session.players.size < 2) return;
+    if (id === "vnd_begin") {
+      if (i.user.id !== session.hostId) return;
+      if (session.roundActive) return;
+      if (session.players.size < 2) return;
 
-      session.roundActive = true;
-      await lobbyMsg.edit(buildLobbyMessage());
-      await startRound(btn.channel);
-      session.roundActive = false;
-      return lobbyMsg.edit(buildLobbyMessage());
+      await beginRound(panelMsg);
+      return;
     }
 
-    if (btn.customId === "vnd_end") {
-      if (btn.user.id !== session.hostId) return;
+    if (id === "vnd_next") {
+      if (i.user.id !== session.hostId) return;
+      if (session.roundActive) return;
+      if (session.players.size < 2) return;
+
+      await beginRound(panelMsg);
+      return;
+    }
+
+    if (id === "vnd_end") {
+      if (i.user.id !== session.hostId) return;
+
       collector.stop("ended");
-      return endGame(btn.channel);
+      await endGame(panelMsg.channel, panelMsg);
+      return;
+    }
+
+    // Voting buttons: vnd_vote_<userid>
+    if (id.startsWith("vnd_vote_")) {
+      if (session.state !== "voting") return;
+      if (!session.players.has(i.user.id)) return; // must be joined
+
+      const votedId = id.replace("vnd_vote_", "");
+      session.roundVotesByVoterId[i.user.id] = votedId;
+
+      // End early if all joined players voted
+      if (Object.keys(session.roundVotesByVoterId).length >= session.players.size) {
+        await finishRound(panelMsg);
+      }
+
+      return;
     }
   });
 
   collector.on("end", async () => {
-    if (session) await endGame(lobbyMsg.channel);
+    if (session) {
+      await endGame(panelMsg.channel, panelMsg);
+    }
   });
+}
+
+async function beginRound(panelMsg) {
+  session.roundActive = true;
+  session.state = "voting";
+  session.roundVotesByVoterId = {};
+  session.roundQuestion = pickNextQuestion();
+
+  await safeEditPanel(panelMsg, buildVotingPanelPayload());
+
+  // 30s timer for the round (since we’re not using a per-round collector now)
+  setTimeout(async () => {
+    // If game ended or already moved on, ignore
+    if (!session) return;
+    if (panelMsg.id !== session.panelMessageId) return;
+    if (session.state !== "voting") return;
+
+    await finishRound(panelMsg);
+  }, 30_000);
+}
+
+async function finishRound(panelMsg) {
+  if (!session) return;
+  if (session.state !== "voting") return;
+
+  session.state = "results";
+
+  // Build tally
+  const tally = {};
+  Object.values(session.roundVotesByVoterId).forEach((votedId) => {
+    tally[votedId] = (tally[votedId] || 0) + 1;
+  });
+
+  // Add to session totals
+  for (const [id, count] of Object.entries(tally)) {
+    session.sessionVoteTotals[id] = (session.sessionVoteTotals[id] || 0) + count;
+  }
+  session.roundsPlayed += 1;
+
+  // Build results payload using the previous voting embed as base
+  const currentEmbed = panelMsg.embeds?.[0]
+    ? EmbedBuilder.from(panelMsg.embeds[0])
+    : new EmbedBuilder().setColor(0x8e44ad);
+
+  const payload = buildResultsPanelPayload({ tally, baseEmbed: currentEmbed });
+
+  await safeEditPanel(panelMsg, payload);
+
+  session.roundActive = false;
 }
 
 function pickNextQuestion() {
@@ -168,7 +317,7 @@ function buildVoteComponents(playersArr) {
   let row = new ActionRowBuilder();
 
   playersArr.forEach((user, idx) => {
-    if (idx && idx % 5 === 0) {
+    if (idx > 0 && idx % 5 === 0) {
       rows.push(row);
       row = new ActionRowBuilder();
     }
@@ -185,136 +334,73 @@ function buildVoteComponents(playersArr) {
   return rows;
 }
 
-async function startRound(channel) {
-  session.roundVotesByVoterId = {};
-  session.roundQuestion = pickNextQuestion();
-
-  const playersArr = [...session.players.values()];
-
-  const embed = new EmbedBuilder()
-    .setTitle("🗳️ Vote & Drink")
-    .setColor(0x8e44ad)
-    .setDescription(`**${session.roundQuestion}**\n\nVote below 👇`)
-    .setFooter({ text: "Ends in 30 seconds (or sooner if everyone votes)" });
-
-  const roundMsg = await channel.send({
-    embeds: [embed],
-    components: buildVoteComponents(playersArr),
-  });
-
-  session.roundMessageId = roundMsg.id;
-
-  const collector = roundMsg.createMessageComponentCollector({ time: 30_000 });
-
-  collector.on("collect", async (btn) => {
-    await btn.deferUpdate().catch(() => {});
-    if (!session || !session.players.has(btn.user.id)) return;
-
-    const votedId = btn.customId.replace("vnd_vote_", "");
-    session.roundVotesByVoterId[btn.user.id] = votedId;
-
-    if (Object.keys(session.roundVotesByVoterId).length >= session.players.size) {
-      collector.stop("all_voted");
-    }
-  });
-
-  collector.on("end", async () => {
-    const tally = {};
-    Object.values(session.roundVotesByVoterId).forEach((id) => {
-      tally[id] = (tally[id] || 0) + 1;
-    });
-
-    for (const [id, count] of Object.entries(tally)) {
-      session.sessionVoteTotals[id] =
-        (session.sessionVoteTotals[id] || 0) + count;
-    }
-
-    session.roundsPlayed += 1;
-
-    const postRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("vnd_next")
-        .setLabel("Next Round")
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId("vnd_end")
-        .setLabel("End Game")
-        .setStyle(ButtonStyle.Danger)
-    );
-
-    let resultText = `**${session.roundQuestion}**\n\n`;
-
-    if (!Object.keys(tally).length) {
-      resultText += "❌ No votes were cast.";
-    } else {
-      const maxVotes = Math.max(...Object.values(tally));
-      const losers = Object.keys(tally).filter((id) => tally[id] === maxVotes);
-      const sips = Math.random() < 0.15 ? 4 : Math.floor(Math.random() * 3) + 1;
-
-      resultText +=
-        Object.entries(tally)
-          .map(([id, c]) => `• <@${id}> — **${c}** vote(s)`)
-          .join("\n") +
-        `\n\n🍺 ${losers.map((id) => `<@${id}>`).join(", ")} drink **${sips} sip(s)**!` +
-        (losers.length > 1 ? " (Tie rule)" : "");
-    }
-
-    await roundMsg.edit({
-      embeds: [EmbedBuilder.from(embed).setDescription(resultText)],
-      components: [postRow],
-    });
-
-    const postCollector = roundMsg.createMessageComponentCollector({
-      filter: (i) => ["vnd_next", "vnd_end"].includes(i.customId),
-      time: 2 * 60 * 60 * 1000,
-    });
-
-    postCollector.on("collect", async (i) => {
-      await i.deferUpdate().catch(() => {});
-      if (!session || i.user.id !== session.hostId) return;
-
-      if (i.customId === "vnd_end") {
-        session.lobbyCollector?.stop();
-        return endGame(channel);
-      }
-
-      if (i.customId === "vnd_next" && !session.roundActive) {
-        session.roundActive = true;
-        await startRound(channel);
-        session.roundActive = false;
-        postCollector.stop();
-      }
-    });
-  });
+async function safeEditPanel(panelMsg, payload) {
+  try {
+    await panelMsg.edit(payload);
+  } catch {
+    // If message is gone or edit fails, end session safely
+    session = null;
+  }
 }
 
-async function endGame(channel) {
+/** -------- End Game + Leaderboard + Cleanup -------- */
+
+async function endGame(channel, panelMsg) {
+  // Stop collector if still alive
   try {
-    if (session?.lobbyMessageId) {
-      const lobby = await channel.messages.fetch(session.lobbyMessageId);
-      await lobby.edit({ ...buildLobbyMessage(), components: [] });
+    session?.panelCollector?.stop("endGame");
+  } catch {}
+
+  // Build + send leaderboard (session-only)
+  try {
+    const totals = Object.entries(session?.sessionVoteTotals || {}).sort(
+      (a, b) => b[1] - a[1]
+    );
+
+    if (totals.length) {
+      const top = totals.slice(0, 10);
+      const lines = top
+        .map(([id, votes], idx) => {
+          const medal =
+            idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : "•";
+          return `${medal} <@${id}> — **${votes}** vote(s)`;
+        })
+        .join("\n");
+
+      const embed = new EmbedBuilder()
+        .setTitle("🏆 Vote & Drink — Session Leaderboard")
+        .setColor(0x8e44ad)
+        .setDescription(`**Rounds played:** ${session.roundsPlayed}\n\n${lines}`)
+        .setFooter({ text: "Session-only leaderboard (resets next game)" });
+
+      await channel.send({ embeds: [embed] });
+    } else {
+      const embed = new EmbedBuilder()
+        .setTitle("🏁 Vote & Drink — Session Ended")
+        .setColor(0x8e44ad)
+        .setDescription("No votes were recorded this session, so there’s no leaderboard.")
+        .setFooter({ text: "Session-only leaderboard (resets next game)" });
+
+      await channel.send({ embeds: [embed] });
     }
   } catch {}
 
-  const totals = Object.entries(session.sessionVoteTotals).sort((a, b) => b[1] - a[1]);
+  // Disable panel buttons immediately (optional)
+  try {
+    await panelMsg.edit({
+      embeds: panelMsg.embeds,
+      components: [],
+    });
+  } catch {}
 
-  if (totals.length) {
-    const lines = totals.slice(0, 10).map(
-      ([id, v], i) =>
-        `${i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : "•"} <@${id}> — **${v}** vote(s)`
-    );
+  await channel.send("🛑 **Vote & Drink has ended.**");
 
-    const embed = new EmbedBuilder()
-      .setTitle("🏆 Vote & Drink — Session Leaderboard")
-      .setColor(0x8e44ad)
-      .setDescription(
-        `**Rounds played:** ${session.roundsPlayed}\n\n${lines.join("\n")}`
-      )
-      .setFooter({ text: "Session-only leaderboard" });
-
-    await channel.send({ embeds: [embed] });
-  }
+  // Delete the panel after 60 seconds
+  setTimeout(async () => {
+    try {
+      await panelMsg.delete();
+    } catch {}
+  }, 60_000);
 
   session = null;
-  await channel.send("🛑 **Vote & Drink has ended.**");
 }
