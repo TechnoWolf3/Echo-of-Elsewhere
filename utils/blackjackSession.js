@@ -48,7 +48,7 @@ function handValue(hand) {
 }
 
 class BlackjackSession {
-  constructor({ channel, hostId, guildId, maxPlayers = 10 }) {
+  constructor({ channel, hostId, guildId, maxPlayers = 10, defaultBet = null }) {
     this.channel = channel;
     this.guildId = guildId;
     this.hostId = hostId;
@@ -68,6 +68,9 @@ class BlackjackSession {
     this.timeout = null;
 
     this.maxPlayers = maxPlayers;
+
+    // NEW: host’s starting bet (used by Join button auto-buy-in)
+    this.defaultBet = defaultBet;
 
     this.endHandled = false;
   }
@@ -107,7 +110,6 @@ class BlackjackSession {
     const p = this.players.get(userId);
     if (!p) return { ok: false, msg: "You’re not in the game." };
     if (this.state !== "lobby") return { ok: false, msg: "Bets are locked after start." };
-    if (p.paid) return { ok: false, msg: "Bet already set/paid for this game." };
 
     p.bet = amount;
     return { ok: true };
@@ -305,10 +307,14 @@ class BlackjackSession {
       return `${p.user} — **${p.status}** — Bet: **${betText}**${totalText}`;
     });
 
+    const joinNote = this.defaultBet
+      ? `Join auto-buy-in: **$${Number(this.defaultBet).toLocaleString()}** (you can override with **/blackjack bet:<amount>**).`
+      : `Set your bet with: **/blackjack bet:<amount>** (min $500).`;
+
     const turnId = this.currentPlayerId();
     const turnLine =
       this.state === "playing" && turnId ? `👉 Turn: <@${turnId}>`
-      : this.state === "lobby" ? "Set your bet with: **/blackjack bet:<amount>** (min $500)."
+      : this.state === "lobby" ? joinNote
       : "Game finished.";
 
     return new EmbedBuilder()
