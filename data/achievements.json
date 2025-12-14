@@ -45,7 +45,7 @@
     "reward_role_id": null
   },
   {
-    "id": "Rou_first_win",
+    "id": "rou_first_win",
     "name": "First Big Spin",
     "description": "Win your first game.",
     "category": "Casino - Roulette",
@@ -54,7 +54,7 @@
     "reward_role_id": null
   },
   {
-    "id": "Rou_House Wins",
+    "id": "rou_House Wins",
     "name": "House Wins",
     "description": "Lose your first game of Roulette",
     "category": "Casino - Roulette",
@@ -63,7 +63,7 @@
     "reward_role_id": null
   },
   {
-    "id": "Rou_00",
+    "id": "rou_00",
     "name": "Mum, i'm rich!",
     "description": "Win a game while betting on 00",
     "category": "Casino - Roulette",
@@ -72,7 +72,7 @@
     "reward_role_id": null
   },
   {
-    "id": "Rou_10wins",
+    "id": "rou_10wins",
     "name": "Winner Winner!",
     "description": "Win 10 games of Roulette!",
     "category": "Casino - Roulette",
@@ -81,7 +81,7 @@
     "reward_role_id": null
   },
   {
-    "id": "Rou_high_roller",
+    "id": "rou_high_roller",
     "name": "High Roller",
     "description": "Place a bet of $50,000 or more in Roulette.",
     "category": "Casino - Roulette",
