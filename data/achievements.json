@@ -27,6 +27,15 @@
     "reward_role_id": null
   },
   {
+    "id": "bj_10wins",
+    "name": "Winner Winner!",
+    "description": "Win 10 games of BlackJack(21)!",
+    "category": "Casino - Blackjack",
+    "hidden": false,
+    "reward_coins": 10000,
+    "reward_role_id": null
+  },
+  {
     "id": "bj_high_roller",
     "name": "High Roller",
     "description": "Place a bet of $50,000 or more in Blackjack.",

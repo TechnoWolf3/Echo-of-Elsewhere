@@ -53,6 +53,14 @@ async function ensureAchievementTables(db) {
       earned_at TIMESTAMP NOT NULL DEFAULT NOW(),
       PRIMARY KEY (guild_id, user_id, achievement_id)
     );
+
+    CREATE TABLE IF NOT EXISTS blackjack_stats (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      wins     BIGINT NOT NULL DEFAULT 0,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
   `;
 
   const clientConn = await db.connect();

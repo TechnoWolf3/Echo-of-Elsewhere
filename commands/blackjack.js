@@ -28,6 +28,7 @@ const BJ_ACH = {
   BLACKJACK: "bj_blackjack",
   BUST: "bj_bust",
   HIGH_ROLLER: "bj_high_roller",
+  TEN_WINS: "bj_10_wins",
 };
 
 const BJ_RULES = {
@@ -103,6 +104,33 @@ async function bjUnlock(thing, guildId, userId, achievementId) {
   }
 }
 
+// Helper: increment blackjack win count and unlock at 10 wins
+async function bjIncrementWinsAndMaybeUnlock(thing, guildId, userId) {
+  try {
+    const db = thing?.client?.db;
+    if (!db) return;
+
+    const res = await db.query(
+      `INSERT INTO blackjack_stats (guild_id, user_id, wins)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (guild_id, user_id)
+       DO UPDATE SET wins = blackjack_stats.wins + 1
+       RETURNING wins`,
+      [guildId, userId]
+    );
+
+    const wins = Number(res.rows?.[0]?.wins ?? 0);
+
+    // Unlock exactly when they hit 10 wins
+    if (wins === 10) {
+      await bjUnlock(thing, guildId, userId, BJ_ACH.TEN_WINS);
+    }
+  } catch (e) {
+    // IMPORTANT: stats should never break the game
+    console.error("bjIncrementWinsAndMaybeUnlock failed:", e);
+  }
+}
+
 // Trigger: call this when a bet is successfully PAID (debit OK)
 async function bjOnBetPaid(thing, guildId, userId, betAmount) {
   if (Number(betAmount) >= BJ_RULES.HIGH_ROLLER_BET) {
@@ -122,6 +150,9 @@ async function bjOnFinalOutcome(thing, guildId, outcome) {
   // Any win
   if (outcome.result === "win" || outcome.result === "blackjack_win") {
     await bjUnlock(thing, guildId, outcome.userId, BJ_ACH.FIRST_WIN);
+
+    // ✅ NEW: count this win toward 10 wins
+    await bjIncrementWinsAndMaybeUnlock(thing, guildId, outcome.userId);
   }
 
   // Blackjack win (your code labels this as blackjack_win with 2.5x payout)
