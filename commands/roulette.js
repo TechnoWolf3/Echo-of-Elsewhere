@@ -601,16 +601,16 @@ function attachCollectorIfNeeded(message, table) {
 
           // Winners: first win, 00 win, increment win count, 10 wins
           for (const uid of roundWinners) {
-            await rouUnlock(i, table.guildId, uid, "Rou_first_win");
+            await rouUnlock(i, table.guildId, uid, "rou_first_win");
 
             if (wonOn00.has(uid)) {
-              await rouUnlock(i, table.guildId, uid, "Rou_00");
+              await rouUnlock(i, table.guildId, uid, "rou_00");
             }
 
             if (db) {
               const winsCount = await incrementRouletteWins(db, table.guildId, uid);
               if (winsCount >= 10) {
-                await rouUnlock(i, table.guildId, uid, "Rou_10wins");
+                await rouUnlock(i, table.guildId, uid, "rou_10wins");
               }
             }
           }
@@ -618,7 +618,7 @@ function attachCollectorIfNeeded(message, table) {
           // Losers: participated but didn’t win any bet this round
           for (const uid of participants) {
             if (!roundWinners.has(uid)) {
-              await rouUnlock(i, table.guildId, uid, "Rou_House Wins");
+              await rouUnlock(i, table.guildId, uid, "rou_house_wins");
             }
           }
         } catch (e) {
@@ -775,7 +775,7 @@ module.exports = {
 
       // 🏆 High roller achievement (bet >= 50,000)
       if (amount >= 50000) {
-        await rouUnlock(interaction, guildId, userId, "Rou_high_roller");
+        await rouUnlock(interaction, guildId, userId, "rou_high_roller");
       }
 
       // Send buy-in to server bank
