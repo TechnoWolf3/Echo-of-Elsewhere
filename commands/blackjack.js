@@ -156,8 +156,6 @@ async function bjOnFinalOutcome(thing, guildId, outcome) {
   // Any win
   if (outcome.result === "win" || outcome.result === "blackjack_win") {
     await bjUnlock(thing, guildId, outcome.userId, BJ_ACH.FIRST_WIN);
-    await bjUnlock(interaction, guildId, interaction.user.id, "test_unlock_once");
-
 
     // ✅ NEW: count this win toward 10 wins
     await bjIncrementWinsAndMaybeUnlock(thing, guildId, outcome.userId);

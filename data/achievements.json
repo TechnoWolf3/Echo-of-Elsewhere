@@ -52,14 +52,5 @@
     "hidden": false,
     "reward_coins": 1000,
     "reward_role_id": null
-  },
-  {
-  "id": "test_unlock_once",
-  "name": "Test Unlock",
-  "description": "Testing the achievement table write.",
-  "category": "Test",
-  "hidden": false,
-  "reward_coins": 0,
-  "reward_role_id": null
-}
+  }
 ]
