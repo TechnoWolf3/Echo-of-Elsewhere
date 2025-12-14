@@ -1,4 +1,5 @@
 // commands/roulette.js
+const crypto = require("crypto");
 const {
   SlashCommandBuilder,
   ActionRowBuilder,
@@ -29,38 +30,51 @@ const tables = new Map(); // channelId -> tableState
 const MIN_BET = 500;
 const MAX_BET = 250000; // adjust if you want
 
-// Standard European roulette reds
+// Standard roulette reds (applies to 1–36)
 const REDS = new Set([
   1, 3, 5, 7, 9, 12, 14, 16, 18,
   19, 21, 23, 25, 27, 30, 32, 34, 36,
 ]);
 
-function getColor(n) {
-  if (n === 0) return "green";
-  return REDS.has(n) ? "red" : "black";
+// American wheel pockets: 0, 00, 1–36
+const POCKETS = [0, "00", ...Array.from({ length: 36 }, (_, i) => i + 1)];
+
+function spinPocket() {
+  return POCKETS[crypto.randomInt(0, POCKETS.length)];
 }
 
-function isEven(n) {
-  return n !== 0 && n % 2 === 0;
+function isNumberPocket(p) {
+  return typeof p === "number";
 }
-function isOdd(n) {
-  return n !== 0 && n % 2 === 1;
+
+function getColor(pocket) {
+  if (pocket === 0 || pocket === "00") return "green";
+  // 1–36 only
+  return REDS.has(pocket) ? "red" : "black";
 }
-function isLow(n) {
-  return n >= 1 && n <= 18;
+
+function isEven(pocket) {
+  return isNumberPocket(pocket) && pocket !== 0 && pocket % 2 === 0;
 }
-function isHigh(n) {
-  return n >= 19 && n <= 36;
+function isOdd(pocket) {
+  return isNumberPocket(pocket) && pocket !== 0 && pocket % 2 === 1;
 }
-function getDozen(n) {
-  if (n >= 1 && n <= 12) return 1;
-  if (n >= 13 && n <= 24) return 2;
-  if (n >= 25 && n <= 36) return 3;
+function isLow(pocket) {
+  return isNumberPocket(pocket) && pocket >= 1 && pocket <= 18;
+}
+function isHigh(pocket) {
+  return isNumberPocket(pocket) && pocket >= 19 && pocket <= 36;
+}
+function getDozen(pocket) {
+  if (!isNumberPocket(pocket)) return null;
+  if (pocket >= 1 && pocket <= 12) return 1;
+  if (pocket >= 13 && pocket <= 24) return 2;
+  if (pocket >= 25 && pocket <= 36) return 3;
   return null;
 }
-function getColumn(n) {
-  if (n === 0) return null;
-  const r = n % 3;
+function getColumn(pocket) {
+  if (!isNumberPocket(pocket) || pocket === 0) return null;
+  const r = pocket % 3;
   if (r === 1) return 1;
   if (r === 2) return 2;
   return 3; // r === 0
@@ -70,6 +84,10 @@ function describeBet(b) {
   switch (b.type) {
     case "number":
       return `Number ${b.value}`;
+    case "doublezero":
+      return "00 (Double Zero)";
+    case "green":
+      return "Green (0 or 00)";
     case "red":
       return "Red";
     case "black":
@@ -94,7 +112,12 @@ function describeBet(b) {
 function betWins(bet, rolled) {
   switch (bet.type) {
     case "number":
-      return rolled === bet.value;
+      // rolled must be number for numeric comparison
+      return isNumberPocket(rolled) && rolled === bet.value;
+    case "doublezero":
+      return rolled === "00";
+    case "green":
+      return rolled === 0 || rolled === "00";
     case "red":
       return getColor(rolled) === "red";
     case "black":
@@ -119,13 +142,18 @@ function betWins(bet, rolled) {
 /**
  * Multiplier includes stake:
  * - number: 36x (35:1 profit + stake)
+ * - 00: 36x
+ * - green (0 or 00): 19x (18:1 profit + stake)
  * - red/black/even/odd/low/high: 2x
  * - dozen/column: 3x
  */
 function betMultiplier(bet) {
   switch (bet.type) {
     case "number":
+    case "doublezero":
       return 36;
+    case "green":
+      return 19;
     case "dozen":
     case "column":
       return 3;
@@ -149,6 +177,10 @@ function potTotal(bets) {
   return bets.reduce((sum, b) => sum + b.amount, 0);
 }
 
+function formatPocket(p) {
+  return p === "00" ? "00" : String(p);
+}
+
 function buildPanelEmbed(table) {
   const pot = potTotal(table.bets);
   const players = uniquePlayerCount(table.bets);
@@ -167,13 +199,13 @@ function buildPanelEmbed(table) {
       ].join("\n")
     )
     .setFooter({
-      text: "Single-zero wheel (0–36). Losses feed the server bank. Payouts come from the bank.",
+      text: "American wheel (0, 00, 1–36). Losses feed the server bank. Payouts come from the bank.",
     });
 
   if (table.lastRoll !== null) {
     embed.addFields({
       name: "Last spin",
-      value: `${table.lastRoll} (${getColor(table.lastRoll)})`,
+      value: `${formatPocket(table.lastRoll)} (${getColor(table.lastRoll)})`,
       inline: true,
     });
   }
@@ -401,7 +433,7 @@ function attachCollectorIfNeeded(message, table) {
         table.spinning = true;
         await upsertPanel(i, table);
 
-        const rolled = Math.floor(Math.random() * 37); // 0–36
+        const rolled = spinPocket(); // 0, "00", 1–36
         table.lastRoll = rolled;
 
         // Resolve bets
@@ -411,7 +443,7 @@ function attachCollectorIfNeeded(message, table) {
         table.round += 1;
 
         const lines = [];
-        lines.push(`**Result:** 🎯 **${rolled}** (${getColor(rolled)})`);
+        lines.push(`**Result:** 🎯 **${formatPocket(rolled)}** (${getColor(rolled)})`);
         lines.push("");
 
         let winners = 0;
@@ -431,7 +463,7 @@ function attachCollectorIfNeeded(message, table) {
             b.userId,
             payout,
             "roulette_payout",
-            { channelId: table.channelId, round: roundNumber, bet: b }
+            { channelId: table.channelId, round: roundNumber, bet: b, rolled }
           );
 
           if (pay.ok) {
@@ -443,7 +475,7 @@ function attachCollectorIfNeeded(message, table) {
               b.userId,
               b.amount,
               "roulette_payout_refund",
-              { channelId: table.channelId, round: roundNumber, bet: b, note: "bank_insufficient_payout" }
+              { channelId: table.channelId, round: roundNumber, bet: b, note: "bank_insufficient_payout", rolled }
             );
 
             if (refund.ok) {
@@ -512,7 +544,9 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("roulette")
     .setDescription("Play shared-table roulette (one table per channel).")
-    .addSubcommand((sub) => sub.setName("table").setDescription("Create or refresh the roulette panel for this channel."))
+    .addSubcommand((sub) =>
+      sub.setName("table").setDescription("Create or refresh the roulette panel for this channel.")
+    )
     .addSubcommand((sub) =>
       sub
         .setName("bet")
@@ -532,6 +566,8 @@ module.exports = {
             .setRequired(true)
             .addChoices(
               { name: "Number (0–36)", value: "number" },
+              { name: "00 (Double Zero)", value: "doublezero" },
+              { name: "Green (0 or 00)", value: "green" },
               { name: "Red", value: "red" },
               { name: "Black", value: "black" },
               { name: "Even", value: "even" },
@@ -580,6 +616,10 @@ module.exports = {
       } else if (type === "dozen" || type === "column") {
         if (value === null || value < 1 || value > 3) {
           return interaction.editReply(`❌ For **${type}**, you must provide **value: 1–3**.`);
+        }
+      } else if (type === "doublezero" || type === "green") {
+        if (value !== null) {
+          return interaction.editReply(`❌ For **${type}**, you don’t need a value.`);
         }
       }
 
