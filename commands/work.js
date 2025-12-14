@@ -60,7 +60,7 @@ module.exports = {
       }
     }
 
-    const amount = Math.floor(Math.random() * (5000 - 250 + 1)) + 250;
+    const amount = Math.floor(Math.random() * (1500 - 500 + 1)) + 250;
     const next = new Date(now.getTime() + COOLDOWN_MS);
 
     await pool.query(

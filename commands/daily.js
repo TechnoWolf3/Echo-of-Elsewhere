@@ -69,7 +69,7 @@ module.exports = {
       }
     }
 
-    const amount = Math.floor(100 + Math.random() * 401); // 100–500
+    const amount = Math.floor(100 + Math.random() * 401); // 2500–5000
     const nextClaim = nextSydneyMidnightUTC();
 
     await pool.query(
