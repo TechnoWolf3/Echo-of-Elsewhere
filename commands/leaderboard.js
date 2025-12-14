@@ -24,7 +24,7 @@ module.exports = {
 
     const lines = res.rows.map((r, idx) => {
       const medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][idx] ?? "•";
-      return `${medal} <@${r.user_id}> — **$${Number(r.balance).toLocaleString()}**`;
+      return `${medal} <$${r.user_id}> — **$${Number(r.balance).toLocaleString()}**`;
     });
 
     return interaction.reply({ content: `🏆 **Top 5**\n${lines.join("\n")}` });
