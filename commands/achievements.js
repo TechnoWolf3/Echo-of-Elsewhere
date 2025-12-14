@@ -55,48 +55,76 @@ module.exports = {
       return interaction.editReply("No achievements found yet.").catch(() => {});
     }
 
-    // 2) Fetch user's unlocked achievements (ID-based) + fallback mention-based
-    const idA = targetUser.id;          // correct storage
-    const idB = `<@${targetUser.id}>`;  // fallback if something stored mentions
+    // 2) Fetch user's unlocked achievements — schema tolerant
+    const idA = targetUser.id;            // correct
+    const idB = `<@${targetUser.id}>`;    // possible old storage
+    const idC = `<@!${targetUser.id}>`;   // possible old storage
+
+    // Common column name variants we’ll try
+    const guildCols = ["guild_id", "guildid", "guildId"];
+    const userCols = ["user_id", "userid", "userId"];
+    const achCols = ["achievement_id", "achievementId", "achievementid", "achievement", "id"];
 
     let unlockedRows = [];
-try {
-  // most common
-  const r1 = await db.query(
-    `SELECT achievement_id AS aid
-     FROM user_achievements
-     WHERE guild_id = $1 AND user_id = $2`,
-    [guildId, targetUser.id]
-  );
-  unlockedRows = r1.rows || [];
-} catch (e1) {
-  try {
-    // alt: achievementId / camelCase
-    const r2 = await db.query(
-      `SELECT achievementId AS aid
-       FROM user_achievements
-       WHERE guild_id = $1 AND user_id = $2`,
-      [guildId, targetUser.id]
-    );
-    unlockedRows = r2.rows || [];
-  } catch (e2) {
-    try {
-      // alt: achievement (some people name it this)
-      const r3 = await db.query(
-        `SELECT achievement AS aid
-         FROM user_achievements
-         WHERE guild_id = $1 AND user_id = $2`,
-        [guildId, targetUser.id]
-      );
-      unlockedRows = r3.rows || [];
-    } catch (e3) {
-      console.error("[/achievements] failed to read user_achievements column:", e3);
-      unlockedRows = [];
-    }
-  }
-}
+    let used = null;
 
-const unlockedSet = new Set(unlockedRows.map((r) => r.aid).filter(Boolean));
+    // Try combinations until one works
+    for (const gCol of guildCols) {
+      for (const uCol of userCols) {
+        for (const aCol of achCols) {
+          try {
+            const res = await db.query(
+              `SELECT ${aCol} AS aid
+               FROM user_achievements
+               WHERE ${gCol} = $1
+                 AND (${uCol} = $2 OR ${uCol} = $3 OR ${uCol} = $4)`,
+              [guildId, idA, idB, idC]
+            );
+
+            // If query succeeded, we accept it even if empty — but we’ll keep looking
+            // only if it’s empty, because a wrong combo could “work” but never match.
+            if (res?.rows) {
+              if (res.rows.length > 0) {
+                unlockedRows = res.rows;
+                used = { gCol, uCol, aCol };
+                break;
+              } else {
+                // remember a working combo (in case nothing returns rows)
+                if (!used) used = { gCol, uCol, aCol };
+              }
+            }
+          } catch {
+            // try next combo
+          }
+        }
+        if (unlockedRows.length) break;
+      }
+      if (unlockedRows.length) break;
+    }
+
+    // If nothing returned rows, but we found a “working” combo, run it once (empty is still valid)
+    if (!unlockedRows.length && used) {
+      try {
+        const res = await db.query(
+          `SELECT ${used.aCol} AS aid
+           FROM user_achievements
+           WHERE ${used.gCol} = $1
+             AND (${used.uCol} = $2 OR ${used.uCol} = $3 OR ${used.uCol} = $4)`,
+          [guildId, idA, idB, idC]
+        );
+        unlockedRows = res.rows || [];
+      } catch (e) {
+        console.error("[/achievements] final read failed:", e);
+      }
+    }
+
+    if (used) {
+      console.log(`[ACH] read user_achievements via ${used.gCol}/${used.uCol}/${used.aCol} -> ${unlockedRows.length} rows`);
+    } else {
+      console.warn("[ACH] could not find compatible columns in user_achievements");
+    }
+
+    const unlockedSet = new Set(unlockedRows.map((r) => r.aid).filter(Boolean));
 
     // 3) Build pages
     const pages = buildPages({
