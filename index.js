@@ -43,8 +43,13 @@ async function ensureAchievementTables(db) {
       hidden BOOLEAN NOT NULL DEFAULT FALSE,
       reward_coins BIGINT NOT NULL DEFAULT 0,
       reward_role_id TEXT NULL,
+      sort_order BIGINT NOT NULL DEFAULT 0,
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
+
+    -- ✅ Add sort_order to existing production tables safely
+    ALTER TABLE achievements
+    ADD COLUMN IF NOT EXISTS sort_order BIGINT NOT NULL DEFAULT 0;
 
     CREATE TABLE IF NOT EXISTS user_achievements (
       guild_id TEXT NOT NULL,
@@ -81,8 +86,8 @@ async function syncAchievementsFromJson(db) {
   const list = loadAchievementsFromJson();
 
   const upsertSql = `
-    INSERT INTO achievements (id, name, description, category, hidden, reward_coins, reward_role_id, updated_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+    INSERT INTO achievements (id, name, description, category, hidden, reward_coins, reward_role_id, sort_order, updated_at)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
     ON CONFLICT (id) DO UPDATE SET
       name = EXCLUDED.name,
       description = EXCLUDED.description,
@@ -90,13 +95,17 @@ async function syncAchievementsFromJson(db) {
       hidden = EXCLUDED.hidden,
       reward_coins = EXCLUDED.reward_coins,
       reward_role_id = EXCLUDED.reward_role_id,
+      sort_order = EXCLUDED.sort_order,
       updated_at = NOW();
   `;
 
   const clientConn = await db.connect();
   try {
     await clientConn.query("BEGIN");
-    for (const a of list) {
+
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+
       await clientConn.query(upsertSql, [
         a.id,
         a.name,
@@ -105,8 +114,10 @@ async function syncAchievementsFromJson(db) {
         Boolean(a.hidden),
         Number(a.reward_coins ?? 0),
         a.reward_role_id ?? null,
+        i, // ✅ JSON order index
       ]);
     }
+
     await clientConn.query("COMMIT");
     console.log(`🏆 [achievements] auto-synced ${list.length} from data/achievements.json`);
   } catch (e) {

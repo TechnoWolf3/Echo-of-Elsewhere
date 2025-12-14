@@ -47,7 +47,7 @@ module.exports = {
     const all = await db.query(
       `SELECT id, name, description, category, hidden, reward_coins
        FROM achievements
-       ORDER BY category ASC, name ASC`
+       ORDER BY category ASC, sort_order ASC`
     );
 
     const achievements = all.rows || [];
