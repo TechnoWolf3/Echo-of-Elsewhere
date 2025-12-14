@@ -1,9 +1,10 @@
 // commands/addbalance.js
 const {
   SlashCommandBuilder,
-  PermissionFlagsBits,
   MessageFlags,
 } = require("discord.js");
+
+const REQUIRED_ROLE_ID = "741251069002121236";
 
 function getDbQuery() {
   // Tries to support whichever style your utils/db.js exports
@@ -13,10 +14,14 @@ function getDbQuery() {
   throw new Error("utils/db.js must export either { query } or { pool }");
 }
 
+function hasRequiredRole(member) {
+  return member?.roles?.cache?.has(REQUIRED_ROLE_ID);
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("addbalance")
-    .setDescription("Add money to a user's balance (admin only). Does NOT use the server bank.")
+    .setDescription("Add money to a user's balance (restricted role only). Does NOT use the server bank.")
     .addUserOption((opt) =>
       opt.setName("user").setDescription("User to credit").setRequired(true)
     )
@@ -26,9 +31,7 @@ module.exports = {
         .setDescription("Amount to add")
         .setRequired(true)
         .setMinValue(1)
-    )
-    // Discord-side permission gate
-    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+    ),
 
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -38,9 +41,9 @@ module.exports = {
         return interaction.editReply("❌ This command can only be used in a server.");
       }
 
-      // Extra safety gate (in case perms were edited)
-      if (!interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
-        return interaction.editReply("❌ You need **Administrator** permissions to use this.");
+      // 🔒 Role gate (ONLY this role can run it)
+      if (!hasRequiredRole(interaction.member)) {
+        return interaction.editReply("❌ You don’t have permission to use this command.");
       }
 
       const target = interaction.options.getUser("user", true);
@@ -73,7 +76,7 @@ module.exports = {
 
       const newBal = Number(updated.rows?.[0]?.balance ?? 0);
 
-      // Optional audit log
+      // Audit log
       await query(
         `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
          VALUES ($1, $2, $3, $4, $5)`,

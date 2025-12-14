@@ -9,6 +9,9 @@ const {
   getServerBank,
 } = require("../utils/economy");
 
+// 🚔 Jail guards
+const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail");
+
 const MIN_BET = 500;
 
 module.exports = {
@@ -26,6 +29,9 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
     if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
+
+    // 🚔 Jail gate: blocks /blackjack entirely while jailed
+    if (await guardNotJailed(interaction)) return;
 
     const channelId = interaction.channelId;
     const guildId = interaction.guildId;
@@ -117,7 +123,9 @@ module.exports = {
               p.paid = true;
 
               await session.updatePanel();
-              return interaction.editReply(`✅ Bet decreased to **$${newBet.toLocaleString()}** (refunded **$${refundAmt.toLocaleString()}**).`);
+              return interaction.editReply(
+                `✅ Bet decreased to **$${newBet.toLocaleString()}** (refunded **$${refundAmt.toLocaleString()}**).`
+              );
             }
           }
 
@@ -154,7 +162,9 @@ module.exports = {
         }
 
         await session.updatePanel();
-        return interaction.editReply("✅ You’re in. Set or change your bet with: **/blackjack bet:<amount>** (min $500).");
+        return interaction.editReply(
+          "✅ You’re in. Set or change your bet with: **/blackjack bet:<amount>** (min $500)."
+        );
       }
 
       // Create new session
@@ -176,7 +186,7 @@ module.exports = {
           hostId: interaction.user.id,
           guildId,
           maxPlayers: 10,
-          defaultBet: bet, // NEW: Join will auto-buy-in at this bet
+          defaultBet: bet, // Join auto-buy-in at this bet
         });
 
         activeGames.set(channelId, session);
@@ -199,7 +209,7 @@ module.exports = {
 
         return interaction.editReply(
           `✅ Blackjack lobby created.\nHost bet: **$${bet.toLocaleString()}** (your buy-in paid).\n` +
-          `Players can click **Join** to auto-buy-in, or run **/blackjack bet:<amount>** to pick their own.`
+            `Players can click **Join** to auto-buy-in, or run **/blackjack bet:<amount>** to pick their own.`
         );
       }
 
@@ -323,6 +333,9 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
   }
 
   collector.on("collect", async (i) => {
+    // 🚔 Jail gate for button actions too
+    if (await guardNotJailedComponent(i)) return;
+
     await i.deferUpdate().catch(() => {});
     const [prefix, gameId, action] = i.customId.split(":");
     if (prefix !== "bj" || gameId !== session.gameId) return;
@@ -336,7 +349,7 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
         return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
       }
 
-      // NEW: If host set a default bet, auto-buy-in on Join
+      // If host set a default bet, auto-buy-in on Join
       if (session.defaultBet != null) {
         const autoBet = Number(session.defaultBet);
         const p = session.players.get(i.user.id);

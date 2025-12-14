@@ -17,6 +17,9 @@ const {
   getBalance,
 } = require("../utils/economy");
 
+// 🚔 Jail guards
+const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail");
+
 /**
  * One roulette table per channel (in-memory).
  * Economy is persistent in DB.
@@ -265,6 +268,9 @@ function attachCollectorIfNeeded(message, table) {
   table.collector = collector;
 
   collector.on("collect", async (i) => {
+    // 🚔 Jail gate for button actions
+    if (await guardNotJailedComponent(i)) return;
+
     if (!i.inGuild()) {
       try {
         await i.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral });
@@ -498,8 +504,6 @@ function attachCollectorIfNeeded(message, table) {
   });
 
   collector.on("end", () => {
-    // If collector ends (timeout/restart), leave panel message.
-    // Next /roulette table call will re-attach.
     table.collector = null;
   });
 }
@@ -508,9 +512,7 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("roulette")
     .setDescription("Play shared-table roulette (one table per channel).")
-    .addSubcommand((sub) =>
-      sub.setName("table").setDescription("Create or refresh the roulette panel for this channel.")
-    )
+    .addSubcommand((sub) => sub.setName("table").setDescription("Create or refresh the roulette panel for this channel."))
     .addSubcommand((sub) =>
       sub
         .setName("bet")
@@ -551,6 +553,9 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
+
+    // 🚔 Jail gate for /roulette
+    if (await guardNotJailed(interaction)) return;
 
     const sub = interaction.options.getSubcommand();
     const table = await ensureTable(interaction);

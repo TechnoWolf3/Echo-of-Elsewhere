@@ -2,6 +2,9 @@ const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { pool } = require("../utils/db");
 const { ensureUser, creditUser } = require("../utils/economy");
 
+// 🚔 Jail guard
+const { guardNotJailed } = require("../utils/jail");
+
 function nextSydneyMidnightUTC() {
   // Get "now" in Australia/Sydney, then compute next midnight there
   const now = new Date();
@@ -41,6 +44,9 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
+
+    // 🚔 Jail gate for /daily
+    if (await guardNotJailed(interaction)) return;
 
     const guildId = interaction.guildId;
     const userId = interaction.user.id;
