@@ -168,7 +168,7 @@ function buildPages({ achievements, unlockedSet, targetUser }) {
       continue;
     }
 
-    const mark = unlocked ? "✅" : "⬜";
+    const mark = unlocked ? "✅" : "🔒";
     lines.push(`${mark} **${a.name}**${rewardText} — ${a.description}`);
   }
 
