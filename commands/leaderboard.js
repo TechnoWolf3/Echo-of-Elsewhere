@@ -22,10 +22,20 @@ module.exports = {
       return interaction.reply({ content: "No balances yet.", ephemeral: true });
     }
 
-    const lines = res.rows.map((r, idx) => {
-      const medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][idx] ?? "•";
-      return `${medal} <$${r.user_id}> — **$${Number(r.balance).toLocaleString()}**`;
-    });
+    const lines = await Promise.all(
+  res.rows.map(async (r, idx) => {
+    const medal = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][idx] ?? "•";
+
+    let name = "Unknown User";
+    try {
+      const user = await interaction.client.users.fetch(r.user_id);
+      name = user.username; // plain text, no ping
+    } catch {}
+
+    return `${medal} ${name} — **$${Number(r.balance).toLocaleString()}**`;
+  })
+);
+
 
     return interaction.reply({ content: `🏆 **Top 5**\n${lines.join("\n")}` });
   },
