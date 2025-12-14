@@ -54,7 +54,7 @@
     "reward_role_id": null
   },
   {
-    "id": "rou_house Wins",
+    "id": "rou_house_wins",
     "name": "House Wins",
     "description": "Lose your first game of Roulette",
     "category": "Casino - Roulette",
