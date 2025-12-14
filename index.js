@@ -173,7 +173,21 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
-  if (!command) return;
+
+  // ✅ Fallback so Discord never shows "The application did not respond"
+  if (!command) {
+    console.warn(`[CMD] Command not loaded: /${interaction.commandName}`);
+    try {
+      return await interaction.reply({
+        content:
+          `❌ Command **/${interaction.commandName}** is registered, but the bot hasn’t loaded it.\n` +
+          `Check Railway logs for a command load/require error.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch {
+      return;
+    }
+  }
 
   try {
     await command.execute(interaction);
