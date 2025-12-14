@@ -72,6 +72,14 @@ async function ensureAchievementTables(db) {
       messages BIGINT NOT NULL DEFAULT 0,
       PRIMARY KEY (guild_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS roulette_stats (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      wins     BIGINT NOT NULL DEFAULT 0,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
   `;
 
   const clientConn = await db.connect();

@@ -18,6 +18,9 @@ const {
   getBalance,
 } = require("../utils/economy");
 
+// ✅ Achievements engine
+const { unlockAchievement } = require("../utils/achievementEngine");
+
 // 🚔 Jail guards
 const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail");
 
@@ -112,7 +115,6 @@ function describeBet(b) {
 function betWins(bet, rolled) {
   switch (bet.type) {
     case "number":
-      // rolled must be number for numeric comparison
       return isNumberPocket(rolled) && rolled === bet.value;
     case "doublezero":
       return rolled === "00";
@@ -179,6 +181,84 @@ function potTotal(bets) {
 
 function formatPocket(p) {
   return p === "00" ? "00" : String(p);
+}
+
+/* -----------------------------
+   🏆 Roulette achievement helpers (same style as blackjack)
+-------------------------------- */
+async function rouFetchAchievementInfo(db, achievementId) {
+  if (!db) return null;
+  try {
+    const res = await db.query(
+      `SELECT id, name, description, category, reward_coins
+       FROM public.achievements
+       WHERE id = $1`,
+      [achievementId]
+    );
+    return res.rows?.[0] ?? null;
+  } catch (e) {
+    console.error("rouFetchAchievementInfo failed:", e);
+    return null;
+  }
+}
+
+async function rouAnnounceAchievement(channel, userId, info) {
+  if (!channel || !channel.send) return;
+  if (!info) return;
+
+  const rewardCoins = Number(info.reward_coins || 0);
+
+  const embed = new EmbedBuilder()
+    .setTitle("🏆 Achievement Unlocked!")
+    .setDescription(`**<@${userId}>** unlocked **${info.name}**`)
+    .addFields(
+      { name: "Description", value: info.description || "—" },
+      { name: "Category", value: info.category || "General", inline: true },
+      { name: "Reward", value: rewardCoins > 0 ? `+$${rewardCoins.toLocaleString()}` : "None", inline: true }
+    )
+    .setFooter({ text: `Achievement ID: ${info.id}` });
+
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+async function rouUnlock(thing, guildId, userId, achievementId) {
+  try {
+    const db = thing?.client?.db;
+    if (!db) return null;
+
+    const cleanUserId = String(userId).replace(/[<@!>]/g, "");
+
+    const res = await unlockAchievement({
+      db,
+      guildId,
+      userId: cleanUserId,
+      achievementId,
+    });
+
+    if (!res?.unlocked) return res;
+
+    const info = await rouFetchAchievementInfo(db, achievementId);
+    await rouAnnounceAchievement(thing.channel, cleanUserId, info);
+
+    console.log("[ROU ACH] unlocked", { guildId, userId: cleanUserId, achievementId });
+    return res;
+  } catch (e) {
+    console.error("Roulette achievement unlock failed:", e);
+    return null;
+  }
+}
+
+async function incrementRouletteWins(db, guildId, userId) {
+  // Requires roulette_stats table to exist (add it in index.js ensureAchievementTables)
+  const res = await db.query(
+    `INSERT INTO public.roulette_stats (guild_id, user_id, wins)
+     VALUES ($1, $2, 1)
+     ON CONFLICT (guild_id, user_id)
+     DO UPDATE SET wins = public.roulette_stats.wins + 1
+     RETURNING wins`,
+    [guildId, userId]
+  );
+  return Number(res.rows?.[0]?.wins ?? 0);
 }
 
 function buildPanelEmbed(table) {
@@ -450,8 +530,21 @@ function attachCollectorIfNeeded(message, table) {
         let refunds = 0;
         let apologies = 0;
 
+        // ✅ Track outcomes per user for achievements
+        const participants = new Set(betsThisRound.map((b) => b.userId));
+        const roundWinners = new Set();
+        const wonOn00 = new Set();
+
         for (const b of betsThisRound) {
           const win = betWins(b, rolled);
+
+          if (win) {
+            roundWinners.add(b.userId);
+            if (b.type === "doublezero" && rolled === "00") {
+              wonOn00.add(b.userId);
+            }
+          }
+
           if (!win) continue;
 
           winners++;
@@ -496,6 +589,40 @@ function attachCollectorIfNeeded(message, table) {
           lines.push("");
           if (refunds > 0) lines.push(`🧾 Refunds due to low bank: **${refunds}**`);
           if (apologies > 0) lines.push(`😬 Unpaid wins due to empty bank: **${apologies}**`);
+        }
+
+        // 🏆 Achievements (using your IDs exactly as provided)
+        // - Rou_first_win: first time the user wins any roulette round
+        // - Rou_House Wins: first time the user loses a roulette round
+        // - Rou_00: win a round with a 00 bet
+        // - Rou_10wins: win 10 roulette rounds (tracked in roulette_stats)
+        try {
+          const db = i.client.db;
+
+          // Winners: first win, 00 win, increment win count, 10 wins
+          for (const uid of roundWinners) {
+            await rouUnlock(i, table.guildId, uid, "Rou_first_win");
+
+            if (wonOn00.has(uid)) {
+              await rouUnlock(i, table.guildId, uid, "Rou_00");
+            }
+
+            if (db) {
+              const winsCount = await incrementRouletteWins(db, table.guildId, uid);
+              if (winsCount >= 10) {
+                await rouUnlock(i, table.guildId, uid, "Rou_10wins");
+              }
+            }
+          }
+
+          // Losers: participated but didn’t win any bet this round
+          for (const uid of participants) {
+            if (!roundWinners.has(uid)) {
+              await rouUnlock(i, table.guildId, uid, "Rou_House Wins");
+            }
+          }
+        } catch (e) {
+          console.error("Roulette achievement awarding failed:", e);
         }
 
         await i.editReply("🎡 Spin complete.");
@@ -644,6 +771,11 @@ module.exports = {
         return interaction.editReply(
           `❌ You need **$${amount.toLocaleString()}**, but you only have **$${bal.toLocaleString()}**.`
         );
+      }
+
+      // 🏆 High roller achievement (bet >= 50,000)
+      if (amount >= 50000) {
+        await rouUnlock(interaction, guildId, userId, "Rou_high_roller");
       }
 
       // Send buy-in to server bank
