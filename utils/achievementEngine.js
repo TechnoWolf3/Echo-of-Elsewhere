@@ -1,6 +1,7 @@
 // utils/achievementEngine.js
 // Records achievement unlocks ONCE per player, mints rewards, and best-effort logs a transaction.
-// IMPORTANT: transaction logging must never rollback the achievement unlock.
+// IMPORTANT: Logging must never rollback the unlock.
+// We also schema-qualify tables with `public.` to avoid search_path surprises.
 
 async function unlockAchievement({ db, guildId, userId, achievementId }) {
   if (!db) return { unlocked: false, reason: "No DB" };
@@ -9,25 +10,31 @@ async function unlockAchievement({ db, guildId, userId, achievementId }) {
 
   const client = await db.connect();
   try {
-    await client.query("BEGIN");
-
-    // 1) Insert “earned” record (only once)
+    // 1) Insert “earned” record (AUTOCOMMIT) — cannot be rolled back by later steps
+    // Using public.user_achievements prevents schema/search_path mismatch.
     const ins = await client.query(
-      `INSERT INTO user_achievements (guild_id, user_id, achievement_id)
+      `INSERT INTO public.user_achievements (guild_id, user_id, achievement_id)
        VALUES ($1,$2,$3)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT DO NOTHING
+       RETURNING earned_at`,
       [guildId, cleanUserId, achievementId]
     );
 
     if (ins.rowCount === 0) {
-      await client.query("ROLLBACK");
       return { unlocked: false, reason: "Already unlocked" };
     }
+
+    console.log("[ACH] persisted user_achievement", {
+      guildId,
+      userId: cleanUserId,
+      achievementId,
+      earned_at: ins.rows?.[0]?.earned_at,
+    });
 
     // 2) Pull achievement definition (reward info)
     const achRes = await client.query(
       `SELECT id, name, reward_coins, reward_role_id
-       FROM achievements
+       FROM public.achievements
        WHERE id = $1`,
       [achievementId]
     );
@@ -45,27 +52,26 @@ async function unlockAchievement({ db, guildId, userId, achievementId }) {
     // 3) Mint coins to user (no server bank involved)
     if (rewardCoins > 0) {
       await client.query(
-        `INSERT INTO user_balances (guild_id, user_id, balance)
+        `INSERT INTO public.user_balances (guild_id, user_id, balance)
          VALUES ($1,$2,$3)
          ON CONFLICT (guild_id, user_id)
-         DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance`,
+         DO UPDATE SET balance = public.user_balances.balance + EXCLUDED.balance`,
         [guildId, cleanUserId, rewardCoins]
       );
     }
 
-    // 4) Best-effort transaction log (MUST NOT FAIL THE TRANSACTION)
-    // We detect which columns exist, then insert only what matches.
+    // 4) Best-effort transaction log (MUST NOT FAIL ACHIEVEMENT)
     try {
       const colsRes = await client.query(
         `SELECT column_name
          FROM information_schema.columns
-         WHERE table_name = 'transactions'`
+         WHERE table_schema = 'public'
+           AND table_name = 'transactions'`
       );
 
       const cols = new Set((colsRes.rows || []).map((r) => r.column_name));
 
-      // We only log if the minimal expected columns exist.
-      // Common variants: (guild_id, user_id, type, amount, created_at)
+      // Minimal expected columns
       const hasCore =
         cols.has("guild_id") &&
         cols.has("user_id") &&
@@ -82,7 +88,6 @@ async function unlockAchievement({ db, guildId, userId, achievementId }) {
           ? "createdAt"
           : "timestamp";
 
-        // optional note-like columns
         const noteCol = cols.has("note")
           ? "note"
           : cols.has("description")
@@ -93,31 +98,23 @@ async function unlockAchievement({ db, guildId, userId, achievementId }) {
 
         if (noteCol) {
           await client.query(
-            `INSERT INTO transactions (guild_id, user_id, ${typeCol}, ${amountCol}, ${noteCol}, ${createdCol})
+            `INSERT INTO public.transactions (guild_id, user_id, ${typeCol}, ${amountCol}, ${noteCol}, ${createdCol})
              VALUES ($1,$2,$3,$4,$5,NOW())`,
             [guildId, cleanUserId, "ACHIEVEMENT_REWARD", rewardCoins, `Unlocked: ${achievementId}`]
           );
         } else {
           await client.query(
-            `INSERT INTO transactions (guild_id, user_id, ${typeCol}, ${amountCol}, ${createdCol})
+            `INSERT INTO public.transactions (guild_id, user_id, ${typeCol}, ${amountCol}, ${createdCol})
              VALUES ($1,$2,$3,$4,NOW())`,
             [guildId, cleanUserId, "ACHIEVEMENT_REWARD", rewardCoins]
           );
         }
-      } else {
-        // silently skip if schema doesn't match
-        // console.log("[achievements] transactions schema not compatible; skipping log");
       }
     } catch (logErr) {
-      // DO NOT throw — logging is optional
       console.warn("⚠️ Transaction log skipped (achievement still granted):", logErr?.message || logErr);
     }
 
-    await client.query("COMMIT");
     return { unlocked: true, name: ach.name, rewardCoins, rewardRoleId };
-  } catch (e) {
-    await client.query("ROLLBACK");
-    throw e;
   } finally {
     client.release();
   }

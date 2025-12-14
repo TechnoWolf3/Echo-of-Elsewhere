@@ -75,7 +75,7 @@ module.exports = {
           try {
             const res = await db.query(
               `SELECT ${aCol} AS aid
-               FROM user_achievements
+               FROM public.user_achievements
                WHERE ${gCol} = $1
                  AND (${uCol} = $2 OR ${uCol} = $3 OR ${uCol} = $4)`,
               [guildId, idA, idB, idC]
@@ -107,7 +107,7 @@ module.exports = {
       try {
         const res = await db.query(
           `SELECT ${used.aCol} AS aid
-           FROM user_achievements
+           FROM public.user_achievements
            WHERE ${used.gCol} = $1
              AND (${used.uCol} = $2 OR ${used.uCol} = $3 OR ${used.uCol} = $4)`,
           [guildId, idA, idB, idC]
