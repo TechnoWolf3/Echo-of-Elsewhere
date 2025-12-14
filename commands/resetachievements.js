@@ -57,6 +57,13 @@ module.exports = {
         [guildId, cleanUserId]
       );
 
+      // Reset message progress (needed for msg_* achievements)
+      await db.query(
+        `DELETE FROM public.message_stats
+        WHERE guild_id = $1 AND user_id = $2`,
+        [guildId, cleanUserId]
+      );
+
       return interaction.editReply(
         `✅ Reset achievements for **${target.username}**.\n` +
         `🏆 Removed **${achRes.rowCount}** unlocked achievement(s).`
