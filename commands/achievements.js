@@ -59,14 +59,44 @@ module.exports = {
     const idA = targetUser.id;          // correct storage
     const idB = `<@${targetUser.id}>`;  // fallback if something stored mentions
 
-    const unlockedRes = await db.query(
-      `SELECT achievement_id
+    let unlockedRows = [];
+try {
+  // most common
+  const r1 = await db.query(
+    `SELECT achievement_id AS aid
+     FROM user_achievements
+     WHERE guild_id = $1 AND user_id = $2`,
+    [guildId, targetUser.id]
+  );
+  unlockedRows = r1.rows || [];
+} catch (e1) {
+  try {
+    // alt: achievementId / camelCase
+    const r2 = await db.query(
+      `SELECT achievementId AS aid
        FROM user_achievements
-       WHERE guild_id = $1 AND (user_id = $2 OR user_id = $3)`,
-      [guildId, idA, idB]
+       WHERE guild_id = $1 AND user_id = $2`,
+      [guildId, targetUser.id]
     );
+    unlockedRows = r2.rows || [];
+  } catch (e2) {
+    try {
+      // alt: achievement (some people name it this)
+      const r3 = await db.query(
+        `SELECT achievement AS aid
+         FROM user_achievements
+         WHERE guild_id = $1 AND user_id = $2`,
+        [guildId, targetUser.id]
+      );
+      unlockedRows = r3.rows || [];
+    } catch (e3) {
+      console.error("[/achievements] failed to read user_achievements column:", e3);
+      unlockedRows = [];
+    }
+  }
+}
 
-    const unlockedSet = new Set((unlockedRes.rows || []).map((r) => r.achievement_id));
+const unlockedSet = new Set(unlockedRows.map((r) => r.aid).filter(Boolean));
 
     // 3) Build pages
     const pages = buildPages({
