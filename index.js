@@ -80,6 +80,16 @@ async function ensureAchievementTables(db) {
       PRIMARY KEY (guild_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS job_progress (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      xp       BIGINT NOT NULL DEFAULT 0,
+      level    BIGINT NOT NULL DEFAULT 1,
+      total_jobs BIGINT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (guild_id, user_id)
+    );
+
   `;
 
   const clientConn = await db.connect();
