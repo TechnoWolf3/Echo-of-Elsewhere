@@ -17,55 +17,47 @@ const { unlockAchievement } = require("../utils/achievementEngine");
    ✅ BALANCE TUNING (EDIT THESE)
    ============================================================ */
 
-// cooldown BETWEEN PAYOUTS (not between opening /job)
 const JOB_COOLDOWN_SECONDS = 45;
-
-// board clears after 3 minutes inactivity (or Stop Work)
 const BOARD_INACTIVITY_MS = 3 * 60_000;
 
-// XP per payout
+// XP
 const XP_CONTRACT = 15;
 const XP_SKILL_SUCCESS = 10;
 const XP_SKILL_FAIL = 3;
 const XP_SHIFT = 12;
 const XP_LEGENDARY = 30;
 
-// Level curve: XP needed increases steadily
-// XP to next level = 100 + (level-1)*60
+// Leveling
 function xpToNext(level) {
   return 100 + (Math.max(1, level) - 1) * 60;
 }
-
-// payout multiplier by level (2% per level, capped at +60%)
 function levelMultiplier(level) {
   const mult = 1 + 0.02 * (Math.max(1, level) - 1);
   return Math.min(mult, 1.6);
 }
 
-// 1) Contract (multi-step) base
+// Payout ranges
 const CONTRACT_BASE_MIN = 750;
 const CONTRACT_BASE_MAX = 1250;
 
-// 2) Skill check
 const SKILL_SUCCESS_MIN = 650;
 const SKILL_SUCCESS_MAX = 1600;
 const SKILL_FAIL_MIN = 50;
 const SKILL_FAIL_MAX = 220;
 
-// 3) Shift (progress bar)
 const SHIFT_PAY_MIN = 1200;
 const SHIFT_PAY_MAX = 2600;
 const SHIFT_DURATION_S = 45;
 const SHIFT_TICK_S = 5;
 
-// Legendary spawn chance (rolled AFTER a SUCCESSFUL completion)
-const LEGENDARY_CHANCE = 0.012; // ~1.2%
-const LEGENDARY_TTL_MS = 60_000; // stays available for 60s or until used
+// Legendary
+const LEGENDARY_CHANCE = 0.012;
+const LEGENDARY_TTL_MS = 60_000;
 const LEGENDARY_MIN = 50_000;
 const LEGENDARY_MAX = 90_000;
-const LEGENDARY_SKILL_TIME_MS = 7_000; // tighter skill-check window
+const LEGENDARY_SKILL_TIME_MS = 7_000;
 
-// Optional global bonus (small spice)
+// Optional bonus
 const GLOBAL_BONUS_CHANCE = 0.04;
 const GLOBAL_BONUS_MIN = 400;
 const GLOBAL_BONUS_MAX = 2000;
@@ -84,7 +76,7 @@ function progressBar(pct, size = 12) {
 }
 
 /* ============================================================
-   ✅ Cooldowns (same schema as daily/weekly)
+   ✅ Cooldowns
    ============================================================ */
 async function getCooldown(guildId, userId, key) {
   const cd = await pool.query(
@@ -104,10 +96,15 @@ async function setCooldown(guildId, userId, key, nextClaim) {
   );
 }
 
+async function getCooldownUnixIfActive(guildId, userId, key) {
+  const next = await getCooldown(guildId, userId, key);
+  if (!next) return null;
+  if (Date.now() >= next.getTime()) return null;
+  return Math.floor(next.getTime() / 1000);
+}
+
 /* ============================================================
    ✅ Job Progress DB
-   Requires table:
-   job_progress(guild_id,user_id,xp,level,total_jobs,updated_at)
    ============================================================ */
 async function ensureJobProgress(guildId, userId) {
   await pool.query(
@@ -132,7 +129,7 @@ async function getJobProgress(guildId, userId) {
   };
 }
 
-// IMPORTANT: countJob controls total_jobs increment (ONLY on successful completions)
+// countJob ONLY on success completions
 async function addXpAndMaybeLevel(guildId, userId, addXp, countJob = true) {
   await ensureJobProgress(guildId, userId);
 
@@ -168,7 +165,7 @@ async function addXpAndMaybeLevel(guildId, userId, addXp, countJob = true) {
 }
 
 /* ============================================================
-   ✅ Achievements: announce + milestones for jobs
+   ✅ Achievements (Jobs)
    ============================================================ */
 const JOB_MILESTONES = [
   { count: 1, id: "job_first_fin" },
@@ -231,15 +228,20 @@ async function handleJobMilestones({ channel, guildId, userId, totalJobs }) {
 /* ============================================================
    ✅ UI builders
    ============================================================ */
-function buildBoardEmbed(user, progress, legendaryAvailable) {
+function buildBoardEmbed(user, progress, legendaryAvailable, cooldownUnix) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
+
+  const cdLine = cooldownUnix
+    ? `⏳ **Next payout:** <t:${cooldownUnix}:R>`
+    : `✅ **Ready:** You can work now.`;
 
   return new EmbedBuilder()
     .setTitle("🧰 Job Board")
     .setDescription(
       [
         `Alright **${user.username}** — pick what kind of work you want to do.`,
+        cdLine,
         `Cooldown between payouts: **${JOB_COOLDOWN_SECONDS}s**.`,
         `Board clears after **3 minutes** inactivity (or press **Stop Work**).`,
         "",
@@ -284,7 +286,6 @@ function buildBoardComponents({ disabled = false, legendary = false } = {}) {
   const row2 = new ActionRowBuilder();
 
   if (legendary) {
-    // Discord can't do a true gold button, so we make it POP with emoji + Success style
     row2.addComponents(
       new ButtonBuilder()
         .setCustomId("job_mode:legendary")
@@ -306,7 +307,7 @@ function buildBoardComponents({ disabled = false, legendary = false } = {}) {
 }
 
 /* ============================================================
-   ✅ Contract steps with unlockable harder choices
+   ✅ Contract steps
    ============================================================ */
 const CONTRACT_STEPS = [
   {
@@ -405,14 +406,8 @@ function buildSkillEmbed(title, targetEmoji, expiresAt, color) {
   const unix = Math.floor(expiresAt / 1000);
   const e = new EmbedBuilder()
     .setTitle(title)
-    .setDescription(
-      [
-        `Click the **correct emoji** before time runs out: **${targetEmoji}**`,
-        `⏳ Expires: <t:${unix}:R>`,
-      ].join("\n")
-    )
+    .setDescription([`Click the **correct emoji**: **${targetEmoji}**`, `⏳ Expires: <t:${unix}:R>`].join("\n"))
     .setFooter({ text: "Succeed for full pay. Fail for a tiny payout." });
-
   if (color) e.setColor(color);
   return e;
 }
@@ -502,17 +497,20 @@ module.exports = {
     await ensureUser(guildId, userId);
 
     const prog = await getJobProgress(guildId, userId);
+    const cdUnix = await getCooldownUnixIfActive(guildId, userId, "job");
 
     const msg = await interaction.channel.send({
-      embeds: [buildBoardEmbed(interaction.user, prog, false)],
+      embeds: [buildBoardEmbed(interaction.user, prog, false, cdUnix)],
       components: buildBoardComponents({ disabled: false, legendary: false }),
     });
 
     await interaction.editReply("✅ Job board posted. Pick a job type below.");
 
     const session = {
-      level: prog.level,
+      // what screen are we on? (prevents refresh overwriting)
+      view: "board", // board | contract | skill | shift | legendary | result
 
+      level: prog.level,
       legendaryAvailable: false,
       legendaryExpiresAt: 0,
 
@@ -549,6 +547,9 @@ module.exports = {
     }
 
     async function redrawBoard() {
+      // ✅ ONLY refresh when on the board (prevents random kick-back)
+      if (session.view !== "board") return;
+
       const p = await getJobProgress(guildId, userId);
       session.level = p.level;
 
@@ -556,9 +557,11 @@ module.exports = {
         session.legendaryAvailable = false;
       }
 
+      const cd = await getCooldownUnixIfActive(guildId, userId, "job");
+
       await msg
         .edit({
-          embeds: [buildBoardEmbed(interaction.user, p, session.legendaryAvailable)],
+          embeds: [buildBoardEmbed(interaction.user, p, session.legendaryAvailable, cd)],
           components: buildBoardComponents({ disabled: false, legendary: session.legendaryAvailable }),
         })
         .catch(() => {});
@@ -588,9 +591,6 @@ module.exports = {
       }
     }
 
-    // pay helper:
-    // countJob=true ONLY on real completions
-    // allowLegendarySpawn=true ONLY on real completions
     async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true } = {}) {
       const mult = levelMultiplier(session.level);
       let amount = Math.floor(amountBase * mult);
@@ -608,7 +608,6 @@ module.exports = {
 
       const progUpdate = await addXpAndMaybeLevel(guildId, userId, xpGain, countJob);
 
-      // Achievements only on real completions
       if (countJob) {
         await handleJobMilestones({
           channel: msg.channel,
@@ -641,10 +640,18 @@ module.exports = {
         // MODE selection
         if (btn.customId.startsWith("job_mode:")) {
           await btn.deferUpdate().catch(() => {});
+
+          // if they’re on cooldown, don’t even start a job
+          if (await checkCooldownOrTell(btn)) {
+            session.view = "board";
+            await redrawBoard();
+            return;
+          }
+
           const mode = btn.customId.split(":")[1];
 
-          // CONTRACT
           if (mode === "contract") {
+            session.view = "contract";
             session.contractStep = 0;
             session.contractPicks = [];
             session.contractBonusTotal = 0;
@@ -659,8 +666,8 @@ module.exports = {
             return;
           }
 
-          // SKILL
           if (mode === "skill") {
+            session.view = "skill";
             const target = pick(SKILL_EMOJIS);
             session.skillExpiresAt = Date.now() + 12_000;
 
@@ -673,8 +680,8 @@ module.exports = {
             return;
           }
 
-          // SHIFT
           if (mode === "shift") {
+            session.view = "shift";
             if (session.shiftInterval) clearInterval(session.shiftInterval);
             session.shiftStartMs = Date.now();
             session.shiftReady = false;
@@ -708,8 +715,8 @@ module.exports = {
             return;
           }
 
-          // LEGENDARY
           if (mode === "legendary") {
+            session.view = "legendary";
             session.legendaryAvailable = false;
 
             const target = pick(SKILL_EMOJIS);
@@ -725,10 +732,9 @@ module.exports = {
           }
         }
 
-        // CONTRACT step choice
+        // CONTRACT step choice (✅ cooldown NOT checked here anymore)
         if (btn.customId.startsWith("job_contract:")) {
           await btn.deferUpdate().catch(() => {});
-          if (await checkCooldownOrTell(btn)) return;
 
           const [, stepStr, choiceId] = btn.customId.split(":");
           const stepIndex = Number(stepStr);
@@ -754,9 +760,14 @@ module.exports = {
             return;
           }
 
+          // ✅ NOW enforce cooldown when paying
+          if (await checkCooldownOrTell(btn)) return;
+
           const base = randInt(CONTRACT_BASE_MIN, CONTRACT_BASE_MAX);
           const amountBase = base + session.contractBonusTotal;
           const fail = Math.random() < session.contractRiskTotal;
+
+          session.view = "result";
 
           if (fail) {
             const consolationBase = randInt(60, 260);
@@ -784,6 +795,7 @@ module.exports = {
                   .join("\n")
               );
 
+            session.view = "board";
             await msg
               .edit({
                 embeds: [embed],
@@ -815,6 +827,7 @@ module.exports = {
                 .join("\n")
             );
 
+          session.view = "board";
           await msg
             .edit({
               embeds: [embed],
@@ -832,6 +845,8 @@ module.exports = {
           const [, clickedEmoji, targetEmoji] = btn.customId.split(":");
           const expired = Date.now() > session.skillExpiresAt;
           const correct = clickedEmoji === targetEmoji && !expired;
+
+          session.view = "result";
 
           if (correct) {
             const amountBase = randInt(SKILL_SUCCESS_MIN, SKILL_SUCCESS_MAX);
@@ -858,6 +873,7 @@ module.exports = {
                   .join("\n")
               );
 
+            session.view = "board";
             await msg
               .edit({
                 embeds: [embed],
@@ -890,6 +906,7 @@ module.exports = {
                   .join("\n")
               );
 
+            session.view = "board";
             await msg
               .edit({
                 embeds: [embed],
@@ -900,7 +917,7 @@ module.exports = {
           return;
         }
 
-        // LEGENDARY skill
+        // LEGENDARY
         if (btn.customId.startsWith("job_leg:")) {
           await btn.deferUpdate().catch(() => {});
           if (await checkCooldownOrTell(btn)) return;
@@ -908,6 +925,8 @@ module.exports = {
           const [, clickedEmoji, targetEmoji] = btn.customId.split(":");
           const expired = Date.now() > session.legExpiresAt;
           const correct = clickedEmoji === targetEmoji && !expired;
+
+          session.view = "result";
 
           if (!correct) {
             const embed = new EmbedBuilder()
@@ -922,12 +941,8 @@ module.exports = {
                 ].join("\n")
               );
 
-            await msg
-              .edit({
-                embeds: [embed],
-                components: buildBoardComponents({ disabled: false, legendary: false }),
-              })
-              .catch(() => {});
+            session.view = "board";
+            await msg.edit({ embeds: [embed], components: buildBoardComponents({ disabled: false, legendary: false }) }).catch(() => {});
             return;
           }
 
@@ -956,6 +971,7 @@ module.exports = {
                 .join("\n")
             );
 
+          session.view = "board";
           await msg
             .edit({
               embeds: [embed],
@@ -975,6 +991,8 @@ module.exports = {
           }
 
           const amountBase = randInt(SHIFT_PAY_MIN, SHIFT_PAY_MAX);
+
+          session.view = "result";
 
           const paid = await payUser(
             amountBase,
@@ -998,6 +1016,7 @@ module.exports = {
                 .join("\n")
             );
 
+          session.view = "board";
           await msg
             .edit({
               embeds: [embed],
@@ -1025,7 +1044,7 @@ module.exports = {
       setTimeout(() => msg.delete().catch(() => {}), 1000);
     });
 
-    // lightweight refresh (mainly to expire legendary properly)
+    // ✅ refresh ONLY updates board view now
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
       await redrawBoard();
