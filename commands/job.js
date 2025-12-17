@@ -62,6 +62,35 @@ const GLOBAL_BONUS_CHANCE = 0.04;
 const GLOBAL_BONUS_MIN = 400;
 const GLOBAL_BONUS_MAX = 2000;
 
+/* ============================================================
+   ✅ BOARD COPY / UX (EDIT THESE)
+   Make board edits here without digging through logic.
+   ============================================================ */
+
+const BOARD_UI = {
+  title: "🧰 Job Board",
+  intro: (username) => `Pick what kind of work you want to do, **${username}**.`,
+  statusReady: "✅ **Ready** — you can work now.",
+  statusCooldown: (unix) => `⏳ **Next payout** <t:${unix}:R>`,
+  rules: [
+    `Cooldown between payouts: **${JOB_COOLDOWN_SECONDS}s**`,
+    `Auto-clears after **3m** inactivity (or **Stop Work**)`,
+  ],
+  jobTypes: [
+    "📦 **Contract** — 3-step choices (risk/reward).",
+    "🧠 **Skill Check** — quick test, full pay on success.",
+    "🕒 **Shift** — wait it out, then **Collect Pay**.",
+  ],
+  legendaryLine: "🌟 **Legendary** — limited-time, big payout, no pay on fail.",
+  unlocks: (level) => {
+    const lines = [];
+    if (level >= 10) lines.push("🔓 VIP contract options (Level 10+)");
+    if (level >= 20) lines.push("🔓 Dangerous contract options (Level 20+)");
+    return lines;
+  },
+  footer: "Tip: cooldown blocks payouts, not contract steps.",
+};
+
 /* ============================================================ */
 
 function randInt(min, max) {
@@ -231,37 +260,39 @@ async function handleJobMilestones({ channel, guildId, userId, totalJobs }) {
 function buildBoardEmbed(user, progress, legendaryAvailable, cooldownUnix) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
+  const bonusPct = Math.round((mult - 1) * 100);
 
-  const cdLine = cooldownUnix
-    ? `⏳ **Next payout:** <t:${cooldownUnix}:R>`
-    : `✅ **Ready:** You can work now.`;
+  const statusLine = cooldownUnix ? BOARD_UI.statusCooldown(cooldownUnix) : BOARD_UI.statusReady;
 
-  return new EmbedBuilder()
-    .setTitle("🧰 Job Board")
-    .setDescription(
-      [
-        `Alright **${user.username}** — pick what kind of work you want to do.`,
-        cdLine,
-        `Cooldown between payouts: **${JOB_COOLDOWN_SECONDS}s**.`,
-        `Board clears after **3 minutes** inactivity (or press **Stop Work**).`,
-        "",
-        `**Level:** ${progress.level}  |  **XP:** ${progress.xp}/${need}  |  **Payout Bonus:** +${Math.round(
-          (mult - 1) * 100
-        )}%`,
-        "",
-        "**Job Types:**",
-        "📦 **Contract (Multi-step)** — choices affect risk/reward.",
-        "🧠 **Skill Check** — quick task, succeed for full pay.",
-        "🕒 **Shift** — wait it out, then **Collect Pay**.",
-        legendaryAvailable ? "\n🌟 **Legendary Job available!** (limited time)" : "",
-        "",
-        progress.level >= 10 ? "🔓 **Unlocked:** VIP choices in Contracts (Level 10+)" : "",
-        progress.level >= 20 ? "🔓 **Unlocked:** Dangerous choices in Contracts (Level 20+)" : "",
-      ]
-        .filter(Boolean)
-        .join("\n")
+  const unlockLines = BOARD_UI.unlocks(progress.level);
+  const jobLines = [...BOARD_UI.jobTypes];
+  if (legendaryAvailable) jobLines.push(BOARD_UI.legendaryLine);
+
+  const embed = new EmbedBuilder()
+    .setTitle(BOARD_UI.title)
+    .setDescription([BOARD_UI.intro(user.username), "", statusLine].join("\n"))
+    .addFields(
+      {
+        name: "Progress",
+        value: `**Level** ${progress.level}  •  **XP** ${progress.xp}/${need}  •  **Bonus** +${bonusPct}%`,
+      },
+      {
+        name: "Jobs",
+        value: jobLines.join("\n"),
+      },
+      {
+        name: "Rules",
+        value: BOARD_UI.rules.join("\n"),
+        inline: false,
+      }
     )
-    .setFooter({ text: "Jobs pay instantly. Legendary jobs are rare — don’t miss them." });
+    .setFooter({ text: BOARD_UI.footer });
+
+  if (unlockLines.length) {
+    embed.addFields({ name: "Unlocks", value: unlockLines.join("\n") });
+  }
+
+  return embed;
 }
 
 function buildBoardComponents({ disabled = false, legendary = false } = {}) {
@@ -273,7 +304,7 @@ function buildBoardComponents({ disabled = false, legendary = false } = {}) {
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId("job_mode:skill")
-      .setLabel("🧠 Skill Check")
+      .setLabel("🧠 Skill")
       .setStyle(ButtonStyle.Primary)
       .setDisabled(disabled),
     new ButtonBuilder()
@@ -283,19 +314,18 @@ function buildBoardComponents({ disabled = false, legendary = false } = {}) {
       .setDisabled(disabled)
   );
 
-  const row2 = new ActionRowBuilder();
-
+  // Put Legendary on row1 when available to reduce extra rows
   if (legendary) {
-    row2.addComponents(
+    row1.addComponents(
       new ButtonBuilder()
         .setCustomId("job_mode:legendary")
-        .setLabel("🌟 Legendary Job")
+        .setLabel("🌟 Legendary")
         .setStyle(ButtonStyle.Success)
         .setDisabled(disabled)
     );
   }
 
-  row2.addComponents(
+  const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("job_stop")
       .setLabel("🛑 Stop Work")
@@ -507,8 +537,7 @@ module.exports = {
     await interaction.editReply("✅ Job board posted. Pick a job type below.");
 
     const session = {
-      // what screen are we on? (prevents refresh overwriting)
-      view: "board", // board | contract | skill | shift | legendary | result
+      view: "board",
 
       level: prog.level,
       legendaryAvailable: false,
@@ -547,7 +576,6 @@ module.exports = {
     }
 
     async function redrawBoard() {
-      // ✅ ONLY refresh when on the board (prevents random kick-back)
       if (session.view !== "board") return;
 
       const p = await getJobProgress(guildId, userId);
@@ -942,7 +970,9 @@ module.exports = {
               );
 
             session.view = "board";
-            await msg.edit({ embeds: [embed], components: buildBoardComponents({ disabled: false, legendary: false }) }).catch(() => {});
+            await msg
+              .edit({ embeds: [embed], components: buildBoardComponents({ disabled: false, legendary: false }) })
+              .catch(() => {});
             return;
           }
 
