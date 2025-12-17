@@ -8,22 +8,22 @@ const {
   MessageFlags,
 } = require("discord.js");
 
-const { pool } = require("./utils/db");
-const { ensureUser, creditUser } = require("./utils/economy");
-const { guardNotJailed, guardNotJailedComponent } = require("./utils/jail"); // jail blocks ALL jobs while active
-const { unlockAchievement } = require("./utils/achievementEngine");
-const { getCrimeHeat, setCrimeHeat, heatTTLMinutesForOutcome } = require("./utils/crimeHeat");
+const { pool } = require("../utils/db");
+const { ensureUser, creditUser } = require("../utils/economy");
+const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); // jail blocks ALL jobs while active
+const { unlockAchievement } = require("../utils/achievementEngine");
+const { getCrimeHeat, setCrimeHeat, heatTTLMinutesForOutcome } = require("../utils/crimeHeat");
 
 // ✅ Config imports
-const nineToFiveIndex = require("./data/nineToFive/index");
-const contractCfg = require("./data/nineToFive/transportContract");
-const skillCfg = require("./data/nineToFive/skillCheck");
-const shiftCfg = require("./data/nineToFive/shift");
+const nineToFiveIndex = require("../data/nineToFive/index");
+const contractCfg = require("../data/nineToFive/transportContract");
+const skillCfg = require("../data/nineToFive/skillCheck");
+const shiftCfg = require("../data/nineToFive/shift");
 
-const nightWalker = require("./data/nightwalker/index");
+const nightWalker = require("../data/nightwalker/index");
 
 // ✅ Crime (Store Robbery live, others placeholders)
-const startStoreRobbery = require("./data/crime/storeRobbery");
+const startStoreRobbery = require("../data/crime/storeRobbery");
 
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
