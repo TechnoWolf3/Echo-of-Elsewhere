@@ -90,6 +90,20 @@ async function ensureAchievementTables(db) {
       PRIMARY KEY (guild_id, user_id)
     );
 
+/* -----------------------------
+  Crime Heat (Crime-only system)
+-------------------------------- */
+    CREATE TABLE IF NOT EXISTS crime_heat (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      heat     INT  NOT NULL DEFAULT 0,
+      expires_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_crime_heat_expires
+    ON crime_heat (expires_at);
+
   `;
 
   const clientConn = await db.connect();
