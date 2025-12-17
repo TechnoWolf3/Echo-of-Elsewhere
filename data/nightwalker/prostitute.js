@@ -42,5 +42,14 @@ module.exports = {
         { label: "Ignore it and commit", riskDelta: 34, payoutDeltaPct: 24, feedback: "Bold. Might backfire." },
       ],
     },
+    {
+      prompt: "This the final move what do you do?",
+      choices: [
+        { label: "Slip away like nothing happened", riskDelta: 6, payoutDeltaPct: 4, feedback: "Safe. No one noticed a thing." },
+        { label: "Finish and chill with them for a while", riskDelta: 18, payoutDeltaPct: 14, feedback: "Jobs done, still risky." },
+        { label: "Ask to go back to their place", riskDelta: 14, payoutDeltaPct: 10, feedback: "Risky move, I like it." },
+        { label: "Steal their wallet and run", riskDelta: 34, payoutDeltaPct: 54, feedback: "Bold. Will likely backfire." },
+      ],
+    },
   ],
 };
