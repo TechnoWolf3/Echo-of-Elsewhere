@@ -1,3 +1,4 @@
+// data/crime/storeRobbery.js
 const {
   ActionRowBuilder,
   ButtonBuilder,
@@ -8,8 +9,8 @@ const {
 const { pool } = require("../../utils/db");
 const { setJail } = require("../../utils/jail");
 
-// Scenario pools (data-only)
-const scenarios = require("./storeRobbery.scenarios");
+// Scenarios (data-only)
+let scenarios = require("./storeRobbery.scenarios");
 
 // =====================
 // CONFIG (LOCKED RULES)
@@ -25,10 +26,10 @@ const STORE_COOLDOWN_MINUTES = 10;
 
 // Heat tiers => outcomes
 const HEAT_TIERS = {
-  CLEAN: 20,         // < 20 => clean
-  SPOTTED: 35,       // 20–34 => spotted
-  PARTIAL: 60,       // 35–59 => partial
-  BUSTED_HARD: 90,   // >= 90 => busted hard
+  CLEAN: 20,        // < 20 => clean
+  SPOTTED: 35,      // 20–34 => spotted
+  PARTIAL: 60,      // 35–59 => partial
+  BUSTED_HARD: 90,  // >= 90 => busted hard
   // 60–89 => busted
 };
 
@@ -46,8 +47,8 @@ const JAIL_MIN_MINUTES = 2;
 const JAIL_MAX_MINUTES = 5;
 
 // Random run events
-const LOOT_DROP_CHANCE = 0.12;     // low chance
-const VALUABLE_FIND_CHANCE = 0.10; // low chance
+const LOOT_DROP_CHANCE = 0.12;
+const VALUABLE_FIND_CHANCE = 0.10;
 const LOOT_DROP_MIN = 300;
 const LOOT_DROP_MAX = 1200;
 const VALUABLE_MIN = 250;
@@ -69,7 +70,6 @@ async function addUserBalance(guildId, userId, amount) {
 }
 
 async function subtractUserBalanceAndSendToBank(guildId, userId, amount) {
-  // Clamp user balance at 0 (never negative), move what we can to bank.
   const res = await pool.query(
     `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
     [guildId, userId]
@@ -77,7 +77,6 @@ async function subtractUserBalanceAndSendToBank(guildId, userId, amount) {
 
   const current = Number(res.rows?.[0]?.balance || 0);
   const take = Math.min(current, Math.max(0, amount));
-
   if (take <= 0) return 0;
 
   await pool.query(
@@ -109,7 +108,6 @@ async function setCooldown(guildId, userId, key, minutes) {
 }
 
 async function applyCooldowns(guildId, userId) {
-  // Global lockout + store cooldown
   await setCooldown(guildId, userId, "crime_global", GLOBAL_LOCKOUT_MINUTES);
   await setCooldown(guildId, userId, "crime_store", STORE_COOLDOWN_MINUTES);
 }
@@ -126,6 +124,65 @@ function pick(arr) {
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
 }
+function safeStr(v, fallback = "…") {
+  if (v === null || v === undefined) return fallback;
+  const s = String(v);
+  return s.trim().length ? s : fallback;
+}
+function safeId(v, fallback = "x") {
+  const s = safeStr(v, fallback);
+  return s.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
+}
+
+// =====================
+// SCENARIO NORMALIZATION
+// Supports: prompt OR text OR description
+// =====================
+function normalizeScenarios(raw) {
+  const src = raw?.phases ? raw.phases : raw;
+  const out = {};
+
+  for (const [phase, list] of Object.entries(src || {})) {
+    if (!Array.isArray(list)) continue;
+
+    out[phase] = list
+      .filter(Boolean)
+      .map((s, idx) => {
+        const id = safeId(s.id ?? `${phase}_${idx}`);
+        const prompt = safeStr(s.prompt ?? s.text ?? s.description, "You size up the situation…");
+        const choices = Array.isArray(s.choices) ? s.choices : [];
+
+        const normChoices = choices
+          .filter(Boolean)
+          .map((c, cIdx) => ({
+            label: safeStr(c.label ?? c.text ?? `Option ${cIdx + 1}`, `Option ${cIdx + 1}`),
+            heat: typeof c.heat === "number" ? c.heat : 0,
+            lootAdd: typeof c.lootAdd === "number" ? c.lootAdd : 0,
+
+            evidenceRisk: !!c.evidenceRisk,
+            evidenceClear: !!c.evidenceClear,
+            usedCar: !!c.usedCar,
+            timerRisk: !!c.timerRisk,
+            witnessRisk: !!c.witnessRisk,
+            crowdBlend: !!c.crowdBlend,
+          }));
+
+        const finalChoices =
+          normChoices.length >= 2
+            ? normChoices
+            : [
+                { label: "Act casual", heat: 0, evidenceRisk: true },
+                { label: "Grab and go", heat: 12, timerRisk: true },
+              ];
+
+        return { id, prompt, choices: finalChoices };
+      });
+  }
+
+  return out;
+}
+
+scenarios = normalizeScenarios(scenarios);
 
 // =====================
 // RENDER HELPERS
@@ -136,33 +193,33 @@ function buildRow(phaseKey, scenarioId, choices) {
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`sr|${phaseKey}|${scenarioId}|${idx}`)
-        .setLabel(c.label)
+        .setLabel(safeStr(c.label, `Option ${idx + 1}`))
         .setStyle(ButtonStyle.Primary)
     );
   });
   return row;
 }
 
-function renderScenario(phaseKey, scenario) {
+function renderScenario(phaseKey, scenario, heat) {
   const embed = new EmbedBuilder()
     .setTitle("🏪 Store Robbery")
-    .setDescription(scenario.prompt)
-    .setFooter({ text: "Choose carefully. Heat carries forward in Crime." });
+    .setDescription(safeStr(scenario?.prompt, "You hesitate, watching the counter…"))
+    .addFields({ name: "🔥 Heat", value: `${clamp(heat, 0, 100)}/100`, inline: true })
+    .setFooter({ text: "Heat carries forward only in Crime." });
 
-  const row = buildRow(phaseKey, scenario.id, scenario.choices);
+  const row = buildRow(phaseKey, safeId(scenario?.id, "x"), scenario?.choices || []);
   return { embed, components: [row] };
 }
 
 function applyRandomRunEvents() {
   const notes = [];
-  // loot drop reduces payout
+
   if (Math.random() < LOOT_DROP_CHANCE) {
     const drop = randInt(LOOT_DROP_MIN, LOOT_DROP_MAX);
     notes.push(`💨 You fumbled and dropped **$${drop.toLocaleString()}** worth of loot.`);
     return { payoutDelta: -drop, notes };
   }
 
-  // finding valuables increases payout slightly
   if (Math.random() < VALUABLE_FIND_CHANCE) {
     const find = randInt(VALUABLE_MIN, VALUABLE_MAX);
     notes.push(`✨ You found an extra **$${find.toLocaleString()}** hidden away.`);
@@ -172,8 +229,15 @@ function applyRandomRunEvents() {
   return { payoutDelta: 0, notes };
 }
 
+function determineOutcomeFromHeat(heat) {
+  if (heat < HEAT_TIERS.CLEAN) return "clean";
+  if (heat < HEAT_TIERS.SPOTTED) return "spotted";
+  if (heat < HEAT_TIERS.PARTIAL) return "partial";
+  if (heat >= HEAT_TIERS.BUSTED_HARD) return "busted_hard";
+  return "busted";
+}
+
 function computeSuccessPayout(outcome) {
-  // clean/spotted pay full range; partial is reduced a bit
   let base = randInt(PAYOUT_MIN, PAYOUT_MAX);
   if (outcome === "partial") base = Math.floor(base * 0.75);
   return Math.max(0, base);
@@ -193,13 +257,18 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
     const guildId = interaction.guildId;
     const userId = interaction.user.id;
 
-    // If your crime system passes this in, we start from it
-    let heat = Number(context.lingeringHeat || 0);
-    heat = clamp(heat, 0, 100);
+    // Heat starts from lingering crime heat
+    let heat = clamp(Number(context.lingeringHeat || 0), 0, 100);
 
-    let loot = 0;
+    // evidence flags
+    let evidenceRisk = false;
+    let evidenceCleared = false;
+    let usedCar = false;
+    let timerRisk = false;
+    let witnessRisk = false;
+    let crowdBlendUsed = false;
 
-    // Promise finalizer (so /job can await this minigame)
+    // resolve once
     let finished = false;
     const finishOnce = (payload) => {
       if (finished) return;
@@ -207,28 +276,22 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       resolve(payload);
     };
 
-    // Evidence/flags
-    let evidenceRisk = false;   // “Act casual” sets this
-    let evidenceCleared = false;
-    let usedCar = false;
-    let timerRisk = false;
-    let witnessRisk = false;
-
-    // Step phases (picked from scenario pools)
-    const phases = ["entry", "approach", "grab", "exit", "escape"];
-
-    // Steps are randomized 3–5 across those phases
+    // ✅ IMPORTANT: phases must match your scenarios file:
+    // approach, method, greed, exit, aftermath
+    const phases = ["approach", "method", "greed", "exit", "aftermath"];
     const stepCount = randInt(MIN_STEPS, MAX_STEPS);
     const chosenPhases = phases.slice(0, stepCount);
 
-    // Build a run list of scenarios that won't repeat within the run
     const chosenScenarios = [];
     const usedIds = new Set();
 
     for (const phase of chosenPhases) {
       const poolList = scenarios[phase] || [];
-      const available = poolList.filter((s) => !usedIds.has(s.id));
-      const s = available.length ? pick(available) : pick(poolList);
+      if (!poolList.length) continue;
+
+      const available = poolList.filter((s) => s && !usedIds.has(s.id));
+      const s = (available.length ? pick(available) : pick(poolList)) || null;
+
       if (s) {
         usedIds.add(s.id);
         chosenScenarios.push({ phase, scenario: s });
@@ -237,49 +300,35 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
 
     let phaseIndex = 0;
 
-    // Show current phase
+    // Collector attached ONLY to the board message
+    const message = await interaction.fetchReply();
+
+    const collector = message.createMessageComponentCollector({
+      time: RUN_TIMEOUT_MS,
+    });
+
     async function showCurrentPhase() {
       const current = chosenScenarios[phaseIndex];
-      if (!current) {
-        // No scenario to show => finish
+      if (!current || !current.scenario) {
         return resolveAndFinish();
       }
 
       const { phase, scenario } = current;
-
-      if (!scenario || !Array.isArray(scenario.choices) || scenario.choices.length === 0) {
-        // Safety: if no scenarios exist for this phase, skip it
-        phaseIndex++;
-        if (phaseIndex >= chosenScenarios.length) return resolveAndFinish();
-        return showCurrentPhase();
-      }
-
-      const { embed, components } = renderScenario(phase, scenario);
-      await interaction.editReply({ embeds: [embed], components });
-    }
-
-    // Outcome resolution
-    function determineOutcome() {
-      if (heat < HEAT_TIERS.CLEAN) return "clean";
-      if (heat < HEAT_TIERS.SPOTTED) return "spotted";
-      if (heat < HEAT_TIERS.PARTIAL) return "partial";
-      if (heat >= HEAT_TIERS.BUSTED_HARD) return "busted_hard";
-      return "busted";
+      const { embed, components } = renderScenario(phase, scenario, heat);
+      await interaction.editReply({ content: null, embeds: [embed], components });
     }
 
     function rollIdentifiedLater() {
-      // Base chance
       let chance = 0.05;
 
-      // “Act casual” evidence risk
       if (evidenceRisk) chance += 0.18;
-
-      // Staying longer / more chaotic choices
       if (timerRisk) chance += 0.10;
       if (usedCar) chance += 0.10;
       if (witnessRisk) chance += 0.08;
 
-      // Evidence clearing reduces this
+      // crowd blend helps reduce identification
+      if (crowdBlendUsed) chance -= 0.08;
+
       if (evidenceCleared) chance -= 0.12;
 
       chance = clamp(chance, 0, 0.60);
@@ -288,8 +337,7 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
 
     async function maybeJail(outcome) {
       const roll = Math.random();
-      const chance =
-        outcome === "busted_hard" ? JAIL_CHANCE_BUSTED_HARD : JAIL_CHANCE_BUSTED;
+      const chance = outcome === "busted_hard" ? JAIL_CHANCE_BUSTED_HARD : JAIL_CHANCE_BUSTED;
 
       if (roll >= chance) return 0;
 
@@ -300,22 +348,16 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
     }
 
     async function resolveAndFinish() {
-      // Always apply cooldowns on BOTH fail and success (locked rule)
       await applyCooldowns(guildId, userId);
 
-      // Apply random loot events (low chance)
       const eventNotes = applyRandomRunEvents();
 
-      // Determine base outcome from heat
-      let outcome = determineOutcome();
-
-      // Evidence / ID can turn a clean run into “spotted”
+      let outcome = determineOutcomeFromHeat(heat);
       const identified = rollIdentifiedLater();
       if (identified && outcome === "clean") outcome = "spotted";
 
-      let resultLines = [];
+      const resultLines = [];
 
-      // Handle outcomes
       if (outcome === "clean" || outcome === "spotted") {
         const payout = computeSuccessPayout(outcome) + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
@@ -327,53 +369,40 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
             : `⚠️ You got out, but it felt risky. You pocket **$${finalPayout.toLocaleString()}**.`
         );
 
-        if (identified) {
-          resultLines.push("🧾 You might’ve been **identified later**.");
-        }
+        if (identified) resultLines.push("🧾 You might’ve been **identified later**.");
       } else if (outcome === "partial") {
         const payout = computeSuccessPayout("partial") + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
         await addUserBalance(guildId, userId, finalPayout);
 
-        resultLines.push(
-          `😬 You got something, but not much. You pocket **$${finalPayout.toLocaleString()}**.`
-        );
+        resultLines.push(`😬 You got something, but not much. You pocket **$${finalPayout.toLocaleString()}**.`);
       } else {
-        // busted tiers: fine goes to bank (never negative)
         const fine = computeFine(outcome);
         const taken = await subtractUserBalanceAndSendToBank(guildId, userId, fine);
 
-        if (outcome === "busted_hard") {
-          resultLines.push(
-            `🚨 **BUSTED HARD.** You were hit with a fine of **$${fine.toLocaleString()}** (paid **$${taken.toLocaleString()}**).`
-          );
-        } else {
-          resultLines.push(
-            `🚓 **BUSTED.** You were hit with a fine of **$${fine.toLocaleString()}** (paid **$${taken.toLocaleString()}**).`
-          );
-        }
+        resultLines.push(
+          outcome === "busted_hard"
+            ? `🚨 **BUSTED HARD.** Fine: **$${fine.toLocaleString()}** (paid **$${taken.toLocaleString()}**).`
+            : `🚓 **BUSTED.** Fine: **$${fine.toLocaleString()}** (paid **$${taken.toLocaleString()}**).`
+        );
 
         const jailedMinutes = await maybeJail(outcome);
         if (jailedMinutes > 0) {
-          resultLines.push(`⛓️ You were jailed for **${jailedMinutes} minutes**. (All jobs blocked while jailed)`);
+          resultLines.push(`⛓️ You were jailed for **${jailedMinutes} minutes**. (All jobs blocked)`);
         } else {
           resultLines.push("😮‍💨 You avoided jail this time.");
         }
       }
 
-      // Notes from random events
-      if (eventNotes.notes?.length) {
-        resultLines.push("", ...eventNotes.notes);
-      }
+      if (eventNotes.notes?.length) resultLines.push("", ...eventNotes.notes);
 
-      // Adjust heat based on outcome a bit (helps prevent “always clean” loops)
+      // Post-outcome drift
       if (outcome === "clean") heat = clamp(heat - 8, 0, 100);
       if (outcome === "spotted") heat = clamp(heat + 5, 0, 100);
       if (outcome === "partial") heat = clamp(heat + 12, 0, 100);
       if (outcome === "busted") heat = clamp(heat + 22, 0, 100);
       if (outcome === "busted_hard") heat = clamp(heat + 35, 0, 100);
 
-      // Allow caller to persist heat, etc.
       if (typeof context.onStoreRobberyComplete === "function") {
         try {
           await context.onStoreRobberyComplete({
@@ -384,64 +413,56 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
             evidenceRisk,
             identified,
           });
-        } catch (_) {
-          // ignore
-        }
+        } catch {}
       }
 
       const embed = new EmbedBuilder()
         .setTitle("🏁 Store Robbery Complete")
         .setDescription(resultLines.join("\n"))
         .addFields(
-          { name: "🔥 Final Heat", value: `${clamp(heat, 0, 100)}/100`, inline: true },
+          { name: "🔥 Final Heat", value: `${heat}/100`, inline: true },
           { name: "🧾 Identified?", value: identified ? "Yes (possible)" : "No", inline: true }
         )
         .setFooter({ text: "Crime heat only affects Crime jobs." })
         .setColor(outcome.startsWith("busted") ? 0xaa0000 : 0x22aa55);
 
-      await interaction.editReply({ embeds: [embed], components: [] });
+      await interaction.editReply({ content: null, embeds: [embed], components: [] }).catch(() => {});
 
-      // End collector + resolve promise for the caller (/job)
-      try { collector.stop("done"); } catch (_) {}
-      finishOnce({ outcome, finalHeat: clamp(heat, 0, 100), identified });
+      try { collector.stop("done"); } catch {}
+      finishOnce({ outcome, finalHeat: heat, identified });
     }
 
-    // =====================
-    // Collector / Router
-    // =====================
-    const collector = interaction.channel.createMessageComponentCollector({
-      time: RUN_TIMEOUT_MS,
-    });
-
     collector.on("collect", async (i) => {
-      if (i.user.id !== userId) return;
-      await i.deferUpdate();
+      if (i.user.id !== userId) {
+        return i.reply({ content: "❌ Not your robbery.", ephemeral: true }).catch(() => {});
+      }
 
-      // Parse custom id
-      const parts = String(i.customId).split("|");
+      await i.deferUpdate().catch(() => {});
+
+      const parts = String(i.customId || "").split("|");
       if (parts.length !== 4 || parts[0] !== "sr") return;
 
       const phase = parts[1];
       const scenarioId = parts[2];
       const choiceIndex = Number(parts[3]);
 
-      const scenario = (scenarios[phase] || []).find((s) => s.id === scenarioId);
+      const pool = scenarios[phase] || [];
+      const scenario = pool.find((s) => s.id === scenarioId);
       const choice = scenario?.choices?.[choiceIndex];
       if (!choice) return;
 
-      // Apply choice effects (data-driven)
+      // apply effects
       if (typeof choice.heat === "number") heat += choice.heat;
-      if (typeof choice.lootAdd === "number") loot += choice.lootAdd;
 
       if (choice.evidenceRisk) evidenceRisk = true;
       if (choice.evidenceClear) evidenceCleared = true;
       if (choice.usedCar) usedCar = true;
       if (choice.timerRisk) timerRisk = true;
       if (choice.witnessRisk) witnessRisk = true;
+      if (choice.crowdBlend) crowdBlendUsed = true;
 
       heat = clamp(heat, 0, 100);
 
-      // Advance to next phase
       phaseIndex++;
       if (phaseIndex >= chosenScenarios.length) return resolveAndFinish();
       return showCurrentPhase();
@@ -449,15 +470,16 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
 
     collector.on("end", async (_, reason) => {
       if (reason === "done") return;
-      await interaction.editReply({
-        content: "⏱️ You hesitated too long. The opportunity passed.",
-        embeds: [],
-        components: [],
-      });
-      finishOnce({ outcome: "timeout", finalHeat: clamp(heat, 0, 100), identified: false });
+      await interaction
+        .editReply({
+          content: "⏱️ You hesitated too long. The opportunity passed.",
+          embeds: [],
+          components: [],
+        })
+        .catch(() => {});
+      finishOnce({ outcome: "timeout", finalHeat: heat, identified: false });
     });
 
-    // Kick off
     await showCurrentPhase();
   });
 };
