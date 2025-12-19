@@ -476,12 +476,24 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
           `🧊 Cooling down: Ready`,
         ].join("\n");
 
-  const cdLines = [
-    cdLine("Crime lockout", cooldowns?.crimeGlobal),
-    cdLine("Store Robbery", cooldowns?.store),
-    cdLine("Heist", cooldowns?.heist),
-    cdLine("Major Heist", cooldowns?.major),
-  ].join("\n");
+// Global crime lockout blocks ALL crime jobs.
+// Show whichever cooldown ends later so UI matches behaviour.
+const effectiveCooldown = (jobCd, globalCd) => {
+  if (!globalCd) return jobCd;        // no global lockout
+  if (!jobCd) return globalCd;        // job would be ready, but global blocks
+  return Math.max(jobCd, globalCd);   // whichever ends later
+};
+
+const effStore = effectiveCooldown(cooldowns?.store, cooldowns?.crimeGlobal);
+const effHeist = effectiveCooldown(cooldowns?.heist, cooldowns?.crimeGlobal);
+const effMajor = effectiveCooldown(cooldowns?.major, cooldowns?.crimeGlobal);
+
+const cdLines = [
+  cdLine("Crime lockout", cooldowns?.crimeGlobal),
+  cdLine("Store Robbery", effStore),
+  cdLine("Heist", effHeist),
+  cdLine("Major Heist", effMajor),
+].join("\n");
 
   return new EmbedBuilder()
     .setTitle("🕶️ Crime")
