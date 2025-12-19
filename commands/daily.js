@@ -3,9 +3,6 @@ const { pool } = require("../utils/db");
 const { ensureUser, creditUser } = require("../utils/economy");
 const { guardNotJailed } = require("../utils/jail");
 
-// 🚔 Jail guard
-const { guardNotJailed } = require("../utils/jail");
-
 function nextSydneyMidnightUTC() {
   // Get "now" in Australia/Sydney, then compute next midnight there
   const now = new Date();
