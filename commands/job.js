@@ -751,9 +751,14 @@ module.exports = {
   data: new SlashCommandBuilder().setName("job").setDescription("Open the job board and work for money."),
 
   async execute(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
-    if (!(await guardNotJailed(interaction))) return; // slash guard
+    if (!interaction.inGuild()) {
+      return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
+
+    // 🚔 Jail gate (true = BLOCK)
+    if (await guardNotJailed(interaction)) return;
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
     const guildId = interaction.guildId;
     const userId = interaction.user.id;
@@ -955,8 +960,8 @@ module.exports = {
           return btn.reply({ content: "❌ This board isn’t for you.", flags: MessageFlags.Ephemeral }).catch(() => {});
         }
 
-        // ✅ FIXED: Jail guard logic was inverted (was returning for non-jailed users)
-        if (!(await guardNotJailedComponent(btn))) return;
+        // 🚔 Jail gate for buttons (true = BLOCK)
+        if (await guardNotJailedComponent(btn)) return;
 
         // ✅ Ack once for safety (prevents "This interaction failed" if a branch forgets deferUpdate)
         await ensureAck(btn);

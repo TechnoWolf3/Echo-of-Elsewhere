@@ -58,11 +58,17 @@ module.exports = {
     .setDescription("Claim your weekly bonus (resets Monday 12am AEST/AEDT)."),
 
   async execute(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
+    if (!interaction.inGuild()) {
+      return interaction.reply({
+        content: "❌ Server only.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+    }
 
-    // 🚔 Jail gate for /weekly
+    // 🚔 Jail gate for /weekly (must be BEFORE defer)
     if (await guardNotJailed(interaction)) return;
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
     const guildId = interaction.guildId;
     const userId = interaction.user.id;

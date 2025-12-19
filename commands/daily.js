@@ -1,6 +1,7 @@
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { pool } = require("../utils/db");
 const { ensureUser, creditUser } = require("../utils/economy");
+const { guardNotJailed } = require("../utils/jail");
 
 // 🚔 Jail guard
 const { guardNotJailed } = require("../utils/jail");
@@ -42,8 +43,17 @@ module.exports = {
     .setDescription("Claim your daily bonus (resets at midnight AEST/AEDT)."),
 
   async execute(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
+    if (!interaction.inGuild()) {
+      return interaction.reply({
+        content: "❌ Server only.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+    }
+
+// 🚔 Jail gate: block /daily while jailed
+if (await guardNotJailed(interaction)) return;
+
+await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
     // 🚔 Jail gate for /daily
     if (await guardNotJailed(interaction)) return;

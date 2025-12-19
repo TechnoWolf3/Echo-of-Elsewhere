@@ -182,11 +182,14 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-    if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
+    if (!interaction.inGuild()) {
+    return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
+}
 
     // 🚔 Jail gate: blocks /blackjack entirely while jailed
     if (await guardNotJailed(interaction)) return;
+
+await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
     const channelId = interaction.channelId;
     const guildId = interaction.guildId;

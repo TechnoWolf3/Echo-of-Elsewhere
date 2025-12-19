@@ -714,11 +714,17 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
+    if (!interaction.inGuild()) {
+      return interaction.reply({
+        content: "❌ Server only.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+    }
 
-    // 🚔 Jail gate for /roulette
+    // 🚔 Jail gate for /roulette (do this BEFORE deferring)
     if (await guardNotJailed(interaction)) return;
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
     const sub = interaction.options.getSubcommand();
     const table = await ensureTable(interaction);

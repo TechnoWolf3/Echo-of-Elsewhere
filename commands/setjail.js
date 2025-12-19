@@ -1,6 +1,7 @@
 // commands/setjail.js
 const { SlashCommandBuilder } = require("discord.js");
-const { setJail, clearJail, getJailInfo } = require("../utils/jail");
+const { setJail, getJailRelease } = require("../utils/jail");
+const { pool } = require("../utils/db");
 
 const JAIL_ADMIN_ROLE_ID = "741251069002121236";
 
@@ -8,15 +9,19 @@ function hasPermission(interaction) {
   return interaction.member?.roles?.cache?.has(JAIL_ADMIN_ROLE_ID);
 }
 
+async function clearJail(guildId, userId) {
+  await pool.query(
+    `DELETE FROM jail WHERE guild_id = $1 AND user_id = $2`,
+    [guildId, userId]
+  );
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("setjail")
     .setDescription("Admin: set, extend, or clear jail time for a user.")
     .addUserOption((o) =>
-      o
-        .setName("user")
-        .setDescription("User to jail / modify")
-        .setRequired(true)
+      o.setName("user").setDescription("User to jail / modify").setRequired(true)
     )
     .addIntegerOption((o) =>
       o
@@ -27,10 +32,7 @@ module.exports = {
         .setRequired(true)
     )
     .addStringOption((o) =>
-      o
-        .setName("reason")
-        .setDescription("Reason (optional)")
-        .setRequired(false)
+      o.setName("reason").setDescription("Reason (optional)").setRequired(false)
     ),
 
   async execute(interaction) {
@@ -56,23 +58,24 @@ module.exports = {
         return interaction.editReply(`🟢 Jail cleared for **${target.username}**.`);
       }
 
-      const existing = await getJailInfo(guildId, target.id);
-
+      // EXTEND if already jailed
+      const existingRelease = await getJailRelease(guildId, target.id);
       let totalMinutes = minutes;
 
-      if (existing) {
-        const remaining = Math.ceil(existing.remainingMs / 60000);
-        totalMinutes += remaining;
+      if (existingRelease) {
+        const remainingMs = existingRelease.getTime() - Date.now();
+        const remainingMin = Math.max(0, Math.ceil(remainingMs / 60000));
+        totalMinutes += remainingMin;
       }
 
-      const releaseAt = new Date(Date.now() + totalMinutes * 60 * 1000);
-      await setJail(guildId, target.id, releaseAt);
+      // setJail expects minutes from NOW (not a Date)
+      const releaseAt = await setJail(guildId, target.id, totalMinutes);
 
       return interaction.editReply(
         `⛓️ **${target.username}** jailed\n` +
-        `• Time: **${totalMinutes} minutes**\n` +
-        `• Release: <t:${Math.floor(releaseAt.getTime() / 1000)}:R>\n` +
-        `• Reason: *${reason}*`
+          `• Time: **${totalMinutes} minutes**\n` +
+          `• Release: <t:${Math.floor(releaseAt.getTime() / 1000)}:R>\n` +
+          `• Reason: *${reason}*`
       );
     } catch (err) {
       console.error("setjail error:", err);
