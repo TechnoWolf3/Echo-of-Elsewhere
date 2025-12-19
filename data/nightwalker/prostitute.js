@@ -298,5 +298,5 @@ module.exports = {
 };
 
 if (process.env.NODE_ENV !== "production") {
-  console.log("[NW] prostitute scenarios loaded:", scenarios.length);
+  console.log("[NW] prostitute scenarios loaded");
 }
