@@ -104,6 +104,19 @@ async function ensureAchievementTables(db) {
     CREATE INDEX IF NOT EXISTS idx_crime_heat_expires
     ON crime_heat (expires_at);
 
+/* -----------------------------
+  Jail (blocks ALL jobs/games)
+-------------------------------- */
+    CREATE TABLE IF NOT EXISTS jail (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      jailed_until TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_jail_jailed_until
+    ON jail (jailed_until);
+
   `;
 
   const clientConn = await db.connect();
