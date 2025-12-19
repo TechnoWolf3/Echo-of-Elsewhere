@@ -3,105 +3,120 @@ const { pool } = require("./db");
 
 const JAIL_KEY = "jail";
 
-function toUnix(date) {
-  return Math.floor(date.getTime() / 1000);
-}
-
-function formatJailBlockMessage(releaseAt, commandCooldownAt = null) {
-  const jailUnix = toUnix(releaseAt);
-
-  if (commandCooldownAt) {
-    const cdUnix = toUnix(commandCooldownAt);
-    return (
-      `🚔 You’re in **jail**.\n` +
-      `⛓️ Release: <t:${jailUnix}:R>\n` +
-      `⏳ Command cooldown: <t:${cdUnix}:R>\n` +
-      `\nYou can’t use economy commands while jailed.`
-    );
-  }
-
-  return (
-    `🚔 You’re in **jail**.\n` +
-    `⛓️ Release: <t:${jailUnix}:R>\n` +
-    `\nYou can’t use economy commands while jailed.`
-  );
-}
-
+/**
+ * Get the jail release time for a user.
+ * Returns Date or null.
+ */
 async function getJailRelease(guildId, userId) {
   const res = await pool.query(
-    `SELECT next_claim_at FROM cooldowns WHERE guild_id=$1 AND user_id=$2 AND key=$3`,
+    `
+    SELECT next_claim_at
+    FROM cooldowns
+    WHERE guild_id = $1 AND user_id = $2 AND key = $3
+    `,
     [guildId, userId, JAIL_KEY]
   );
 
   if (res.rowCount === 0) return null;
 
-  const next = new Date(res.rows[0].next_claim_at);
-  if (Number.isNaN(next.getTime())) return null;
-  return next;
-}
+  const releaseAt = new Date(res.rows[0].next_claim_at);
+  if (Number.isNaN(releaseAt.getTime())) return null;
 
-async function isJailed(guildId, userId) {
-  const releaseAt = await getJailRelease(guildId, userId);
-  if (!releaseAt) return { jailed: false, releaseAt: null };
-
-  const now = new Date();
-  if (now >= releaseAt) return { jailed: false, releaseAt: null };
-
-  return { jailed: true, releaseAt };
-}
-
-async function setJail(guildId, userId, releaseAt) {
-  await pool.query(
-    `INSERT INTO cooldowns (guild_id, user_id, key, next_claim_at)
-     VALUES ($1,$2,$3,$4)
-     ON CONFLICT (guild_id, user_id, key)
-     DO UPDATE SET next_claim_at = EXCLUDED.next_claim_at`,
-    [guildId, userId, JAIL_KEY, releaseAt]
-  );
+  // Expired → cleanup
+  if (releaseAt.getTime() <= Date.now()) {
+    await pool.query(
+      `DELETE FROM cooldowns WHERE guild_id=$1 AND user_id=$2 AND key=$3`,
+      [guildId, userId, JAIL_KEY]
+    );
+    return null;
+  }
 
   return releaseAt;
 }
 
 /**
- * Guard helper for slash commands:
- * - If jailed, edits the deferred reply with a helpful message and returns true.
- * - If not jailed, returns false.
+ * Returns detailed jail info or null.
  */
-async function guardNotJailed(interaction, commandCooldownAt = null) {
-  const guildId = interaction.guildId;
-  const userId = interaction.user.id;
+async function getJailInfo(guildId, userId) {
+  const releaseAt = await getJailRelease(guildId, userId);
+  if (!releaseAt) return null;
 
-  const jail = await isJailed(guildId, userId);
-  if (!jail.jailed) return false;
+  const remainingMs = releaseAt.getTime() - Date.now();
+  if (remainingMs <= 0) return null;
 
-  const msg = formatJailBlockMessage(jail.releaseAt, commandCooldownAt);
-  await interaction.editReply(msg);
-  return true;
+  return {
+    releaseAt,
+    remainingMs,
+  };
 }
 
 /**
- * Guard helper for button interactions (roulette/blackjack panels, etc.)
+ * Returns true if the user is currently jailed.
  */
-async function guardNotJailedComponent(componentInteraction) {
-  const guildId = componentInteraction.guildId;
-  const userId = componentInteraction.user.id;
+async function isJailed(guildId, userId) {
+  const releaseAt = await getJailRelease(guildId, userId);
+  return Boolean(releaseAt);
+}
 
-  const jail = await isJailed(guildId, userId);
-  if (!jail.jailed) return false;
+/**
+ * Set jail until a specific Date.
+ */
+async function setJail(guildId, userId, releaseAt) {
+  await pool.query(
+    `
+    INSERT INTO cooldowns (guild_id, user_id, key, next_claim_at)
+    VALUES ($1, $2, $3, $4)
+    ON CONFLICT (guild_id, user_id, key)
+    DO UPDATE SET next_claim_at = EXCLUDED.next_claim_at
+    `,
+    [guildId, userId, JAIL_KEY, releaseAt]
+  );
+}
 
-  const msg = formatJailBlockMessage(jail.releaseAt);
-  if (componentInteraction.deferred || componentInteraction.replied) {
-    await componentInteraction.editReply(msg);
-  } else {
-    await componentInteraction.reply({ content: msg, ephemeral: true });
-  }
-  return true;
+/**
+ * Clear jail immediately.
+ */
+async function clearJail(guildId, userId) {
+  await pool.query(
+    `DELETE FROM cooldowns WHERE guild_id=$1 AND user_id=$2 AND key=$3`,
+    [guildId, userId, JAIL_KEY]
+  );
+}
+
+/**
+ * Slash-command guard — blocks execution if jailed.
+ */
+async function guardNotJailed(interaction) {
+  const jailedUntil = await getJailRelease(interaction.guildId, interaction.user.id);
+  if (!jailedUntil) return true;
+
+  await interaction.editReply({
+    content: `⛓️ You are jailed until <t:${Math.floor(jailedUntil.getTime() / 1000)}:R>.`,
+    ephemeral: true,
+  });
+  return false;
+}
+
+/**
+ * Component/button guard — blocks interaction if jailed.
+ */
+async function guardNotJailedComponent(interaction) {
+  const jailedUntil = await getJailRelease(interaction.guildId, interaction.user.id);
+  if (!jailedUntil) return true;
+
+  await interaction.reply({
+    content: `⛓️ You are jailed until <t:${Math.floor(jailedUntil.getTime() / 1000)}:R>.`,
+    ephemeral: true,
+  });
+  return false;
 }
 
 module.exports = {
   getJailRelease,
+  getJailInfo,
   isJailed,
   setJail,
+  clearJail,
   guardNotJailed,
   guardNotJailedComponent,
 };
