@@ -15,12 +15,52 @@ const { Pool } = require("pg");
 // ✅ Achievements JSON loader
 const { loadAchievementsFromJson } = require("./utils/achievementsLoader");
 
-// ✅ Achievement helpers (you already have these in your project)
-const {
-  unlockAchievement,
-  fetchAchievementInfo,
-  announceAchievement,
-} = require("./utils/achievements");
+// ✅ Achievement engine (real implementation)
+const achievementEngine = require("./utils/achievementEngine");
+
+// ✅ Export-safe helpers:
+// If your engine already exports these, we'll use them.
+// If not, we provide safe defaults that match what index.js expects.
+const unlockAchievement = achievementEngine.unlockAchievement;
+
+const fetchAchievementInfo =
+  achievementEngine.fetchAchievementInfo ||
+  (async (db, achievementId) => {
+    try {
+      const res = await db.query(
+        `SELECT id, name, description, category, hidden, reward_coins, reward_role_id, sort_order
+         FROM achievements
+         WHERE id = $1`,
+        [achievementId]
+      );
+      return res.rows?.[0] ?? null;
+    } catch (e) {
+      console.error("[ACH] fetchAchievementInfo fallback failed:", e);
+      return null;
+    }
+  });
+
+const announceAchievement =
+  achievementEngine.announceAchievement ||
+  (async (channel, userId, info) => {
+    try {
+      if (!channel || !info) return;
+
+      const reward = Number(info.reward_coins || 0);
+      const embed = new EmbedBuilder()
+        .setTitle("🏆 Achievement Unlocked!")
+        .setDescription(`**<@${userId}>** unlocked **${info.name}**`)
+        .addFields(
+          { name: "Description", value: info.description || "—" },
+          { name: "Category", value: info.category || "General", inline: true },
+          { name: "Reward", value: reward > 0 ? `+$${reward.toLocaleString()}` : "None", inline: true }
+        );
+
+      await channel.send({ embeds: [embed] }).catch(() => {});
+    } catch (e) {
+      console.error("[ACH] announceAchievement fallback failed:", e);
+    }
+  });
 
 // -----------------------------
 // Discord client
@@ -209,7 +249,6 @@ async function syncAchievementsFromJson(db) {
   const data = loadAchievementsFromJson();
   if (!Array.isArray(data) || data.length === 0) return 0;
 
-  // Upsert achievements
   const clientConn = await db.connect();
   try {
     for (const a of data) {
@@ -261,7 +300,6 @@ function loadCommands() {
     const filePath = path.join(commandsPath, file);
 
     try {
-      // Clear require cache on hot reload deploys (Railway sometimes reuses)
       delete require.cache[require.resolve(filePath)];
       const command = require(filePath);
 
@@ -292,7 +330,6 @@ client.once(Events.ClientReady, async () => {
       const count = await syncAchievementsFromJson(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements.json`);
 
-      // Optional: re-sync every hour
       setInterval(() => syncAchievementsFromJson(client.db), 60 * 60_000);
     } catch (e) {
       console.error("🏆 [achievements/economy] init failed:", e);
@@ -308,7 +345,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   const command = client.commands.get(interaction.commandName);
 
-  // ✅ Fallback so Discord never shows "The application did not respond"
   if (!command) {
     console.warn(`[CMD] Command not loaded: /${interaction.commandName}`);
     try {
@@ -328,7 +364,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
   } catch (e) {
     console.error("Command error:", e);
 
-    // Don't double-respond
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply({
@@ -365,7 +400,6 @@ client.on(Events.MessageCreate, async (message) => {
     const guildId = message.guild.id;
     const userId = message.author.id;
 
-    // Increment message count
     const res = await db.query(
       `INSERT INTO public.message_stats (guild_id, user_id, messages)
        VALUES ($1, $2, 1)
@@ -377,7 +411,6 @@ client.on(Events.MessageCreate, async (message) => {
 
     const messages = Number(res.rows?.[0]?.messages ?? 0);
 
-    // Unlock milestones exactly when hit (and announce only on first unlock)
     for (const t of MSG_THRESHOLDS) {
       if (messages === t.count) {
         const result = await unlockAchievement({

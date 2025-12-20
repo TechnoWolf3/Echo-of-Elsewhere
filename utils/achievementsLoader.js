@@ -2,7 +2,8 @@ const fs = require("fs");
 const path = require("path");
 
 function loadAchievementsFromJson() {
-  const filePath = path.join(process.cwd(), "data", "achievements.json");
+  // utils/achievementsLoader.js → ../data/achievements.json
+  const filePath = path.join(__dirname, "..", "data", "achievements.json");
   const raw = fs.readFileSync(filePath, "utf8");
   const list = JSON.parse(raw);
 
