@@ -19,8 +19,6 @@ const { loadAchievementsFromJson } = require("./utils/achievementsLoader");
 const achievementEngine = require("./utils/achievementEngine");
 
 // ✅ Export-safe helpers:
-// If your engine already exports these, we'll use them.
-// If not, we provide safe defaults that match what index.js expects.
 const unlockAchievement = achievementEngine.unlockAchievement;
 
 const fetchAchievementInfo =
@@ -53,7 +51,11 @@ const announceAchievement =
         .addFields(
           { name: "Description", value: info.description || "—" },
           { name: "Category", value: info.category || "General", inline: true },
-          { name: "Reward", value: reward > 0 ? `+$${reward.toLocaleString()}` : "None", inline: true }
+          {
+            name: "Reward",
+            value: reward > 0 ? `+$${reward.toLocaleString()}` : "None",
+            inline: true,
+          }
         );
 
       await channel.send({ embeds: [embed] }).catch(() => {});
@@ -66,7 +68,7 @@ const announceAchievement =
 // Discord client
 // -----------------------------
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages], // slash commands only + message tracking
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
 });
 
 client.commands = new Collection();
@@ -209,6 +211,61 @@ async function ensureEconomyTables(db) {
       expires_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id, key)
     );
+
+    -- ✅ If cooldowns table already existed without expires_at, add it safely
+    ALTER TABLE IF EXISTS cooldowns
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+    -- ✅ If an old column name existed (common legacy), rename it to expires_at
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'cooldowns'
+          AND column_name = 'expires'
+      ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'cooldowns'
+          AND column_name = 'expires_at'
+      ) THEN
+        ALTER TABLE cooldowns RENAME COLUMN expires TO expires_at;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'cooldowns'
+          AND column_name = 'expiry'
+      ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'cooldowns'
+          AND column_name = 'expires_at'
+      ) THEN
+        ALTER TABLE cooldowns RENAME COLUMN expiry TO expires_at;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'cooldowns'
+          AND column_name = 'expires_on'
+      ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_name = 'cooldowns'
+          AND column_name = 'expires_at'
+      ) THEN
+        ALTER TABLE cooldowns RENAME COLUMN expires_on TO expires_at;
+      END IF;
+    END $$;
+
+    -- ✅ Ensure expires_at is not null + has a default (covers old rows)
+    UPDATE cooldowns SET expires_at = NOW() WHERE expires_at IS NULL;
+    ALTER TABLE cooldowns ALTER COLUMN expires_at SET NOT NULL;
+    ALTER TABLE cooldowns ALTER COLUMN expires_at SET DEFAULT NOW();
 
     CREATE INDEX IF NOT EXISTS idx_cooldowns_expires
     ON cooldowns (expires_at);
@@ -375,9 +432,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           flags: MessageFlags.Ephemeral,
         });
       }
-    } catch {
-      // swallow
-    }
+    } catch {}
   }
 });
 
