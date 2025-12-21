@@ -58,6 +58,62 @@ const VALUABLE_MAX = 1500;
 const RUN_TIMEOUT_MS = 3 * 60_000;
 
 // =====================
+// OPTIONAL BONUS ITEM (ID ONLY)
+// =====================
+const THEFT_KIT_ITEM_ID = "Crime_Kit";
+// Each decision: reduce heat by extra 1–2 if kit active
+const THEFT_KIT_EXTRA_MIN = 1;
+const THEFT_KIT_EXTRA_MAX = 2;
+
+// ✅ Theft kit: read current uses_remaining
+async function getTheftKitUses(guildId, userId) {
+  const res = await pool.query(
+    `SELECT qty, uses_remaining
+     FROM user_inventory
+     WHERE guild_id=$1 AND user_id=$2 AND item_id=$3`,
+    [guildId, userId, THEFT_KIT_ITEM_ID]
+  );
+
+  if (!res.rowCount) return 0;
+  const qty = Number(res.rows[0].qty || 0);
+  const uses = Number(res.rows[0].uses_remaining || 0);
+  if (qty <= 0) return 0;
+  return uses;
+}
+
+// ✅ Bulletproof: consume uses directly (atomic) and delete row at 0
+async function consumeItemUse(guildId, userId, itemId, usesToConsume = 1) {
+  const n = Math.max(1, Number(usesToConsume || 1));
+
+  const res = await pool.query(
+    `
+    UPDATE user_inventory
+    SET uses_remaining = uses_remaining - $4,
+        updated_at = NOW()
+    WHERE guild_id=$1
+      AND user_id=$2
+      AND item_id=$3
+      AND uses_remaining >= $4
+    RETURNING uses_remaining
+    `,
+    [guildId, userId, itemId, n]
+  );
+
+  if (!res.rowCount) return { ok: false };
+
+  const usesRemaining = Number(res.rows[0].uses_remaining || 0);
+
+  if (usesRemaining <= 0) {
+    await pool.query(
+      `DELETE FROM user_inventory WHERE guild_id=$1 AND user_id=$2 AND item_id=$3`,
+      [guildId, userId, itemId]
+    );
+  }
+
+  return { ok: true, usesRemaining };
+}
+
+// =====================
 // DB HELPERS
 // =====================
 async function addUserBalance(guildId, userId, amount) {
@@ -149,13 +205,19 @@ function normalizeScenarios(raw) {
       .filter(Boolean)
       .map((s, idx) => {
         const id = safeId(s.id ?? `${phase}_${idx}`);
-        const prompt = safeStr(s.prompt ?? s.text ?? s.description, "You size up the situation…");
+        const prompt = safeStr(
+          s.prompt ?? s.text ?? s.description,
+          "You size up the situation…"
+        );
         const choices = Array.isArray(s.choices) ? s.choices : [];
 
         const normChoices = choices
           .filter(Boolean)
           .map((c, cIdx) => ({
-            label: safeStr(c.label ?? c.text ?? `Option ${cIdx + 1}`, `Option ${cIdx + 1}`),
+            label: safeStr(
+              c.label ?? c.text ?? `Option ${cIdx + 1}`,
+              `Option ${cIdx + 1}`
+            ),
             heat: typeof c.heat === "number" ? c.heat : 0,
             lootAdd: typeof c.lootAdd === "number" ? c.lootAdd : 0,
 
@@ -200,12 +262,29 @@ function buildRow(phaseKey, scenarioId, choices) {
   return row;
 }
 
-function renderScenario(phaseKey, scenario, heat) {
+function renderScenario(phaseKey, scenario, heat, theftKitInfo = null) {
   const embed = new EmbedBuilder()
     .setTitle("🏪 Store Robbery")
     .setDescription(safeStr(scenario?.prompt, "You hesitate, watching the counter…"))
-    .addFields({ name: "🔥 Heat", value: `${clamp(heat, 0, 100)}/100`, inline: true })
-    .setFooter({ text: "Heat carries forward only in Crime." });
+    .addFields({ name: "🔥 Heat", value: `${clamp(heat, 0, 100)}/100`, inline: true });
+
+  if (theftKitInfo?.active) {
+    const uses = Number(theftKitInfo.usesStart || 0);
+    embed.addFields({
+      name: "🛠️ Theft Kit",
+      value: `Active (${uses} uses left)\nBonus: -${theftKitInfo.bonusTotal || 0} heat so far`,
+      inline: true,
+    });
+    if (typeof theftKitInfo.lastBonus === "number") {
+      embed.addFields({
+        name: "✨ Last Bonus",
+        value: `-${theftKitInfo.lastBonus} heat`,
+        inline: true,
+      });
+    }
+  }
+
+  embed.setFooter({ text: "Heat carries forward only in Crime." });
 
   const row = buildRow(phaseKey, safeId(scenario?.id, "x"), scenario?.choices || []);
   return { embed, components: [row] };
@@ -257,10 +336,8 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
     const guildId = interaction.guildId;
     const userId = interaction.user.id;
 
-    // Heat starts from lingering crime heat
     let heat = clamp(Number(context.lingeringHeat || 0), 0, 100);
 
-    // evidence flags
     let evidenceRisk = false;
     let evidenceCleared = false;
     let usedCar = false;
@@ -268,7 +345,22 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
     let witnessRisk = false;
     let crowdBlendUsed = false;
 
-    // resolve once
+    // ✅ Theft kit run state (optional bonus)
+    let theftKitUsesStart = 0;
+    let theftKitActive = false;
+    let theftKitBonusTotal = 0;
+    let theftKitLastBonus = null;
+    let theftKitConsumed = false;
+    let theftKitUsesRemainingAfter = null;
+
+    try {
+      theftKitUsesStart = await getTheftKitUses(guildId, userId);
+      theftKitActive = theftKitUsesStart > 0;
+    } catch {
+      theftKitActive = false;
+      theftKitUsesStart = 0;
+    }
+
     let finished = false;
     const finishOnce = (payload) => {
       if (finished) return;
@@ -276,8 +368,6 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       resolve(payload);
     };
 
-    // ✅ IMPORTANT: phases must match your scenarios file:
-    // approach, method, greed, exit, aftermath
     const phases = ["approach", "method", "greed", "exit", "aftermath"];
     const stepCount = randInt(MIN_STEPS, MAX_STEPS);
     const chosenPhases = phases.slice(0, stepCount);
@@ -300,7 +390,6 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
 
     let phaseIndex = 0;
 
-    // Collector attached ONLY to the board message
     const message = await interaction.fetchReply();
 
     const collector = message.createMessageComponentCollector({
@@ -314,7 +403,20 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       }
 
       const { phase, scenario } = current;
-      const { embed, components } = renderScenario(phase, scenario, heat);
+      const { embed, components } = renderScenario(
+        phase,
+        scenario,
+        heat,
+        theftKitActive
+          ? {
+              active: true,
+              usesStart: theftKitUsesStart,
+              bonusTotal: theftKitBonusTotal,
+              lastBonus: theftKitLastBonus,
+            }
+          : null
+      );
+
       await interaction.editReply({ content: null, embeds: [embed], components });
     }
 
@@ -326,9 +428,7 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       if (usedCar) chance += 0.10;
       if (witnessRisk) chance += 0.08;
 
-      // crowd blend helps reduce identification
       if (crowdBlendUsed) chance -= 0.08;
-
       if (evidenceCleared) chance -= 0.12;
 
       chance = clamp(chance, 0, 0.60);
@@ -342,13 +442,25 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       if (roll >= chance) return 0;
 
       const minutes = randInt(JAIL_MIN_MINUTES, JAIL_MAX_MINUTES);
-      // ✅ Pass minutes (not a Date) — jail util handles timestamp safely
       await setJail(guildId, userId, minutes);
       return minutes;
     }
 
     async function resolveAndFinish() {
       await applyCooldowns(guildId, userId);
+
+      // ✅ Consume 1 theft kit use per run (only if active at start)
+      if (theftKitActive && !theftKitConsumed) {
+        try {
+          const useRes = await consumeItemUse(guildId, userId, THEFT_KIT_ITEM_ID, 1);
+          if (useRes?.ok) {
+            theftKitConsumed = true;
+            theftKitUsesRemainingAfter = Number(useRes.usesRemaining ?? 0);
+          }
+        } catch {
+          // Avoid punishing player due to DB errors
+        }
+      }
 
       const eventNotes = applyRandomRunEvents();
 
@@ -394,9 +506,23 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
         }
       }
 
+      if (theftKitActive) {
+        const usesLeftText =
+          typeof theftKitUsesRemainingAfter === "number"
+            ? `${theftKitUsesRemainingAfter}`
+            : "unknown";
+
+        resultLines.push(
+          "",
+          `🛠️ Theft Kit bonus applied: **-${theftKitBonusTotal} heat** across decisions.`,
+          theftKitConsumed
+            ? `🧰 Theft Kit use consumed: **1** (uses left: **${usesLeftText}**)`
+            : `🧰 Theft Kit: **active** (use not consumed due to an error)`
+        );
+      }
+
       if (eventNotes.notes?.length) resultLines.push("", ...eventNotes.notes);
 
-      // Post-outcome drift
       if (outcome === "clean") heat = clamp(heat - 8, 0, 100);
       if (outcome === "spotted") heat = clamp(heat + 5, 0, 100);
       if (outcome === "partial") heat = clamp(heat + 12, 0, 100);
@@ -446,12 +572,11 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       const scenarioId = parts[2];
       const choiceIndex = Number(parts[3]);
 
-      const pool = scenarios[phase] || [];
-      const scenario = pool.find((s) => s.id === scenarioId);
+      const poolList = scenarios[phase] || [];
+      const scenario = poolList.find((s) => s.id === scenarioId);
       const choice = scenario?.choices?.[choiceIndex];
       if (!choice) return;
 
-      // apply effects
       if (typeof choice.heat === "number") heat += choice.heat;
 
       if (choice.evidenceRisk) evidenceRisk = true;
@@ -460,6 +585,13 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       if (choice.timerRisk) timerRisk = true;
       if (choice.witnessRisk) witnessRisk = true;
       if (choice.crowdBlend) crowdBlendUsed = true;
+
+      if (theftKitActive) {
+        const extra = randInt(THEFT_KIT_EXTRA_MIN, THEFT_KIT_EXTRA_MAX);
+        heat -= extra;
+        theftKitBonusTotal += extra;
+        theftKitLastBonus = extra;
+      }
 
       heat = clamp(heat, 0, 100);
 

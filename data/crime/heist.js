@@ -23,7 +23,7 @@ const MODES = {
     label: "🏦 Heist",
     crimeKey: "crime_heist",
     cooldownMinutes: 12 * 60, // 12h
-    tiers: { clean: 18, spotted: 35, partial: 60, bustedHard: 90 },
+    tiers: { clean: 25, spotted: 50, partial: 75, bustedHard: 85 },
     payouts: {
       clean: [30_000, 45_000],
       spotted: [22_000, 36_000],
@@ -80,6 +80,62 @@ const POST_DRIFT = {
   busted: +30,
   busted_hard: +40,
 };
+
+// ============================================================
+// OPTIONAL BONUS ITEM (ID ONLY)
+// ============================================================
+
+const THEFT_KIT_ITEM_ID = "Crime_Kit";
+const THEFT_KIT_EXTRA_MIN = 1; // per decision
+const THEFT_KIT_EXTRA_MAX = 2; // per decision
+
+// Read current uses_remaining for Theft Kit
+async function getTheftKitUses(guildId, userId) {
+  const res = await pool.query(
+    `SELECT qty, uses_remaining
+     FROM user_inventory
+     WHERE guild_id=$1 AND user_id=$2 AND item_id=$3`,
+    [guildId, userId, THEFT_KIT_ITEM_ID]
+  );
+
+  if (!res.rowCount) return 0;
+  const qty = Number(res.rows[0].qty || 0);
+  const uses = Number(res.rows[0].uses_remaining || 0);
+  if (qty <= 0) return 0;
+  return uses;
+}
+
+// ✅ Bulletproof: consume uses directly (atomic) and delete row at 0
+async function consumeItemUse(guildId, userId, itemId, usesToConsume = 1) {
+  const n = Math.max(1, Number(usesToConsume || 1));
+
+  const res = await pool.query(
+    `
+    UPDATE user_inventory
+    SET uses_remaining = uses_remaining - $4,
+        updated_at = NOW()
+    WHERE guild_id=$1
+      AND user_id=$2
+      AND item_id=$3
+      AND uses_remaining >= $4
+    RETURNING uses_remaining
+    `,
+    [guildId, userId, itemId, n]
+  );
+
+  if (!res.rowCount) return { ok: false };
+
+  const usesRemaining = Number(res.rows[0].uses_remaining || 0);
+
+  if (usesRemaining <= 0) {
+    await pool.query(
+      `DELETE FROM user_inventory WHERE guild_id=$1 AND user_id=$2 AND item_id=$3`,
+      [guildId, userId, itemId]
+    );
+  }
+
+  return { ok: true, usesRemaining };
+}
 
 // ============================================================
 // Helpers
@@ -170,7 +226,12 @@ async function applyCooldowns(guildId, userId, modeCfg) {
     GLOBAL_LOCKOUT_KEY,
     GLOBAL_LOCKOUT_MINUTES
   );
-  await setCooldownMinutes(guildId, userId, modeCfg.crimeKey, modeCfg.cooldownMinutes);
+  await setCooldownMinutes(
+    guildId,
+    userId,
+    modeCfg.crimeKey,
+    modeCfg.cooldownMinutes
+  );
 }
 
 // ============================================================
@@ -227,17 +288,36 @@ function buildRunPlan() {
 // Rendering
 // ============================================================
 
-function renderScenario({ modeCfg, phase, stepIndex, totalSteps, scenario, heat }) {
+function renderScenario({
+  modeCfg,
+  phase,
+  stepIndex,
+  totalSteps,
+  scenario,
+  heat,
+  theftKitInfo = null,
+}) {
+  const lines = [
+    `Step **${stepIndex + 1}** / **${totalSteps}**`,
+    `🔥 Heat: **${clamp(heat, 0, 100)}** / 100`,
+  ];
+
+  if (theftKitInfo?.active) {
+    lines.push(
+      `🛠️ Theft Kit: **Active** (${Number(theftKitInfo.usesStart || 0)} uses left) • Bonus so far: **-${Number(
+        theftKitInfo.bonusTotal || 0
+      )}**`
+    );
+    if (typeof theftKitInfo.lastBonus === "number") {
+      lines.push(`✨ Last bonus: **-${theftKitInfo.lastBonus}** heat`);
+    }
+  }
+
+  lines.push("", safeLabel(scenario?.text || "…", 3500));
+
   const embed = new EmbedBuilder()
     .setTitle(`${modeCfg.label} • ${safeLabel(String(phase).toUpperCase(), 24)}`)
-    .setDescription(
-      [
-        `Step **${stepIndex + 1}** / **${totalSteps}**`,
-        `🔥 Heat: **${clamp(heat, 0, 100)}** / 100`,
-        "",
-        safeLabel(scenario?.text || "…", 3500),
-      ].join("\n")
-    )
+    .setDescription(lines.join("\n"))
     .setFooter({ text: "Choices shape heat, risk, and payout. No obvious “correct” answers." });
 
   const row = new ActionRowBuilder();
@@ -279,7 +359,7 @@ function applyRandomRunEvents() {
   }
 
   if (Math.random() < VALUABLE_FIND_CHANCE) {
-    const gain = randInt(VALUABLE_MIN, VALUABLE_MAX);
+    const gain = randInt(VALUABLE_FIND_CHANCE ? VALUABLE_MIN : 0, VALUABLE_MAX);
     payoutDelta += gain;
     notes.push(`💎 You found extra valuables in the chaos — **+$${gain.toLocaleString()}**.`);
   }
@@ -292,7 +372,7 @@ function applyRandomRunEvents() {
 // ============================================================
 
 function rollIdentifiedLater(flags) {
-  let chance = 0.08; // base (higher than store robbery)
+  let chance = 0.08;
 
   if (flags.leftEvidence) chance += 0.20;
   if (flags.timeOverrun) chance += 0.12;
@@ -303,7 +383,6 @@ function rollIdentifiedLater(flags) {
   if (flags.shotsFired) chance += 0.18;
   if (flags.alarmTriggered) chance += 0.14;
 
-  // mitigations
   if (flags.scrubbedFootage) chance -= 0.12;
   if (flags.changedClothes) chance -= 0.08;
   if (flags.ditchedTools) chance -= 0.08;
@@ -329,10 +408,7 @@ async function maybeJail(guildId, userId, outcome, modeCfg) {
   if (Math.random() >= chance) return 0;
 
   const minutes = randInt(modeCfg.jail.minutes[0], modeCfg.jail.minutes[1]);
-
-  // ✅ IMPORTANT: Pass minutes (not a Date) — jail util handles timestamp safely
   await setJail(guildId, userId, minutes);
-
   return minutes;
 }
 
@@ -348,10 +424,8 @@ module.exports = function startHeist(interaction, context = {}) {
     const mode = context.mode === "major" ? "major" : "heist";
     const modeCfg = MODES[mode];
 
-    // heat starts from lingering crime heat
     let heat = clamp(Number(context.lingeringHeat || 0), 0, 100);
 
-    // roll-up flags (booleans like your scenarios file)
     const flags = {
       maskless: false,
       camerasSeenYou: false,
@@ -370,10 +444,24 @@ module.exports = function startHeist(interaction, context = {}) {
       jammedCameras: false,
     };
 
-    // loot additions from scenario choices (applied to final payout)
     let lootAddTotal = 0;
 
-    // resolve once
+    // ✅ Theft kit run state
+    let theftKitUsesStart = 0;
+    let theftKitActive = false;
+    let theftKitBonusTotal = 0;
+    let theftKitLastBonus = null;
+    let theftKitConsumed = false;
+    let theftKitUsesRemainingAfter = null;
+
+    try {
+      theftKitUsesStart = await getTheftKitUses(guildId, userId);
+      theftKitActive = theftKitUsesStart > 0;
+    } catch {
+      theftKitActive = false;
+      theftKitUsesStart = 0;
+    }
+
     let finished = false;
     const finishOnce = (payload) => {
       if (finished) return;
@@ -398,6 +486,14 @@ module.exports = function startHeist(interaction, context = {}) {
         totalSteps: runPlan.length,
         scenario: current.scenario,
         heat,
+        theftKitInfo: theftKitActive
+          ? {
+              active: true,
+              usesStart: theftKitUsesStart,
+              bonusTotal: theftKitBonusTotal,
+              lastBonus: theftKitLastBonus,
+            }
+          : null,
       });
 
       await interaction.editReply({ content: null, embeds: [embed], components }).catch(() => {});
@@ -411,32 +507,37 @@ module.exports = function startHeist(interaction, context = {}) {
     async function resolveAndFinish(reason = "done") {
       collector.stop(reason);
 
-      // Apply cooldowns regardless of outcome
       await applyCooldowns(guildId, userId, modeCfg);
 
-      // Determine outcome BEFORE post drift
+      // ✅ Consume 1 theft kit use per run (only if active at start)
+      if (theftKitActive && !theftKitConsumed) {
+        try {
+          const useRes = await consumeItemUse(guildId, userId, THEFT_KIT_ITEM_ID, 1);
+          if (useRes?.ok) {
+            theftKitConsumed = true;
+            theftKitUsesRemainingAfter = Number(useRes.usesRemaining ?? 0);
+          }
+        } catch {
+          // Avoid punishing players due to errors
+        }
+      }
+
       let outcome = determineOutcomeFromHeat(heat, modeCfg.tiers);
 
-      // Identification roll (may bump clean → spotted)
       const identified = rollIdentifiedLater(flags);
       if (identified && outcome === "clean") outcome = "spotted";
 
-      // Random run spice
       const eventNotes = applyRandomRunEvents();
 
       const resultLines = [];
       const extraLines = [];
 
-      // Compute payout / fine
       if (outcome === "clean" || outcome === "spotted" || outcome === "partial") {
         let payout = computePayout(outcome, modeCfg);
-
-        // Apply scenario loot adds + random events
         payout += lootAddTotal;
         payout += eventNotes.payoutDelta;
 
         const finalPayout = Math.max(0, payout);
-
         if (finalPayout > 0) await addUserBalance(guildId, userId, finalPayout);
 
         if (outcome === "clean") resultLines.push(`✅ Clean run. You pocket **$${finalPayout.toLocaleString()}**.`);
@@ -472,6 +573,20 @@ module.exports = function startHeist(interaction, context = {}) {
 
       if (eventNotes.notes?.length) extraLines.push(...eventNotes.notes);
 
+      if (theftKitActive) {
+        const usesLeftText =
+          typeof theftKitUsesRemainingAfter === "number"
+            ? `${theftKitUsesRemainingAfter}`
+            : "unknown";
+
+        extraLines.push(
+          `🛠️ Theft Kit bonus applied: **-${theftKitBonusTotal} heat** across decisions.`,
+          theftKitConsumed
+            ? `🧰 Theft Kit use consumed: **1** (uses left: **${usesLeftText}**)`
+            : `🧰 Theft Kit: **active** (use not consumed due to an error)`
+        );
+      }
+
       const finalHeat = finalizeHeat(outcome);
 
       const embed = new EmbedBuilder()
@@ -482,7 +597,6 @@ module.exports = function startHeist(interaction, context = {}) {
 
       await interaction.editReply({ embeds: [embed], components: [] }).catch(() => {});
 
-      // callback so /job can persist heat TTL
       try {
         if (typeof context.onHeistComplete === "function") {
           await context.onHeistComplete({ outcome, finalHeat, identified, mode });
@@ -495,7 +609,6 @@ module.exports = function startHeist(interaction, context = {}) {
     collector.on("collect", async (btn) => {
       try {
         if (btn.user.id !== userId) {
-          // ✅ Use flags instead of deprecated ephemeral: true
           return btn.reply({ content: "❌ This run isn’t for you.", flags: 64 }).catch(() => {});
         }
         await btn.deferUpdate().catch(() => {});
@@ -517,7 +630,6 @@ module.exports = function startHeist(interaction, context = {}) {
         }
 
         if (choice) {
-          // heat uses heatMajor if major mode
           const heatDelta =
             mode === "major" && typeof choice.heatMajor === "number"
               ? Number(choice.heatMajor)
@@ -525,7 +637,13 @@ module.exports = function startHeist(interaction, context = {}) {
 
           heat = clamp(heat + heatDelta, 0, 100);
 
-          // loot add uses lootAddMajor if major mode
+          if (theftKitActive) {
+            const extra = randInt(THEFT_KIT_EXTRA_MIN, THEFT_KIT_EXTRA_MAX);
+            heat = clamp(heat - extra, 0, 100);
+            theftKitBonusTotal += extra;
+            theftKitLastBonus = extra;
+          }
+
           const lootDelta =
             mode === "major" && typeof choice.lootAddMajor === "number"
               ? Number(choice.lootAddMajor)
@@ -533,7 +651,6 @@ module.exports = function startHeist(interaction, context = {}) {
 
           lootAddTotal += lootDelta;
 
-          // flags: pull booleans directly (matches your scenarios file)
           Object.keys(flags).forEach((k) => {
             if (choice[k] === true) flags[k] = true;
           });
