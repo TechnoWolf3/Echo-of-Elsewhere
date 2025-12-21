@@ -73,14 +73,12 @@ function buildEmbed({ title, content, updatedAt }) {
 
   const embed = new EmbedBuilder().setTitle(safeTitle);
 
-  if (text && text.trim().length > 0) embed.setDescription(text);
-  else embed.setDescription("_No patch notes yet._");
+  if (text && text.trim().length > 0) {
+    embed.setDescription(text);
+  } else {
+    embed.setDescription("_No patch notes yet._");
+  }
 
-  const ts = updatedAt
-    ? Math.floor(new Date(updatedAt).getTime() / 1000)
-    : Math.floor(Date.now() / 1000);
-
-  embed.setFooter({ text: `Last updated: <t:${ts}:f>` });
   return embed;
 }
 
