@@ -27,8 +27,7 @@ const {
 const MIN_BET = 500;
 
 /* =========================================================
-   🏆 ACHIEVEMENTS (BLACKJACK) — easy to edit section
-   - IDs must match data/achievements.json
+   🏆 ACHIEVEMENTS (BLACKJACK)
 ========================================================= */
 
 const BJ_ACH = {
@@ -49,7 +48,6 @@ const BJ_ANNOUNCE = {
   USE_GAME_CHANNEL: true,
 };
 
-// Helper: fetch full achievement info from DB for nicer embeds
 async function bjFetchAchievementInfo(db, achievementId) {
   if (!db) return null;
   try {
@@ -66,7 +64,6 @@ async function bjFetchAchievementInfo(db, achievementId) {
   }
 }
 
-// Helper: announce achievement publicly (only called on first unlock)
 async function bjAnnounceAchievement(channel, userId, info) {
   if (!BJ_ANNOUNCE.ENABLED) return;
   if (!channel || !channel.send) return;
@@ -87,19 +84,16 @@ async function bjAnnounceAchievement(channel, userId, info) {
   await channel.send({ embeds: [embed] }).catch(() => {});
 }
 
-// Safe wrapper: unlock + optional public announce
 async function bjUnlock(thing, guildId, userId, achievementId) {
   try {
     const db = thing?.client?.db;
     if (!db) return null;
 
     const cleanUserId = String(userId).replace(/[<@!>]/g, "");
-
     const res = await unlockAchievement({ db, guildId, userId: cleanUserId, achievementId });
     if (!res?.unlocked) return res;
 
     const info = await bjFetchAchievementInfo(db, achievementId);
-
     const channel = BJ_ANNOUNCE.USE_GAME_CHANNEL ? thing.channel : null;
     await bjAnnounceAchievement(channel, cleanUserId, info);
 
@@ -111,7 +105,6 @@ async function bjUnlock(thing, guildId, userId, achievementId) {
   }
 }
 
-// Helper: increment blackjack win count and unlock at 10 wins
 async function bjIncrementWinsAndMaybeUnlock(thing, guildId, userId) {
   try {
     const db = thing?.client?.db;
@@ -129,23 +122,18 @@ async function bjIncrementWinsAndMaybeUnlock(thing, guildId, userId) {
     );
 
     const wins = Number(res.rows?.[0]?.wins ?? 0);
-
-    if (wins === 10) {
-      await bjUnlock(thing, guildId, cleanUserId, BJ_ACH.TEN_WINS);
-    }
+    if (wins === 10) await bjUnlock(thing, guildId, cleanUserId, BJ_ACH.TEN_WINS);
   } catch (e) {
     console.error("bjIncrementWinsAndMaybeUnlock failed:", e);
   }
 }
 
-// Trigger: call this when a bet is successfully PAID (debit OK) — betAmount is stake only
 async function bjOnBetPaid(thing, guildId, userId, betAmount) {
   if (Number(betAmount) >= BJ_RULES.HIGH_ROLLER_BET) {
     await bjUnlock(thing, guildId, userId, BJ_ACH.HIGH_ROLLER);
   }
 }
 
-// Trigger: call at game end for each player outcome
 async function bjOnFinalOutcome(thing, guildId, outcome) {
   const pv = Number(outcome.playerValue ?? 0);
 
@@ -205,7 +193,7 @@ async function chargeWithCasinoFee({
   const hostSec = await ensureHostSecurity(session, guildId, hostId);
   const playerSec = await getPlayerSecuritySafe(guildId, userId);
 
-  // ✅ DB-backed announcements: only first activation + up/down changes (NO spam)
+  // ✅ DB-backed announcements: only first activation + up/down changes
   try {
     const db = channel?.client?.db;
     const displayName = meta?.displayName || meta?.username || "Unknown";
@@ -243,6 +231,15 @@ async function chargeWithCasinoFee({
   };
 }
 
+// Non-ephemeral “toast” message that auto-deletes
+async function sendTempNotice(channel, content, ms = 6000) {
+  if (!channel?.send) return;
+  try {
+    const m = await channel.send({ content });
+    setTimeout(() => m.delete().catch(() => {}), ms);
+  } catch {}
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("blackjack")
@@ -263,7 +260,8 @@ module.exports = {
     // 🚔 Jail gate: blocks /blackjack entirely while jailed
     if (await guardNotJailed(interaction)) return;
 
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+    // ✅ No longer ephemeral
+    await interaction.deferReply().catch(() => {});
 
     const channelId = interaction.channelId;
     const guildId = interaction.guildId;
@@ -282,37 +280,29 @@ module.exports = {
           return interaction.editReply("❌ A blackjack game is already in progress in this channel.");
         }
 
-        // join if not already
         if (!session.players.has(interaction.user.id)) {
           const joinRes = session.addPlayer(interaction.user);
           if (!joinRes.ok) return interaction.editReply(`❌ ${joinRes.msg}`);
           await session.updatePanel();
         }
 
-        // Ensure host base security is locked once per session
         await ensureHostSecurity(session, guildId, session.hostId);
 
-        // Optional bet set / adjust
         if (bet != null) {
-          if (bet < MIN_BET) {
-            return interaction.editReply(`❌ Minimum bet is $${MIN_BET.toLocaleString()}.`);
-          }
+          if (bet < MIN_BET) return interaction.editReply(`❌ Minimum bet is $${MIN_BET.toLocaleString()}.`);
 
           const p = session.players.get(interaction.user.id);
           if (!p) return interaction.editReply("❌ You’re not in the game.");
 
-          // If already paid, allow changing by charging/refunding the DIFFERENCE
+          // already paid and changing bet
           if (p.paid && p.bet != null) {
             const oldBet = Number(p.bet);
             const newBet = Number(bet);
-            if (newBet === oldBet) {
-              return interaction.editReply("✅ Your bet is already set to that amount.");
-            }
+            if (newBet === oldBet) return interaction.editReply("✅ Your bet is already set to that amount.");
 
             const delta = newBet - oldBet;
 
             if (delta > 0) {
-              // charge extra (delta) + fee
               const charge = await chargeWithCasinoFee({
                 guildId,
                 userId: interaction.user.id,
@@ -331,70 +321,57 @@ module.exports = {
                 hostId: session.hostId,
               });
 
-              if (!charge.ok) {
-                return interaction.editReply("❌ You don’t have enough balance to increase your bet.");
-              }
+              if (!charge.ok) return interaction.editReply("❌ You don’t have enough balance to increase your bet.");
 
-              // Bank receives stake delta
               await addServerBank(guildId, delta, "blackjack_bank_buyin_delta", {
-                channelId,
-                gameId: session.gameId,
-                userId: interaction.user.id,
-                delta,
+                channelId, gameId: session.gameId, userId: interaction.user.id, delta,
               });
 
-              // Bank receives fee portion (if any)
               if (charge.feeAmount > 0) {
                 await addServerBank(guildId, charge.feeAmount, "blackjack_fee_bank_delta", {
-                  channelId,
-                  gameId: session.gameId,
-                  userId: interaction.user.id,
-                  feeAmount: charge.feeAmount,
-                  effectiveFeePct: charge.effectiveFeePct,
+                  channelId, gameId: session.gameId, userId: interaction.user.id,
+                  feeAmount: charge.feeAmount, effectiveFeePct: charge.effectiveFeePct,
                 });
               }
 
               p.bet = newBet;
               p.paid = true;
 
-              // 🏆 Achievement trigger: bet paid (increase) based on NEW stake
               await bjOnBetPaid(interaction, guildId, interaction.user.id, newBet);
-
               await session.updatePanel();
+
               return interaction.editReply(
                 `✅ Bet increased to **$${newBet.toLocaleString()}**.\n` +
-                  `Total charged: **$${charge.totalCharge.toLocaleString()}** (delta $${delta.toLocaleString()} + fee $${charge.feeAmount.toLocaleString()}).`
-              );
-            } else {
-              // refund stake difference (subject to bank protection)
-              // NOTE: Security fees are NOT refunded on bet decreases (silent house edge).
-              const refundAmt = Math.abs(delta);
-
-              const refund = await bankToUserIfEnough(
-                guildId,
-                interaction.user.id,
-                refundAmt,
-                "blackjack_bet_decrease_refund",
-                { channelId, gameId: session.gameId, from: oldBet, to: newBet, refundAmt }
-              );
-
-              if (!refund.ok) {
-                return interaction.editReply(
-                  "⚠️ The server bank can’t cover that bet decrease refund right now. Try again later or pick a higher bet."
-                );
-              }
-
-              p.bet = newBet;
-              p.paid = true;
-
-              await session.updatePanel();
-              return interaction.editReply(
-                `✅ Bet decreased to **$${newBet.toLocaleString()}** (refunded **$${refundAmt.toLocaleString()}**).`
+                `Total charged: **$${charge.totalCharge.toLocaleString()}** (delta $${delta.toLocaleString()} + fee $${charge.feeAmount.toLocaleString()}).`
               );
             }
+
+            // delta < 0: refund only stake (no fee refunds)
+            const refundAmt = Math.abs(delta);
+            const refund = await bankToUserIfEnough(
+              guildId,
+              interaction.user.id,
+              refundAmt,
+              "blackjack_bet_decrease_refund",
+              { channelId, gameId: session.gameId, from: oldBet, to: newBet, refundAmt }
+            );
+
+            if (!refund.ok) {
+              return interaction.editReply(
+                "⚠️ The server bank can’t cover that bet decrease refund right now. Try again later or pick a higher bet."
+              );
+            }
+
+            p.bet = newBet;
+            p.paid = true;
+            await session.updatePanel();
+
+            return interaction.editReply(
+              `✅ Bet decreased to **$${newBet.toLocaleString()}** (refunded **$${refundAmt.toLocaleString()}**).`
+            );
           }
 
-          // Not paid yet: normal set + debit stake+fee
+          // Not paid yet: set + debit stake+fee
           const setRes = session.setBet(interaction.user.id, bet);
           if (!setRes.ok) return interaction.editReply(`❌ ${setRes.msg}`);
 
@@ -421,27 +398,18 @@ module.exports = {
             return interaction.editReply("❌ You don’t have enough balance for that bet + fee.");
           }
 
-          // Bank receives stake
           await addServerBank(guildId, bet, "blackjack_bank_buyin", {
-            channelId,
-            gameId: session.gameId,
-            userId: interaction.user.id,
+            channelId, gameId: session.gameId, userId: interaction.user.id,
           });
 
-          // Bank receives fee
           if (charge.feeAmount > 0) {
             await addServerBank(guildId, charge.feeAmount, "blackjack_fee_bank_buyin", {
-              channelId,
-              gameId: session.gameId,
-              userId: interaction.user.id,
-              feeAmount: charge.feeAmount,
-              effectiveFeePct: charge.effectiveFeePct,
+              channelId, gameId: session.gameId, userId: interaction.user.id,
+              feeAmount: charge.feeAmount, effectiveFeePct: charge.effectiveFeePct,
             });
           }
 
           p.paid = true;
-
-          // 🏆 Achievement trigger: bet paid (stake only)
           await bjOnBetPaid(interaction, guildId, interaction.user.id, bet);
 
           await session.updatePanel();
@@ -449,34 +417,29 @@ module.exports = {
 
           return interaction.editReply(
             `✅ Bet set: **$${bet.toLocaleString()}** (buy-in paid).\n` +
-              `🛡️ Fee: **$${charge.feeAmount.toLocaleString()}**\n` +
-              `🏦 Server bank: **$${bankNow.toLocaleString()}**`
+            `🛡️ Fee: **$${charge.feeAmount.toLocaleString()}**\n` +
+            `🏦 Server bank: **$${bankNow.toLocaleString()}**`
           );
         }
 
         await session.updatePanel();
-        return interaction.editReply(
-          "✅ You’re in. Set or change your bet with: **/blackjack bet:<amount>** (min $500)."
-        );
+        return interaction.editReply("✅ You’re in. Set/change your bet with **/blackjack bet:<amount>**.");
       }
 
       // Create new session
       if (bet != null) {
         if (bet < MIN_BET) return interaction.editReply(`❌ Minimum bet is $${MIN_BET.toLocaleString()}.`);
 
-        // Create session first so we can lock host security and store it
         const session = new BlackjackSession({
           channel: interaction.channel,
           hostId: interaction.user.id,
           guildId,
           maxPlayers: 10,
-          defaultBet: bet, // Join auto-buy-in at this bet
+          defaultBet: bet,
         });
 
-        // Lock host security at table start
         await ensureHostSecurity(session, guildId, interaction.user.id);
 
-        // Pre-charge host stake+fee BEFORE creating panel
         const charge = await chargeWithCasinoFee({
           guildId,
           userId: interaction.user.id,
@@ -493,9 +456,7 @@ module.exports = {
           hostId: interaction.user.id,
         });
 
-        if (!charge.ok) {
-          return interaction.editReply("❌ You don’t have enough balance for that bet + fee.");
-        }
+        if (!charge.ok) return interaction.editReply("❌ You don’t have enough balance for that bet + fee.");
 
         activeGames.set(channelId, session);
         session.addPlayer(interaction.user);
@@ -504,25 +465,17 @@ module.exports = {
         const pl = session.players.get(interaction.user.id);
         if (pl) pl.paid = true;
 
-        // Bank receives stake
         await addServerBank(guildId, bet, "blackjack_bank_buyin", {
-          channelId,
-          gameId: session.gameId,
-          userId: interaction.user.id,
+          channelId, gameId: session.gameId, userId: interaction.user.id,
         });
 
-        // Bank receives fee
         if (charge.feeAmount > 0) {
           await addServerBank(guildId, charge.feeAmount, "blackjack_fee_bank_buyin", {
-            channelId,
-            gameId: session.gameId,
-            userId: interaction.user.id,
-            feeAmount: charge.feeAmount,
-            effectiveFeePct: charge.effectiveFeePct,
+            channelId, gameId: session.gameId, userId: interaction.user.id,
+            feeAmount: charge.feeAmount, effectiveFeePct: charge.effectiveFeePct,
           });
         }
 
-        // 🏆 Achievement trigger: host bet paid (stake only)
         await bjOnBetPaid(interaction, guildId, interaction.user.id, bet);
 
         await session.postOrEditPanel();
@@ -532,12 +485,11 @@ module.exports = {
 
         return interaction.editReply(
           `✅ Blackjack lobby created.\nHost stake: **$${bet.toLocaleString()}** (buy-in paid).\n` +
-            `🛡️ Fee paid: **$${charge.feeAmount.toLocaleString()}**\n` +
-            `Players can click **Join** to auto-buy-in, or run **/blackjack bet:<amount>** to pick their own.`
+          `🛡️ Fee paid: **$${charge.feeAmount.toLocaleString()}**\n` +
+          `Players can click **Join** to auto-buy-in, or run **/blackjack bet:<amount>** to pick their own.`
         );
       }
 
-      // No host bet: normal lobby, no auto-buy-in
       const session = new BlackjackSession({
         channel: interaction.channel,
         hostId: interaction.user.id,
@@ -546,7 +498,6 @@ module.exports = {
         defaultBet: null,
       });
 
-      // Lock host security anyway (so joiners pay host base if higher)
       await ensureHostSecurity(session, guildId, interaction.user.id);
 
       activeGames.set(channelId, session);
@@ -599,7 +550,6 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
       const B = Number(p.bet || 0);
       const pv = p.playerValue;
 
-      // 🏆 Achievement triggers based on final outcomes
       await bjOnFinalOutcome(interaction, guildId, p);
 
       let label = "❌ Lose";
@@ -614,6 +564,7 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
           ...meta,
           userId: p.userId,
           wanted: p.payoutWanted,
+          handIndex: p.handIndex,
         });
 
         if (full.ok) {
@@ -625,28 +576,26 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
               userId: p.userId,
               wanted: p.payoutWanted,
               fallback: "refund_bet",
+              handIndex: p.handIndex,
             });
 
             if (refund.ok) {
               paid = B;
               payoutNotes.push(
-                `⚠️ <@${p.userId}>: The bank couldn’t cover full winnings, so we refunded your bet (**$${B.toLocaleString()}**) instead. Sorry!`
+                `⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover full winnings, refunded bet (**$${B.toLocaleString()}**) instead.`
               );
             } else {
-              payoutNotes.push(
-                `⚠️ <@${p.userId}>: The bank couldn’t cover winnings or a refund right now. Please ping an admin — sorry!`
-              );
+              payoutNotes.push(`⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover payout/refund. Ping an admin.`);
             }
           } else {
-            payoutNotes.push(
-              `⚠️ <@${p.userId}>: The bank couldn’t cover a refund/payout right now. Please ping an admin — sorry!`
-            );
+            payoutNotes.push(`⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover payout/refund. Ping an admin.`);
           }
         }
       }
 
+      const handTag = p.handLabel ? ` (${p.handLabel})` : "";
       const paidText = paid > 0 ? ` → Paid **$${paid.toLocaleString()}**` : "";
-      resultsLines.push(`${p.user} — **${pv}** — ${label}${paidText}`);
+      resultsLines.push(`${p.user}${handTag} — **${pv}** — ${label}${paidText}`);
     }
 
     const dealerLine = `${dealerHand.map(cardStr).join(" ")} (**${dealerValue}**)`;
@@ -663,7 +612,6 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
   }
 
   collector.on("collect", async (i) => {
-    // 🚔 Jail gate for button actions too
     if (await guardNotJailedComponent(i)) return;
 
     await i.deferUpdate().catch(() => {});
@@ -676,13 +624,12 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
     if (action === "join") {
       const res = session.addPlayer(i.user);
       if (!res.ok) {
-        return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+        await sendTempNotice(i.channel, `❌ ${res.msg}`);
+        return;
       }
 
-      // Ensure host base security exists
       await ensureHostSecurity(session, guildId, session.hostId);
 
-      // If host set a default bet, auto-buy-in on Join
       if (session.defaultBet != null) {
         const autoBet = Number(session.defaultBet);
         const p = session.players.get(i.user.id);
@@ -708,50 +655,32 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
         if (!charge.ok) {
           session.removePlayer(i.user.id);
           await session.updatePanel();
-          return i.followUp({
-            content: `❌ You don’t have enough balance to join at **$${autoBet.toLocaleString()}** + fee.`,
-            flags: MessageFlags.Ephemeral,
-          }).catch(() => {});
+          await sendTempNotice(i.channel, `❌ Not enough balance to join at **$${autoBet.toLocaleString()}** + fee.`);
+          return;
         }
 
-        // Bank receives stake
         await addServerBank(guildId, autoBet, "blackjack_bank_buyin", {
-          channelId,
-          gameId: session.gameId,
-          userId: i.user.id,
+          channelId, gameId: session.gameId, userId: i.user.id,
         });
 
-        // Bank receives fee
         if (charge.feeAmount > 0) {
           await addServerBank(guildId, charge.feeAmount, "blackjack_fee_bank_buyin", {
-            channelId,
-            gameId: session.gameId,
-            userId: i.user.id,
-            feeAmount: charge.feeAmount,
-            effectiveFeePct: charge.effectiveFeePct,
+            channelId, gameId: session.gameId, userId: i.user.id,
+            feeAmount: charge.feeAmount, effectiveFeePct: charge.effectiveFeePct,
           });
         }
 
         if (p) p.paid = true;
-
-        // 🏆 Achievement trigger: auto-join bet paid (stake only)
         await bjOnBetPaid(i, guildId, i.user.id, autoBet);
 
         await session.updatePanel();
-        return i.followUp({
-          content:
-            `✅ Joined + buy-in paid: **$${autoBet.toLocaleString()}**.\n` +
-            `🛡️ Fee paid: **$${charge.feeAmount.toLocaleString()}**\n` +
-            `You can change it with **/blackjack bet:<amount>** before the host starts.`,
-          flags: MessageFlags.Ephemeral,
-        }).catch(() => {});
+        await sendTempNotice(i.channel, `✅ Joined with buy-in **$${autoBet.toLocaleString()}** (fee **$${charge.feeAmount.toLocaleString()}**).`);
+        return;
       }
 
       await session.updatePanel();
-      return i.followUp({
-        content: "✅ Joined. Set your bet with **/blackjack bet:<amount>** (min $500).",
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {});
+      await sendTempNotice(i.channel, "✅ Joined. Set your bet with **/blackjack bet:<amount>**.");
+      return;
     }
 
     if (action === "leave") {
@@ -762,23 +691,18 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
 
       const rem = session.removePlayer(i.user.id);
       if (!rem.ok) {
-        return i.followUp({ content: `❌ ${rem.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+        await sendTempNotice(i.channel, `❌ ${rem.msg}`);
+        return;
       }
 
-      // Refund paid stake if possible
-      // NOTE: security fees are NOT refunded (silent house edge).
+      // Refund stake only (no fee refunds)
       if (wasPaid) {
         const refund = await bankToUserIfEnough(guildId, i.user.id, Number(p.bet), "blackjack_leave_refund", {
-          channelId,
-          gameId: session.gameId,
-          userId: i.user.id,
+          channelId, gameId: session.gameId, userId: i.user.id,
         });
 
         if (!refund.ok) {
-          await i.followUp({
-            content: "⚠️ I couldn’t refund your buy-in due to low server bank. Please ping an admin — sorry!",
-            flags: MessageFlags.Ephemeral,
-          }).catch(() => {});
+          await sendTempNotice(i.channel, "⚠️ Couldn’t refund buy-in (low server bank). Ping an admin.");
         }
       }
 
@@ -788,13 +712,12 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
 
     if (action === "start") {
       if (!isHost) {
-        return i.followUp({ content: "❌ Only the host can start.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        await sendTempNotice(i.channel, "❌ Only the host can start.");
+        return;
       }
       if (!session.allPlayersPaid()) {
-        return i.followUp({
-          content: "❌ Everyone must set + pay a bet before starting.",
-          flags: MessageFlags.Ephemeral,
-        }).catch(() => {});
+        await sendTempNotice(i.channel, "❌ Everyone must set + pay a bet before starting.");
+        return;
       }
 
       await session.start();
@@ -804,7 +727,8 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
 
     if (action === "end") {
       if (!isHost) {
-        return i.followUp({ content: "❌ Only the host can end.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        await sendTempNotice(i.channel, "❌ Only the host can end.");
+        return;
       }
       collector.stop("ended_by_host");
       return;
@@ -813,38 +737,120 @@ function wireCollectorHandlers({ collector, session, interaction, guildId, chann
     // PLAY
     if (session.state !== "playing") return;
 
-    if (action === "hand") {
-      const p = session.players.get(i.user.id);
-      if (!p) return i.followUp({ content: "❌ You’re not in this game.", flags: MessageFlags.Ephemeral }).catch(() => {});
-      return i.followUp({
-        content: `🃏 Your hand: ${p.hand.map(cardStr).join(" ")}\nTotal: **${handValue(p.hand)}**`,
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {});
-    }
-
     if (action === "hit") {
       const res = await session.hit(i.user.id);
-      if (!res.ok) return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
-
-      await i.followUp({
-        content: `🃏 You hit.\nYour hand: ${res.player.hand.map(cardStr).join(" ")}\nTotal: **${handValue(res.player.hand)}**`,
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {});
-
+      if (!res.ok) await sendTempNotice(i.channel, `❌ ${res.msg}`);
       if (session.state === "ended") await handleGameEnd();
       return;
     }
 
     if (action === "stand") {
       const res = await session.stand(i.user.id);
-      if (!res.ok) return i.followUp({ content: `❌ ${res.msg}`, flags: MessageFlags.Ephemeral }).catch(() => {});
-
-      await i.followUp({
-        content: `✋ You stood.\nYour hand: ${res.player.hand.map(cardStr).join(" ")}\nTotal: **${handValue(res.player.hand)}**`,
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {});
-
+      if (!res.ok) await sendTempNotice(i.channel, `❌ ${res.msg}`);
       if (session.state === "ended") await handleGameEnd();
+      return;
+    }
+
+    // ✅ DOUBLE DOWN: charge extra bet+fee, bank it, then apply session.doubleDown
+    if (action === "double") {
+      if (!session.canDoubleDown?.(i.user.id)) {
+        await sendTempNotice(i.channel, "❌ Double Down not allowed right now.");
+        return;
+      }
+
+      const extraStake = Number(session.getCurrentHandBet(i.user.id) || 0);
+      if (!extraStake) {
+        await sendTempNotice(i.channel, "❌ Couldn’t find your current bet to double.");
+        return;
+      }
+
+      const charge = await chargeWithCasinoFee({
+        guildId,
+        userId: i.user.id,
+        amountStake: extraStake,
+        type: "blackjack_double_down",
+        meta: {
+          channelId,
+          gameId: session.gameId,
+          username: i.user.username,
+          displayName: i.member?.displayName || i.user.globalName || i.user.username,
+          extraStake,
+        },
+        session,
+        channel: i.channel,
+        hostId: session.hostId,
+      });
+
+      if (!charge.ok) {
+        await sendTempNotice(i.channel, "❌ Not enough balance to double down (including table fee).");
+        return;
+      }
+
+      await addServerBank(guildId, extraStake, "blackjack_bank_double_down", {
+        channelId, gameId: session.gameId, userId: i.user.id, extraStake,
+      });
+
+      if (charge.feeAmount > 0) {
+        await addServerBank(guildId, charge.feeAmount, "blackjack_fee_bank_double_down", {
+          channelId, gameId: session.gameId, userId: i.user.id,
+          feeAmount: charge.feeAmount, effectiveFeePct: charge.effectiveFeePct,
+        });
+      }
+
+      const res = await session.doubleDown(i.user.id);
+      if (!res.ok) await sendTempNotice(i.channel, `❌ ${res.msg}`);
+      if (session.state === "ended") await handleGameEnd();
+      return;
+    }
+
+    // ✅ SPLIT: charge extra bet+fee for the second hand, bank it, then apply session.split
+    if (action === "split") {
+      if (!session.canSplit?.(i.user.id)) {
+        await sendTempNotice(i.channel, "❌ Split not allowed right now.");
+        return;
+      }
+
+      const extraStake = Number(session.getCurrentHandBet(i.user.id) || 0);
+      if (!extraStake) {
+        await sendTempNotice(i.channel, "❌ Couldn’t find your current bet to split.");
+        return;
+      }
+
+      const charge = await chargeWithCasinoFee({
+        guildId,
+        userId: i.user.id,
+        amountStake: extraStake,
+        type: "blackjack_split",
+        meta: {
+          channelId,
+          gameId: session.gameId,
+          username: i.user.username,
+          displayName: i.member?.displayName || i.user.globalName || i.user.username,
+          extraStake,
+        },
+        session,
+        channel: i.channel,
+        hostId: session.hostId,
+      });
+
+      if (!charge.ok) {
+        await sendTempNotice(i.channel, "❌ Not enough balance to split (including table fee).");
+        return;
+      }
+
+      await addServerBank(guildId, extraStake, "blackjack_bank_split", {
+        channelId, gameId: session.gameId, userId: i.user.id, extraStake,
+      });
+
+      if (charge.feeAmount > 0) {
+        await addServerBank(guildId, charge.feeAmount, "blackjack_fee_bank_split", {
+          channelId, gameId: session.gameId, userId: i.user.id,
+          feeAmount: charge.feeAmount, effectiveFeePct: charge.effectiveFeePct,
+        });
+      }
+
+      const res = await session.split(i.user.id);
+      if (!res.ok) await sendTempNotice(i.channel, `❌ ${res.msg}`);
       return;
     }
   });

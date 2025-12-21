@@ -24,11 +24,11 @@ function cardStr(c) {
   return `${c.r}${c.s}`;
 }
 
-function handValue(hand) {
+function handValue(cards) {
   let total = 0;
   let aces = 0;
 
-  for (const c of hand) {
+  for (const c of cards) {
     if (c.r === "A") {
       aces++;
       total += 11;
@@ -47,6 +47,15 @@ function handValue(hand) {
   return total;
 }
 
+function isBlackjack(cards) {
+  return cards.length === 2 && handValue(cards) === 21;
+}
+
+function canSplitCards(cards) {
+  if (!cards || cards.length !== 2) return false;
+  return cards[0].r === cards[1].r; // strict: same rank
+}
+
 class BlackjackSession {
   constructor({ channel, hostId, guildId, maxPlayers = 10, defaultBet = null }) {
     this.channel = channel;
@@ -54,7 +63,9 @@ class BlackjackSession {
     this.hostId = hostId;
 
     this.state = "lobby"; // lobby | playing | ended
-    this.players = new Map(); // userId -> { user, hand, status, bet, paid }
+    // userId -> { user, bet, paid, hands: [{cards,status,bet,doubled}], activeHand }
+    this.players = new Map();
+
     this.turnOrder = [];
     this.turnIndex = 0;
 
@@ -68,8 +79,6 @@ class BlackjackSession {
     this.timeout = null;
 
     this.maxPlayers = maxPlayers;
-
-    // NEW: host’s starting bet (used by Join button auto-buy-in)
     this.defaultBet = defaultBet;
 
     this.endHandled = false;
@@ -83,6 +92,23 @@ class BlackjackSession {
     return this.turnOrder[this.turnIndex] ?? null;
   }
 
+  getPlayer(userId) {
+    return this.players.get(userId) || null;
+  }
+
+  // Compatibility helper: returns current active hand object
+  getActiveHand(userId) {
+    const p = this.players.get(userId);
+    if (!p) return null;
+    return p.hands?.[p.activeHand] ?? null;
+  }
+
+  // Used by blackjack.js to know how much to charge for split/double
+  getCurrentHandBet(userId) {
+    const h = this.getActiveHand(userId);
+    return Number(h?.bet || 0);
+  }
+
   addPlayer(user) {
     if (this.state !== "lobby") return { ok: false, msg: "Game already started." };
     if (this.players.has(user.id)) return { ok: false, msg: "You’re already in." };
@@ -90,10 +116,11 @@ class BlackjackSession {
 
     this.players.set(user.id, {
       user,
-      hand: [],
-      status: "Waiting",
       bet: null,
       paid: false,
+      hands: [],        // not dealt yet
+      activeHand: 0,
+      status: "Waiting" // lobby display only
     });
 
     return { ok: true };
@@ -132,15 +159,50 @@ class BlackjackSession {
     this.dealerHand = [this.draw(), this.draw()];
 
     for (const p of this.players.values()) {
-      p.hand = [this.draw(), this.draw()];
-      const v = handValue(p.hand);
-      p.status = (v === 21) ? "Blackjack" : "Playing";
+      const cards = [this.draw(), this.draw()];
+
+      p.hands = [{
+        cards,
+        status: isBlackjack(cards) ? "Blackjack" : "Playing",
+        bet: Number(p.bet || 0),
+        doubled: false,
+      }];
+
+      p.activeHand = 0;
+
+      // overall status used mostly for display
+      p.status = isBlackjack(cards) ? "Blackjack" : "Playing";
     }
 
-    this.turnOrder = [...this.players.keys()].filter(
-      (id) => this.players.get(id)?.status === "Playing"
-    );
+    this.turnOrder = [...this.players.keys()].filter((id) => {
+      const pl = this.players.get(id);
+      return pl && this.playerHasPlayableHand(pl);
+    });
+
     this.turnIndex = 0;
+  }
+
+  playerHasPlayableHand(p) {
+    if (!p?.hands?.length) return false;
+    return p.hands.some((h) => h.status === "Playing");
+  }
+
+  armTurnTimeout() {
+    if (this.timeout) clearTimeout(this.timeout);
+
+    this.timeout = setTimeout(async () => {
+      const pid = this.currentPlayerId();
+      if (!pid) return;
+
+      const p = this.players.get(pid);
+      if (!p) return;
+
+      // auto-stand current active hand (if still playing)
+      const h = p.hands[p.activeHand];
+      if (h && h.status === "Playing") h.status = "Stood";
+
+      await this.advanceTurn();
+    }, 60_000);
   }
 
   async start() {
@@ -159,47 +221,20 @@ class BlackjackSession {
     this.armTurnTimeout();
   }
 
-  armTurnTimeout() {
-    if (this.timeout) clearTimeout(this.timeout);
+  // Move to next playable hand for same player if split; otherwise next player
+  normalizeAfterAction(p) {
+    // If current hand finished, try next hand for this player
+    while (p.activeHand < p.hands.length) {
+      const h = p.hands[p.activeHand];
+      if (h.status === "Playing") return; // still active
+      p.activeHand += 1;
+    }
 
-    this.timeout = setTimeout(async () => {
-      const pid = this.currentPlayerId();
-      if (!pid) return;
-
-      const p = this.players.get(pid);
-      if (p && p.status === "Playing") p.status = "Stood";
-
-      await this.advanceTurn();
-    }, 60_000);
-  }
-
-  async hit(userId) {
-    if (this.state !== "playing") return { ok: false, msg: "Game not active." };
-    if (userId !== this.currentPlayerId()) return { ok: false, msg: "Not your turn." };
-
-    const p = this.players.get(userId);
-    if (!p || p.status !== "Playing") return { ok: false, msg: "You can’t hit right now." };
-
-    p.hand.push(this.draw());
-    const v = handValue(p.hand);
-
-    if (v > 21) p.status = "Busted";
-    else if (v === 21) p.status = "Stood";
-
-    await this.advanceTurn();
-    return { ok: true, player: p };
-  }
-
-  async stand(userId) {
-    if (this.state !== "playing") return { ok: false, msg: "Game not active." };
-    if (userId !== this.currentPlayerId()) return { ok: false, msg: "Not your turn." };
-
-    const p = this.players.get(userId);
-    if (!p || p.status !== "Playing") return { ok: false, msg: "You can’t stand right now." };
-
-    p.status = "Stood";
-    await this.advanceTurn();
-    return { ok: true, player: p };
+    // no more hands to play
+    // keep p.status readable
+    if (p.hands.every((h) => h.status === "Busted")) p.status = "Busted";
+    else if (p.hands.some((h) => h.status === "Blackjack")) p.status = "Blackjack";
+    else p.status = "Done";
   }
 
   async advanceTurn() {
@@ -208,8 +243,23 @@ class BlackjackSession {
     while (this.turnIndex < this.turnOrder.length) {
       const pid = this.turnOrder[this.turnIndex];
       const p = this.players.get(pid);
-      if (!p || p.status !== "Playing") this.turnIndex++;
-      else break;
+
+      if (!p) {
+        this.turnIndex++;
+        continue;
+      }
+
+      // If this player has another playable hand, keep turnIndex
+      if (this.playerHasPlayableHand(p)) {
+        // ensure activeHand points at a playable hand
+        if (p.hands[p.activeHand]?.status !== "Playing") {
+          const idx = p.hands.findIndex((h) => h.status === "Playing");
+          p.activeHand = idx >= 0 ? idx : p.activeHand;
+        }
+        break;
+      }
+
+      this.turnIndex++;
     }
 
     if (this.turnIndex >= this.turnOrder.length) {
@@ -219,6 +269,124 @@ class BlackjackSession {
 
     await this.updatePanel();
     this.armTurnTimeout();
+  }
+
+  async hit(userId) {
+    if (this.state !== "playing") return { ok: false, msg: "Game not active." };
+    if (userId !== this.currentPlayerId()) return { ok: false, msg: "Not your turn." };
+
+    const p = this.players.get(userId);
+    const h = this.getActiveHand(userId);
+    if (!p || !h || h.status !== "Playing") return { ok: false, msg: "You can’t hit right now." };
+
+    h.cards.push(this.draw());
+    const v = handValue(h.cards);
+
+    if (v > 21) h.status = "Busted";
+    else if (v === 21) h.status = "Stood";
+
+    this.normalizeAfterAction(p);
+    await this.advanceTurn();
+    return { ok: true, player: p, hand: h };
+  }
+
+  async stand(userId) {
+    if (this.state !== "playing") return { ok: false, msg: "Game not active." };
+    if (userId !== this.currentPlayerId()) return { ok: false, msg: "Not your turn." };
+
+    const p = this.players.get(userId);
+    const h = this.getActiveHand(userId);
+    if (!p || !h || h.status !== "Playing") return { ok: false, msg: "You can’t stand right now." };
+
+    h.status = "Stood";
+    this.normalizeAfterAction(p);
+    await this.advanceTurn();
+    return { ok: true, player: p, hand: h };
+  }
+
+  canDoubleDown(userId) {
+    const p = this.players.get(userId);
+    const h = this.getActiveHand(userId);
+    if (!p || !h) return false;
+    if (userId !== this.currentPlayerId()) return false;
+    if (h.status !== "Playing") return false;
+    if (h.doubled) return false;
+    if (h.cards.length !== 2) return false;
+    return true;
+  }
+
+  async doubleDown(userId) {
+    if (this.state !== "playing") return { ok: false, msg: "Game not active." };
+    if (!this.canDoubleDown(userId)) return { ok: false, msg: "Double Down not allowed right now." };
+
+    const p = this.players.get(userId);
+    const h = this.getActiveHand(userId);
+
+    // bet doubling is handled here; blackjack.js charges the extra stake+fee before calling this
+    h.bet = Number(h.bet || 0) * 2;
+    h.doubled = true;
+
+    // exactly one card, then auto-stand (or bust)
+    h.cards.push(this.draw());
+    const v = handValue(h.cards);
+    if (v > 21) h.status = "Busted";
+    else h.status = "Stood";
+
+    this.normalizeAfterAction(p);
+    await this.advanceTurn();
+    return { ok: true, player: p, hand: h };
+  }
+
+  canSplit(userId) {
+    const p = this.players.get(userId);
+    const h = this.getActiveHand(userId);
+    if (!p || !h) return false;
+    if (userId !== this.currentPlayerId()) return false;
+    if (this.state !== "playing") return false;
+    if (p.hands.length !== 1) return false; // one split only (simple + safe)
+    if (h.status !== "Playing") return false;
+    if (!canSplitCards(h.cards)) return false;
+    return true;
+  }
+
+  async split(userId) {
+    if (!this.canSplit(userId)) return { ok: false, msg: "Split not allowed right now." };
+
+    const p = this.players.get(userId);
+    const h = this.getActiveHand(userId);
+
+    const baseBet = Number(h.bet || 0);
+    const [c1, c2] = h.cards;
+
+    // blackjack.js charges extra stake+fee before calling this
+    const hand1 = {
+      cards: [c1, this.draw()],
+      status: "Playing",
+      bet: baseBet,
+      doubled: false,
+    };
+
+    const hand2 = {
+      cards: [c2, this.draw()],
+      status: "Playing",
+      bet: baseBet,
+      doubled: false,
+    };
+
+    // if either becomes blackjack immediately, mark it
+    if (isBlackjack(hand1.cards)) hand1.status = "Blackjack";
+    if (isBlackjack(hand2.cards)) hand2.status = "Blackjack";
+
+    p.hands = [hand1, hand2];
+    p.activeHand = 0;
+    p.status = "Playing";
+
+    // if hand1 auto-blackjack, move to hand2 if playable
+    this.normalizeAfterAction(p);
+
+    await this.updatePanel();
+    this.armTurnTimeout();
+    return { ok: true, player: p };
   }
 
   async finishGame() {
@@ -237,28 +405,39 @@ class BlackjackSession {
     const dealerBJ = (dv === 21 && this.dealerHand.length === 2);
 
     const outcomes = [];
+
     for (const [userId, p] of this.players.entries()) {
-      const pv = handValue(p.hand);
-      const playerBJ = (pv === 21 && p.hand.length === 2);
+      const user = p.user;
 
-      let result = "lose";
-      if (p.status === "Busted") result = "lose";
-      else if (dealerBJ && playerBJ) result = "push";
-      else if (dealerBJ) result = "lose";
-      else if (playerBJ) result = "blackjack_win";
-      else if (dv > 21) result = "win";
-      else if (pv > dv) result = "win";
-      else if (pv < dv) result = "lose";
-      else result = "push";
+      // per-hand outcomes (split supported)
+      const hands = p.hands?.length ? p.hands : [{ cards: [], status: "Waiting", bet: p.bet || 0, doubled: false }];
 
-      outcomes.push({
-        userId,
-        user: p.user,
-        bet: p.bet || 0,
-        playerValue: pv,
-        playerHand: p.hand.slice(),
-        status: p.status,
-        result,
+      hands.forEach((h, idx) => {
+        const pv = handValue(h.cards);
+        const playerBJ = (pv === 21 && h.cards.length === 2);
+
+        let result = "lose";
+
+        if (h.status === "Busted") result = "lose";
+        else if (dealerBJ && playerBJ) result = "push";
+        else if (dealerBJ) result = "lose";
+        else if (playerBJ) result = "blackjack_win";
+        else if (dv > 21) result = "win";
+        else if (pv > dv) result = "win";
+        else if (pv < dv) result = "lose";
+        else result = "push";
+
+        outcomes.push({
+          userId,
+          user,
+          handIndex: idx,
+          handLabel: hands.length > 1 ? `Hand ${idx + 1}` : null,
+          bet: Number(h.bet || 0),
+          playerValue: pv,
+          playerHand: h.cards.slice(),
+          status: h.status,
+          result,
+        });
       });
     }
 
@@ -281,11 +460,13 @@ class BlackjackSession {
   }
 
   playComponents() {
+    // NOTE: Buttons are global, but blackjack.js already enforces "your turn" checks.
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`bj:${this.gameId}:hit`).setLabel("Hit").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`bj:${this.gameId}:stand`).setLabel("Stand").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:hand`).setLabel("View Hand").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`bj:${this.gameId}:double`).setLabel("Double").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(`bj:${this.gameId}:split`).setLabel("Split").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(`bj:${this.gameId}:end`).setLabel("End").setStyle(ButtonStyle.Danger),
       ),
     ];
@@ -303,12 +484,26 @@ class BlackjackSession {
         : p.bet
           ? `Pending…`
           : "No bet";
-      const totalText = this.state === "ended" ? ` — **${handValue(p.hand)}**` : "";
-      return `${p.user} — **${p.status}** — Bet: **${betText}**${totalText}`;
+
+      const hands = p.hands?.length ? p.hands : [{ cards: [], status: p.status || "Waiting", bet: p.bet || 0, doubled: false }];
+
+      const handLines = hands.map((h, idx) => {
+        const cards = h.cards.length ? h.cards.map(cardStr).join(" ") : "_Not dealt_";
+        const total = h.cards.length ? ` (**${handValue(h.cards)}**)` : "";
+        const label = hands.length > 1 ? `Hand ${idx + 1}` : "Hand";
+        const activeMark =
+          (this.state === "playing" && this.currentPlayerId() === p.user.id && p.activeHand === idx && h.status === "Playing")
+            ? " 👉"
+            : "";
+        const doubledMark = h.doubled ? " (DOUBLED)" : "";
+        return `• ${label}: ${cards}${total} — **${h.status}**${doubledMark}${activeMark}`;
+      });
+
+      return `${p.user} — Bet: **${betText}**\n${handLines.join("\n")}`;
     });
 
     const joinNote = this.defaultBet
-      ? `Join auto-buy-in: **$${Number(this.defaultBet).toLocaleString()}** (you can override with **/blackjack bet:<amount>**).`
+      ? `Join auto-buy-in: **$${Number(this.defaultBet).toLocaleString()}** (override with **/blackjack bet:<amount>**).`
       : `Set your bet with: **/blackjack bet:<amount>** (min $500).`;
 
     const turnId = this.currentPlayerId();
@@ -321,7 +516,7 @@ class BlackjackSession {
       .setTitle("🃏 Blackjack")
       .setDescription(
         `**Dealer:** ${dealerShown}\n\n` +
-        `**Players (${this.players.size}/${this.maxPlayers}):**\n${lines.join("\n") || "_None yet_"}\n\n` +
+        `**Players (${this.players.size}/${this.maxPlayers}):**\n${lines.join("\n\n") || "_None yet_"}\n\n` +
         `${turnLine}`
       );
   }
