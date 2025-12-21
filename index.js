@@ -299,9 +299,26 @@ async function ensureEconomyTables(db) {
       PRIMARY KEY (guild_id, user_id)
     );
 
-CREATE INDEX IF NOT EXISTS idx_casino_security_state_updated
-ON casino_security_state (updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_casino_security_state_updated
+    ON casino_security_state (updated_at DESC);
 
+    /* -----------------------------
+       ✅ Patch Boards (sticky embed patch notes per channel)
+    -------------------------------- */
+    CREATE TABLE IF NOT EXISTS patch_boards (
+      guild_id   TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      message_id TEXT,
+      title      TEXT NOT NULL DEFAULT 'Patch Notes',
+      content    TEXT NOT NULL DEFAULT '',
+      paused     BOOLEAN NOT NULL DEFAULT FALSE,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by TEXT,
+      PRIMARY KEY (guild_id, channel_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_patch_boards_guild
+    ON patch_boards (guild_id);
   `;
 
   const clientConn = await db.connect();
