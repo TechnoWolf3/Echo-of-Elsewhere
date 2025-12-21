@@ -21,20 +21,20 @@ module.exports = {
   data: new SlashCommandBuilder()
     .setName("shop")
     .setDescription("Browse and buy items from the server shop.")
-    .addSubcommand((sub) => sub.setName("list").setDescription("List shop items."))
-    .addSubcommand((sub) =>
-      sub
-        .setName("info")
-        .setDescription("View details for a shop item.")
-        .addStringOption((opt) => opt.setName("item").setDescription("Item ID").setRequired(true))
+    .addStringOption((opt) =>
+      opt
+        .setName("item")
+        .setDescription("Item ID (leave blank to list the shop)")
+        .setRequired(false)
     )
-    .addSubcommand((sub) =>
-      sub
-        .setName("buy")
-        .setDescription("Buy an item from the shop.")
-        .addStringOption((opt) => opt.setName("item").setDescription("Item ID").setRequired(true))
-        .addIntegerOption((opt) => opt.setName("qty").setDescription("Quantity (if allowed)").setMinValue(1).setRequired(false))
-    ),
+    .addIntegerOption((opt) =>
+      opt
+        .setName("qty")
+        .setDescription("Quantity to buy (only works for stackable non-uses items)")
+        .setMinValue(1)
+        .setRequired(false)
+    )
+    .setDMPermission(false),
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
@@ -43,36 +43,44 @@ module.exports = {
     if (await guardNotJailed(interaction)) return;
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-    const sub = interaction.options.getSubcommand();
     const guildId = interaction.guildId;
 
-    if (sub === "list") {
+    const itemIdRaw = interaction.options.getString("item", false);
+    const qty = interaction.options.getInteger("qty", false);
+
+    // ------------------------------------------------------------
+    // /shop  -> LIST
+    // ------------------------------------------------------------
+    if (!itemIdRaw) {
       const items = await listStoreItems(guildId, { enabledOnly: true });
       if (!items.length) return interaction.editReply("🛒 The shop is empty right now.");
 
       const lines = items.slice(0, 25).map((it) => {
-        const tags = [];
-        if (Number(it.daily_stock || 0) > 0) tags.push(`daily:${it.daily_stock}`);
-        if (Number(it.cooldown_seconds || 0) > 0) tags.push(`cd:${formatDuration(it.cooldown_seconds)}`);
-        if (Number(it.max_owned || 0) > 0) tags.push(`max:${it.max_owned}`);
-        if (Number(it.max_purchase_ever || 0) > 0) tags.push(`one-time`);
-        if (Number(it.max_uses || 0) > 0) tags.push(`uses:${it.max_uses}`);
+        const stockLabel =
+          Number(it.daily_stock || 0) > 0
+            ? `Stock: ${it.daily_stock}`
+            : "Stock: Unlimited";
 
-        return `• **${it.name}** — \`${it.item_id}\` — ${money(it.price)}${tags.length ? ` _( ${tags.join(" · ")} )_` : ""}`;
+        return `• **${it.name}** — \`${it.item_id}\` — ${money(it.price)} — ${stockLabel}`;
       });
 
       const embed = new EmbedBuilder()
         .setTitle("🛒 Rubicon Royal Store")
         .setDescription(lines.join("\n"))
-        .setFooter({ text: "Use /shop info item:<id> or /shop buy item:<id>" });
+        .setFooter({ text: "Use /shop item:<id> for details • /shop item:<id> qty:<n> to buy" });
 
       return interaction.editReply({ embeds: [embed] });
     }
 
-    if (sub === "info") {
-      const itemId = interaction.options.getString("item", true);
-      const item = await getStoreItem(guildId, itemId);
+    const itemId = itemIdRaw.trim();
 
+    // ------------------------------------------------------------
+    // /shop item:<id>  -> INFO
+    // /shop item:<id> qty:<n> -> BUY
+    // ------------------------------------------------------------
+    if (!qty) {
+      // INFO
+      const item = await getStoreItem(guildId, itemId);
       if (!item || !item.enabled) return interaction.editReply("❌ That item doesn’t exist (or is not for sale).");
 
       const maxOwned = Number(item.max_owned || 0);
@@ -101,68 +109,63 @@ module.exports = {
       return interaction.editReply({ embeds: [embed] });
     }
 
-    if (sub === "buy") {
-      const itemId = interaction.options.getString("item", true);
-      const qty = interaction.options.getInteger("qty", false) ?? 1;
+    // BUY
+    const res = await purchaseItem(guildId, interaction.user.id, itemId, qty, {
+      by: interaction.user.id,
+      channelId: interaction.channelId,
+    });
 
-      const res = await purchaseItem(guildId, interaction.user.id, itemId, qty, {
-        by: interaction.user.id,
-        channelId: interaction.channelId,
-      });
-
-      if (!res.ok) {
-        if (res.reason === "not_found" || res.reason === "disabled") {
-          return interaction.editReply("❌ That item doesn’t exist (or is not for sale).");
-        }
-        if (res.reason === "insufficient_funds") {
-          return interaction.editReply(`❌ Not enough balance. Your balance is **${money(res.balance)}**.`);
-        }
-        if (res.reason === "max_owned") {
-          return interaction.editReply("❌ You already have the maximum allowed amount of that item.");
-        }
-        if (res.reason === "max_purchase_ever") {
-          return interaction.editReply("❌ That item is a one-time purchase, and you’ve already bought it.");
-        }
-        if (res.reason === "cooldown") {
-          return interaction.editReply(`⏳ You can buy that again in **${formatDuration(res.retryAfterSec)}**.`);
-        }
-        if (res.reason === "sold_out_daily") {
-          return interaction.editReply(`❌ Sold out for today. Remaining stock: **${res.remaining}**.`);
-        }
-        if (res.reason === "bad_price") {
-          return interaction.editReply("❌ That item can’t be purchased right now.");
-        }
-        return interaction.editReply("❌ Purchase failed.");
+    if (!res.ok) {
+      if (res.reason === "not_found" || res.reason === "disabled") {
+        return interaction.editReply("❌ That item doesn’t exist (or is not for sale).");
       }
+      if (res.reason === "insufficient_funds") {
+        return interaction.editReply(`❌ Not enough balance. Your balance is **${money(res.balance)}**.`);
+      }
+      if (res.reason === "max_owned") {
+        return interaction.editReply("❌ You already have the maximum allowed amount of that item.");
+      }
+      if (res.reason === "max_purchase_ever") {
+        return interaction.editReply("❌ That item is a one-time purchase, and you’ve already bought it.");
+      }
+      if (res.reason === "cooldown") {
+        return interaction.editReply(`⏳ You can buy that again in **${formatDuration(res.retryAfterSec)}**.`);
+      }
+      if (res.reason === "sold_out_daily") {
+        return interaction.editReply(`❌ Sold out for today. Remaining stock: **${res.remaining}**.`);
+      }
+      if (res.reason === "bad_price") {
+        return interaction.editReply("❌ That item can’t be purchased right now.");
+      }
+      return interaction.editReply("❌ Purchase failed.");
+    }
 
-      // Role granting happens AFTER purchase commits
-      if (res.item.kind === "role") {
-        const roleId = res.item.meta?.role_id;
-        if (roleId) {
-          try {
-            const member = await interaction.guild.members.fetch(interaction.user.id);
-            await member.roles.add(roleId);
-          } catch {
-            return interaction.editReply(
-              `✅ Purchased **${res.item.name}** for **${money(res.totalPrice)}**.\n` +
+    // Role granting happens AFTER purchase commits
+    if (res.item.kind === "role") {
+      const roleId = res.item.meta?.role_id;
+      if (roleId) {
+        try {
+          const member = await interaction.guild.members.fetch(interaction.user.id);
+          await member.roles.add(roleId);
+        } catch {
+          return interaction.editReply(
+            `✅ Purchased **${res.item.name}** for **${money(res.totalPrice)}**.\n` +
               `⚠️ Role grant failed — ask an admin to apply it.\n` +
               `New balance: **${money(res.newBalance)}**`
-            );
-          }
+          );
         }
       }
+    }
 
-      const usesLine = typeof res.usesRemaining === "number"
+    const usesLine =
+      typeof res.usesRemaining === "number"
         ? `\nUses remaining: **${res.usesRemaining}**`
         : "";
 
-      return interaction.editReply(
-        `✅ Purchased **${res.item.name}** x${res.qtyBought} for **${money(res.totalPrice)}**.\n` +
+    return interaction.editReply(
+      `✅ Purchased **${res.item.name}** x${res.qtyBought} for **${money(res.totalPrice)}**.\n` +
         `You now have **x${res.newQty}**.${usesLine}\n` +
         `New balance: **${money(res.newBalance)}**`
-      );
-    }
-
-    return interaction.editReply("❌ Unknown subcommand.");
+    );
   },
 };
