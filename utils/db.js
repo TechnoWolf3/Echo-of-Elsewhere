@@ -1,12 +1,19 @@
+// utils/db.js
 const { Pool } = require("pg");
 
-if (!process.env.DATABASE_URL) {
-  console.warn("⚠️ DATABASE_URL is not set. Economy will not work.");
+const DATABASE_URL = process.env.DATABASE_URL;
+
+if (!DATABASE_URL) {
+  console.warn("⚠️ DATABASE_URL is not set. DB-backed features will not work.");
 }
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL?.includes("railway") ? { rejectUnauthorized: false } : undefined,
-});
+const pool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      // Railway + many hosted PG providers require SSL.
+      // This is safe and avoids local dev headaches.
+      ssl: { rejectUnauthorized: false },
+    })
+  : null;
 
 module.exports = { pool };

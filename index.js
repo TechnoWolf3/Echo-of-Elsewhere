@@ -10,15 +10,15 @@ const {
   MessageFlags,
   EmbedBuilder,
 } = require("discord.js");
-const { Pool } = require("pg");
+
+// ✅ Use the shared DB pool (single pool for whole bot)
+const { pool } = require("./utils/db");
 
 // ✅ Achievements JSON loader
 const { loadAchievementsFromJson } = require("./utils/achievementsLoader");
 
-// ✅ Achievement engine (real implementation)
+// ✅ Achievement engine
 const achievementEngine = require("./utils/achievementEngine");
-
-// ✅ Export-safe helpers:
 const unlockAchievement = achievementEngine.unlockAchievement;
 
 const fetchAchievementInfo =
@@ -73,23 +73,8 @@ const client = new Client({
 
 client.commands = new Collection();
 
-// -----------------------------
-// DB (Railway Postgres)
-// -----------------------------
-const DATABASE_URL = process.env.DATABASE_URL;
-
-if (!DATABASE_URL) {
-  console.warn("⚠️ DATABASE_URL is not set. Economy/DB features will not work.");
-  client.db = null;
-} else {
-  client.db = new Pool({
-    connectionString: DATABASE_URL,
-    ssl:
-      process.env.NODE_ENV === "production"
-        ? { rejectUnauthorized: false }
-        : false,
-  });
-}
+// ✅ Attach DB pool to client (used by commands via interaction.client.db)
+client.db = pool;
 
 /* -----------------------------
    ✅ Achievements + Stats + Job/Crime/Jail Tables
@@ -108,7 +93,6 @@ async function ensureAchievementTables(db) {
       updated_at TIMESTAMP NOT NULL DEFAULT NOW()
     );
 
-    -- ✅ Add sort_order to existing production tables safely
     ALTER TABLE achievements
     ADD COLUMN IF NOT EXISTS sort_order BIGINT NOT NULL DEFAULT 0;
 
@@ -151,9 +135,6 @@ async function ensureAchievementTables(db) {
       PRIMARY KEY (guild_id, user_id)
     );
 
-    /* -----------------------------
-      Crime Heat (Crime-only system)
-    -------------------------------- */
     CREATE TABLE IF NOT EXISTS crime_heat (
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
@@ -165,9 +146,6 @@ async function ensureAchievementTables(db) {
     CREATE INDEX IF NOT EXISTS idx_crime_heat_expires
     ON crime_heat (expires_at);
 
-    /* -----------------------------
-      Jail (blocks ALL jobs/games)
-    -------------------------------- */
     CREATE TABLE IF NOT EXISTS jail (
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
@@ -188,7 +166,7 @@ async function ensureAchievementTables(db) {
 }
 
 /* -----------------------------
-   ✅ Economy Tables (needed for casino security)
+   ✅ Economy + Patchboard + Store Tables
 -------------------------------- */
 async function ensureEconomyTables(db) {
   const sql = `
@@ -212,57 +190,42 @@ async function ensureEconomyTables(db) {
       PRIMARY KEY (guild_id, user_id, key)
     );
 
-    -- ✅ If cooldowns table already existed without expires_at, add it safely
     ALTER TABLE IF EXISTS cooldowns
     ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
-    -- ✅ If an old column name existed (common legacy), rename it to expires_at
     DO $$
     BEGIN
       IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'cooldowns'
-          AND column_name = 'expires'
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires'
       ) AND NOT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'cooldowns'
-          AND column_name = 'expires_at'
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_at'
       ) THEN
         ALTER TABLE cooldowns RENAME COLUMN expires TO expires_at;
       END IF;
 
       IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'cooldowns'
-          AND column_name = 'expiry'
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expiry'
       ) AND NOT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'cooldowns'
-          AND column_name = 'expires_at'
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_at'
       ) THEN
         ALTER TABLE cooldowns RENAME COLUMN expiry TO expires_at;
       END IF;
 
       IF EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'cooldowns'
-          AND column_name = 'expires_on'
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_on'
       ) AND NOT EXISTS (
-        SELECT 1
-        FROM information_schema.columns
-        WHERE table_name = 'cooldowns'
-          AND column_name = 'expires_at'
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_at'
       ) THEN
         ALTER TABLE cooldowns RENAME COLUMN expires_on TO expires_at;
       END IF;
     END $$;
 
-    -- ✅ Ensure expires_at is not null + has a default (covers old rows)
     UPDATE cooldowns SET expires_at = NOW() WHERE expires_at IS NULL;
     ALTER TABLE cooldowns ALTER COLUMN expires_at SET NOT NULL;
     ALTER TABLE cooldowns ALTER COLUMN expires_at SET DEFAULT NOW();
@@ -280,7 +243,6 @@ async function ensureEconomyTables(db) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- ✅ If transactions already existed without created_at, add it safely BEFORE indexes.
     ALTER TABLE IF EXISTS transactions
     ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
@@ -302,9 +264,6 @@ async function ensureEconomyTables(db) {
     CREATE INDEX IF NOT EXISTS idx_casino_security_state_updated
     ON casino_security_state (updated_at DESC);
 
-    /* -----------------------------
-       ✅ Patch Boards (sticky embed patch notes per channel)
-    -------------------------------- */
     CREATE TABLE IF NOT EXISTS patch_boards (
       guild_id   TEXT NOT NULL,
       channel_id TEXT NOT NULL,
@@ -319,6 +278,65 @@ async function ensureEconomyTables(db) {
 
     CREATE INDEX IF NOT EXISTS idx_patch_boards_guild
     ON patch_boards (guild_id);
+
+    CREATE TABLE IF NOT EXISTS store_items (
+      guild_id    TEXT NOT NULL,
+      item_id     TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      price       BIGINT NOT NULL DEFAULT 0,
+      kind        TEXT NOT NULL DEFAULT 'item',
+      stackable   BOOLEAN NOT NULL DEFAULT TRUE,
+      enabled     BOOLEAN NOT NULL DEFAULT TRUE,
+      meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      sort_order  INT NOT NULL DEFAULT 0,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (guild_id, item_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_store_items_guild_enabled
+    ON store_items (guild_id, enabled);
+
+    CREATE TABLE IF NOT EXISTS user_inventory (
+      guild_id    TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      item_id     TEXT NOT NULL,
+      qty         INT  NOT NULL DEFAULT 0,
+      uses_remaining INT NOT NULL DEFAULT 0,
+      meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (guild_id, user_id, item_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_user_inventory_lookup
+    ON user_inventory (guild_id, user_id);
+
+    CREATE TABLE IF NOT EXISTS store_purchases (
+      id          BIGSERIAL PRIMARY KEY,
+      guild_id    TEXT NOT NULL,
+      user_id     TEXT NOT NULL,
+      item_id     TEXT NOT NULL,
+      qty         INT  NOT NULL,
+      unit_price  BIGINT NOT NULL,
+      total_price BIGINT NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_store_purchases_guild_user_created
+    ON store_purchases (guild_id, user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_store_purchases_guild_item_created
+    ON store_purchases (guild_id, item_id, created_at DESC);
+
+    -- ✅ Store limits (safe upgrades)
+    ALTER TABLE store_items ADD COLUMN IF NOT EXISTS max_owned INT NOT NULL DEFAULT 0;
+    ALTER TABLE store_items ADD COLUMN IF NOT EXISTS max_uses INT NOT NULL DEFAULT 0;
+    ALTER TABLE store_items ADD COLUMN IF NOT EXISTS max_purchase_ever INT NOT NULL DEFAULT 0;
+    ALTER TABLE store_items ADD COLUMN IF NOT EXISTS cooldown_seconds INT NOT NULL DEFAULT 0;
+    ALTER TABLE store_items ADD COLUMN IF NOT EXISTS daily_stock INT NOT NULL DEFAULT 0;
+
+    -- ✅ Inventory uses (safe upgrade)
+    ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS uses_remaining INT NOT NULL DEFAULT 0;
   `;
 
   const clientConn = await db.connect();
@@ -373,15 +391,13 @@ async function syncAchievementsFromJson(db) {
 }
 
 /* -----------------------------
-   ✅ Load slash commands
+   ✅ Load commands
 -------------------------------- */
 function loadCommands() {
   const commandsPath = path.join(__dirname, "commands");
   if (!fs.existsSync(commandsPath)) return;
 
-  const commandFiles = fs
-    .readdirSync(commandsPath)
-    .filter((file) => file.endsWith(".js"));
+  const commandFiles = fs.readdirSync(commandsPath).filter((file) => file.endsWith(".js"));
 
   for (const file of commandFiles) {
     const filePath = path.join(commandsPath, file);
@@ -419,13 +435,13 @@ client.once(Events.ClientReady, async () => {
 
       setInterval(() => syncAchievementsFromJson(client.db), 60 * 60_000);
     } catch (e) {
-      console.error("🏆 [achievements/economy] init failed:", e);
+      console.error("[init] DB init failed:", e);
     }
   }
 });
 
 /* -----------------------------
-   ✅ Interaction handler (safe fallback)
+   ✅ Interaction handler
 -------------------------------- */
 client.on(Events.InteractionCreate, async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
@@ -453,21 +469,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     try {
       if (interaction.deferred || interaction.replied) {
-        await interaction.editReply({
-          content: "❌ There was an error executing that command.",
-        });
+        await interaction.editReply({ content: "❌ There was an error executing that command." });
       } else {
-        await interaction.reply({
-          content: "❌ There was an error executing that command.",
-          flags: MessageFlags.Ephemeral,
-        });
+        await interaction.reply({ content: "❌ There was an error executing that command.", flags: MessageFlags.Ephemeral });
       }
     } catch {}
   }
 });
 
 /* -----------------------------
-   ✅ Message milestone achievements
+   ✅ Message milestones
 -------------------------------- */
 const MSG_THRESHOLDS = [
   { count: 100, id: "msg_100" },
@@ -498,13 +509,7 @@ client.on(Events.MessageCreate, async (message) => {
 
     for (const t of MSG_THRESHOLDS) {
       if (messages === t.count) {
-        const result = await unlockAchievement({
-          db,
-          guildId,
-          userId,
-          achievementId: t.id,
-        });
-
+        const result = await unlockAchievement({ db, guildId, userId, achievementId: t.id });
         if (result?.unlocked) {
           const info = await fetchAchievementInfo(db, t.id);
           await announceAchievement(message.channel, userId, info);
@@ -516,12 +521,7 @@ client.on(Events.MessageCreate, async (message) => {
   }
 });
 
-/* -----------------------------
-   ✅ Extra safety: never crash on unhandled errors
--------------------------------- */
 client.on("error", (e) => console.error("Discord client error:", e));
-process.on("unhandledRejection", (e) =>
-  console.error("Unhandled promise rejection:", e)
-);
+process.on("unhandledRejection", (e) => console.error("Unhandled promise rejection:", e));
 
 client.login(process.env.DISCORD_TOKEN);
