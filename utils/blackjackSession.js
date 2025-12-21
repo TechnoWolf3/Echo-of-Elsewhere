@@ -51,9 +51,25 @@ function isBlackjack(cards) {
   return cards.length === 2 && handValue(cards) === 21;
 }
 
+/**
+ * ✅ House Rule:
+ * - Allow split for any combo of K/Q/J (face cards), e.g. K+Q, Q+J, K+J
+ * - Allow split for exact same rank for everything else, e.g. 10+10, 9+9, A+A, etc.
+ * ❌ Not allowed: K+10, Q+10, J+10
+ */
 function canSplitCards(cards) {
   if (!cards || cards.length !== 2) return false;
-  return cards[0].r === cards[1].r; // strict: same rank
+
+  const [a, b] = cards;
+  if (!a?.r || !b?.r) return false;
+
+  const face = new Set(["K", "Q", "J"]);
+
+  // Any combo of face cards K/Q/J
+  if (face.has(a.r) && face.has(b.r)) return true;
+
+  // Otherwise must be exact same rank (10+10, 9+9, A+A, etc)
+  return a.r === b.r;
 }
 
 class BlackjackSession {
@@ -410,7 +426,9 @@ class BlackjackSession {
       const user = p.user;
 
       // per-hand outcomes (split supported)
-      const hands = p.hands?.length ? p.hands : [{ cards: [], status: "Waiting", bet: p.bet || 0, doubled: false }];
+      const hands = p.hands?.length
+        ? p.hands
+        : [{ cards: [], status: "Waiting", bet: p.bet || 0, doubled: false }];
 
       hands.forEach((h, idx) => {
         const pv = handValue(h.cards);
@@ -460,7 +478,6 @@ class BlackjackSession {
   }
 
   playComponents() {
-    // NOTE: Buttons are global, but blackjack.js already enforces "your turn" checks.
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`bj:${this.gameId}:hit`).setLabel("Hit").setStyle(ButtonStyle.Success),
@@ -485,7 +502,9 @@ class BlackjackSession {
           ? `Pending…`
           : "No bet";
 
-      const hands = p.hands?.length ? p.hands : [{ cards: [], status: p.status || "Waiting", bet: p.bet || 0, doubled: false }];
+      const hands = p.hands?.length
+        ? p.hands
+        : [{ cards: [], status: p.status || "Waiting", bet: p.bet || 0, doubled: false }];
 
       const handLines = hands.map((h, idx) => {
         const cards = h.cards.length ? h.cards.map(cardStr).join(" ") : "_Not dealt_";
