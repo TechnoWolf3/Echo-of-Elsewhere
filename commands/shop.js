@@ -9,13 +9,13 @@ const {
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
+  StringSelectMenuBuilder,
 } = require("discord.js");
 
 const {
   listStoreItems,
-  getStoreItem,
-  purchaseItem,
   listSellableItems,
+  purchaseItem,
   sellItem,
 } = require("../utils/store");
 
@@ -25,40 +25,56 @@ function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
 }
 
-function formatDuration(sec) {
-  sec = Math.max(0, Number(sec || 0));
-  const h = Math.floor(sec / 3600);
-  const m = Math.floor((sec % 3600) / 60);
-  const s = sec % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
+// -------------------------
+// CATEGORY CONFIG (EDIT ME)
+// -------------------------
+// If an item has meta.category, that value is used.
+// Otherwise we fall back to KIND_DEFAULT_CATEGORY.
+// You can rename/add/remove categories here freely.
+const CATEGORY_ORDER = [
+  "All",
+  "Tools",
+  "One time buys",
+  "Consumables",
+  "Perks",
+  "Roles",
+  "Permanent",
+  "General",
+  "Other",
+];
+
+const KIND_DEFAULT_CATEGORY = {
+  item: "General",
+  consumable: "Consumables",
+  perk: "Perks",
+  role: "Roles",
+  permanent: "Permanent",
+};
+
+function getCategoryLabel(item) {
+  const meta = item?.meta && typeof item.meta === "object" ? item.meta : {};
+  const fromMeta = typeof meta.category === "string" ? meta.category.trim() : "";
+  if (fromMeta) return fromMeta;
+  const kind = String(item?.kind || "item");
+  return KIND_DEFAULT_CATEGORY[kind] || "Other";
+}
+
+function clampInt(n, min, max) {
+  const x = Math.floor(Number(n));
+  if (!Number.isFinite(x)) return min;
+  return Math.max(min, Math.min(max, x));
+}
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
 }
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("shop")
-    .setDescription("Browse, buy, and sell items from the server shop.")
-    .addStringOption((opt) =>
-      opt
-        .setName("view")
-        .setDescription("Choose Buy or Sell")
-        .addChoices({ name: "Buy", value: "buy" }, { name: "Sell", value: "sell" })
-        .setRequired(false)
-    )
-    .addStringOption((opt) =>
-      opt
-        .setName("item")
-        .setDescription("Item ID (buy or sell)")
-        .setRequired(false)
-    )
-    .addIntegerOption((opt) =>
-      opt
-        .setName("qty")
-        .setDescription("Quantity to buy/sell")
-        .setMinValue(1)
-        .setRequired(false)
-    )
+    .setDescription("Open the shop panel (buy / sell / categories).")
     .setDMPermission(false),
 
   async execute(interaction) {
@@ -68,325 +84,376 @@ module.exports = {
     if (await guardNotJailed(interaction)) return;
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-
     const guildId = interaction.guildId;
     const userId = interaction.user.id;
 
-    const view = interaction.options.getString("view", false) || "buy";
-    const itemIdRaw = interaction.options.getString("item", false);
-    const qty = interaction.options.getInteger("qty", false);
+    // -------------------------
+    // PANEL STATE
+    // -------------------------
+    const state = {
+      view: "buy",          // "buy" | "sell"
+      category: "All",      // label
+      page: 0,              // 0-based
+    };
 
-    // =========================
-    // SELL VIEW
-    // =========================
-    if (view === "sell") {
-      // Direct sell: /shop view:sell item:<id> qty:<n>
-      if (itemIdRaw && qty) {
-        const itemId = itemIdRaw.trim();
-        const res = await sellItem(guildId, userId, itemId, qty, { via: "shop_command_direct" });
+    // -------------------------
+    // LOADERS
+    // -------------------------
+    async function loadBuyItems() {
+      const items = await listStoreItems(guildId, { enabledOnly: true });
+      // decorate with category label
+      return items.map((it) => ({
+        ...it,
+        _category: getCategoryLabel(it),
+      }));
+    }
+
+    async function loadSellItems() {
+      const items = await listSellableItems(guildId, userId);
+      // sellables don't include meta/kind mapping consistently; category here is optional.
+      // If an item exists in store_items, your listSellableItems already returns name/kind/sell_price.
+      return items.map((it) => ({
+        ...it,
+        _category: "Sellables",
+      }));
+    }
+
+    function buildCategoryOptions(allBuyItems) {
+      const found = new Set();
+      for (const it of allBuyItems) found.add(it._category);
+
+      // Build a nice list:
+      // - Always include "All"
+      // - Then include CATEGORY_ORDER items that exist
+      // - Then any extras found in meta.category but not in CATEGORY_ORDER
+      const ordered = [];
+      ordered.push("All");
+
+      for (const c of CATEGORY_ORDER) {
+        if (c === "All") continue;
+        if (found.has(c)) ordered.push(c);
+      }
+
+      for (const c of Array.from(found)) {
+        if (c === "All") continue;
+        if (!ordered.includes(c)) ordered.push(c);
+      }
+
+      // Discord select menu limit: 25 options
+      return ordered.slice(0, 25).map((label) => ({
+        label,
+        value: label,
+        default: state.category === label,
+      }));
+    }
+
+    function filterBuyItems(allBuyItems) {
+      if (state.category === "All") return allBuyItems;
+      return allBuyItems.filter((it) => it._category === state.category);
+    }
+
+    // -------------------------
+    // RENDER
+    // -------------------------
+    const PAGE_SIZE = 5;
+
+    async function render() {
+      const allBuy = await loadBuyItems();
+      const categoryOptions = buildCategoryOptions(allBuy);
+
+      if (state.view === "buy") {
+        const filtered = filterBuyItems(allBuy);
+        const pages = chunk(filtered, PAGE_SIZE);
+        const totalPages = Math.max(1, pages.length);
+        state.page = clampInt(state.page, 0, totalPages - 1);
+        const pageItems = pages[state.page] || [];
+
+        const lines = pageItems.map((it, idx) => {
+          const n = idx + 1;
+          return `**#${n}** • **${it.name}** — ${money(it.price)}\n\`${it.item_id}\`  *(cat: ${it._category})*`;
+        });
+
+        const embed = new EmbedBuilder()
+          .setTitle("🛒 Shop — Buy")
+          .setDescription(lines.length ? lines.join("\n\n") : "_No items in this category._")
+          .setFooter({ text: `Category: ${state.category} • Page ${state.page + 1}/${totalPages}` });
+
+        const toggleRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("shop:toggle:buy").setLabel("🛒 Buy").setStyle(ButtonStyle.Secondary).setDisabled(true),
+          new ButtonBuilder().setCustomId("shop:toggle:sell").setLabel("💰 Sell").setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId("shop:close").setLabel("❌ Close").setStyle(ButtonStyle.Danger)
+        );
+
+        const navRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("shop:prev")
+            .setLabel("◀ Prev")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(state.page <= 0),
+          new ButtonBuilder()
+            .setCustomId("shop:next")
+            .setLabel("Next ▶")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(state.page >= totalPages - 1)
+        );
+
+        const catRow = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId("shop:category")
+            .setPlaceholder("📂 Select category…")
+            .addOptions(categoryOptions)
+        );
+
+        // Buy buttons for 1..5
+        const buyButtons = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("shop:buy:1").setLabel("Buy #1").setStyle(ButtonStyle.Success).setDisabled(!pageItems[0]),
+          new ButtonBuilder().setCustomId("shop:buy:2").setLabel("Buy #2").setStyle(ButtonStyle.Success).setDisabled(!pageItems[1]),
+          new ButtonBuilder().setCustomId("shop:buy:3").setLabel("Buy #3").setStyle(ButtonStyle.Success).setDisabled(!pageItems[2]),
+          new ButtonBuilder().setCustomId("shop:buy:4").setLabel("Buy #4").setStyle(ButtonStyle.Success).setDisabled(!pageItems[3]),
+          new ButtonBuilder().setCustomId("shop:buy:5").setLabel("Buy #5").setStyle(ButtonStyle.Success).setDisabled(!pageItems[4])
+        );
+
+        // Store the current page items for button handlers
+        return {
+          embeds: [embed],
+          components: [toggleRow, catRow, navRow, buyButtons],
+          _pageItems: pageItems,
+          _allBuy: allBuy,
+        };
+      }
+
+      // SELL VIEW
+      const sellables = await loadSellItems();
+      const pages = chunk(sellables, PAGE_SIZE);
+      const totalPages = Math.max(1, pages.length);
+      state.page = clampInt(state.page, 0, totalPages - 1);
+      const pageItems = pages[state.page] || [];
+
+      const lines = pageItems.map((it, idx) => {
+        const n = idx + 1;
+        return `**#${n}** • **${it.name}** — ${money(it.sell_price)} each\nOwned: **${Number(it.qty || 0).toLocaleString()}**\n\`${it.item_id}\``;
+      });
+
+      const embed = new EmbedBuilder()
+        .setTitle("💰 Shop — Sell")
+        .setDescription(lines.length ? lines.join("\n\n") : "_No sellable items._")
+        .setFooter({ text: `Page ${state.page + 1}/${totalPages}` });
+
+      const toggleRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("shop:toggle:buy").setLabel("🛒 Buy").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("shop:toggle:sell").setLabel("💰 Sell").setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId("shop:close").setLabel("❌ Close").setStyle(ButtonStyle.Danger)
+      );
+
+      const navRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("shop:prev")
+          .setLabel("◀ Prev")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(state.page <= 0),
+        new ButtonBuilder()
+          .setCustomId("shop:next")
+          .setLabel("Next ▶")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(state.page >= totalPages - 1)
+      );
+
+      const sellButtons = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("shop:sell:1").setLabel("Sell #1").setStyle(ButtonStyle.Success).setDisabled(!pageItems[0]),
+        new ButtonBuilder().setCustomId("shop:sell:2").setLabel("Sell #2").setStyle(ButtonStyle.Success).setDisabled(!pageItems[1]),
+        new ButtonBuilder().setCustomId("shop:sell:3").setLabel("Sell #3").setStyle(ButtonStyle.Success).setDisabled(!pageItems[2]),
+        new ButtonBuilder().setCustomId("shop:sell:4").setLabel("Sell #4").setStyle(ButtonStyle.Success).setDisabled(!pageItems[3]),
+        new ButtonBuilder().setCustomId("shop:sell:5").setLabel("Sell #5").setStyle(ButtonStyle.Success).setDisabled(!pageItems[4])
+      );
+
+      return {
+        embeds: [embed],
+        components: [toggleRow, navRow, sellButtons],
+        _pageItems: pageItems,
+        _allBuy: allBuy,
+      };
+    }
+
+    // Initial render
+    let viewData = await render();
+    const msg = await interaction.editReply({ embeds: viewData.embeds, components: viewData.components, fetchReply: true }).catch(() => null);
+    if (!msg) return;
+
+    const collector = msg.createMessageComponentCollector({ time: 5 * 60 * 1000 });
+
+    async function refresh() {
+      viewData = await render();
+      await interaction.editReply({ embeds: viewData.embeds, components: viewData.components }).catch(() => {});
+    }
+
+    function findBuyItemByIndex(i) {
+      // i is 1..5 for current page
+      const idx = i - 1;
+      return viewData._pageItems?.[idx] || null;
+    }
+
+    function findSellItemByIndex(i) {
+      const idx = i - 1;
+      return viewData._pageItems?.[idx] || null;
+    }
+
+    async function showQtyModal(btn, mode, item) {
+      const modalId = `shop_modal:${mode}:${item.item_id}:${Date.now()}`;
+      const modal = new ModalBuilder().setCustomId(modalId).setTitle(mode === "buy" ? "Buy Quantity" : "Sell Quantity");
+
+      const placeholder =
+        mode === "buy"
+          ? "e.g. 1, 5, 10"
+          : `e.g. 1, 5, ${Number(item.qty || 0)}`;
+
+      const input = new TextInputBuilder()
+        .setCustomId("amount")
+        .setLabel(mode === "buy" ? "How many would you like to buy?" : "How many would you like to sell?")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true)
+        .setPlaceholder(placeholder);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(input));
+
+      await btn.showModal(modal).catch(() => {});
+
+      const submitted = await btn
+        .awaitModalSubmit({
+          time: 30_000,
+          filter: (m) => m.user.id === userId && m.customId === modalId,
+        })
+        .catch(() => null);
+
+      if (!submitted) return;
+
+      await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      const raw = submitted.fields.getTextInputValue("amount");
+      let qty = Math.floor(Number(raw));
+
+      if (!Number.isFinite(qty) || qty <= 0) {
+        await submitted.editReply("❌ Please enter a valid positive number.").catch(() => {});
+        return;
+      }
+
+      if (mode === "buy") {
+        // If not stackable or uses item, force qty = 1
+        const maxUses = Number(item.max_uses || 0);
+        const stackable = !!item.stackable;
+        if (!stackable || maxUses > 0) qty = 1;
+
+        const res = await purchaseItem(guildId, userId, item.item_id, qty, { via: "shop_panel_buy" });
 
         if (!res.ok) {
-          if (res.reason === "not_sellable") return interaction.editReply("❌ That item is not sellable.");
-          if (res.reason === "not_owned") return interaction.editReply("❌ You don’t own that item.");
-          if (res.reason === "insufficient_qty") {
-            return interaction.editReply(`❌ You only have **${res.owned}** of that item.`);
-          }
-          return interaction.editReply("❌ Could not sell that item.");
+          if (res.reason === "not_found") return submitted.editReply("❌ That item doesn’t exist (or is not for sale).").catch(() => {});
+          if (res.reason === "insufficient_funds")
+            return submitted.editReply(`❌ Not enough balance. Your balance is **${money(res.balance)}**.`).catch(() => {});
+          if (res.reason === "max_owned") return submitted.editReply("❌ You already have the maximum allowed amount.").catch(() => {});
+          if (res.reason === "max_purchase_ever") return submitted.editReply("❌ That item is a one-time purchase, already bought.").catch(() => {});
+          if (res.reason === "cooldown") return submitted.editReply(`⏳ Try again in **${res.retryAfterSec}s**.`).catch(() => {});
+          if (res.reason === "sold_out_daily") return submitted.editReply("❌ Sold out for today.").catch(() => {});
+          return submitted.editReply("❌ Purchase failed.").catch(() => {});
         }
 
-        return interaction.editReply(
-          `✅ Sold **${res.qtySold}x** \`${itemId}\` for **${money(res.total)}**.`
-        );
+        await submitted
+          .editReply(`✅ Bought **${res.qtyBought}x** \`${res.item.item_id}\` for **${money(res.totalPrice)}**.`)
+          .catch(() => {});
+      } else {
+        // sell: cap to owned
+        const owned = Number(item.qty || 0);
+        qty = Math.min(qty, owned);
+
+        const res = await sellItem(guildId, userId, item.item_id, qty, { via: "shop_panel_sell" });
+
+        if (!res.ok) {
+          if (res.reason === "not_sellable") return submitted.editReply("❌ That item isn’t sellable.").catch(() => {});
+          if (res.reason === "not_owned") return submitted.editReply("❌ You don’t own that item.").catch(() => {});
+          if (res.reason === "insufficient_qty") return submitted.editReply(`❌ You only have **${res.owned}**.`).catch(() => {});
+          return submitted.editReply("❌ Sell failed.").catch(() => {});
+        }
+
+        await submitted
+          .editReply(`✅ Sold **${res.qtySold}x** \`${item.item_id}\` for **${money(res.total)}**.`)
+          .catch(() => {});
       }
 
-      // Interactive sell menu
-      let sellables = await listSellableItems(guildId, userId);
+      // Refresh panel after action
+      await refresh();
+    }
 
-      if (!sellables.length) {
-        const embed = new EmbedBuilder()
-          .setTitle("💰 Sell Items")
-          .setDescription("You have no sellable items right now.")
-          .setFooter({ text: "Sellable items are usually loot (fish, gems, etc.)." });
-
-        return interaction.editReply({ embeds: [embed] });
+    collector.on("collect", async (btn) => {
+      // Only the command user can use the panel
+      if (btn.user.id !== userId) {
+        return btn.reply({ content: "❌ This menu isn’t for you.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
 
-      let idx = 0;
-
-      const render = () => {
-        sellables = sellables.filter((x) => Number(x.qty || 0) > 0);
-        if (!sellables.length) {
-          return {
-            embeds: [
-              new EmbedBuilder()
-                .setTitle("💰 Sell Items")
-                .setDescription("You have no sellable items right now.")
-                .setFooter({ text: "Sellable items are usually loot (fish, gems, etc.)." }),
-            ],
-            components: [],
-          };
-        }
-
-        idx = Math.max(0, Math.min(idx, sellables.length - 1));
-        const it = sellables[idx];
-
-        const embed = new EmbedBuilder()
-          .setTitle("💰 Sell Items")
-          .setDescription(
-            [
-              `**${it.name}**`,
-              `ID: \`${it.item_id}\``,
-              `Owned: **${Number(it.qty || 0).toLocaleString()}**`,
-              `Sell price: **${money(it.sell_price)}** each`,
-              ``,
-              `Total (all): **${money(Number(it.sell_price) * Number(it.qty || 0))}**`,
-            ].join("\n")
-          )
-          .setFooter({ text: `Item ${idx + 1} of ${sellables.length}` });
-
-        const prev = new ButtonBuilder()
-          .setCustomId("shop_sell:prev")
-          .setLabel("◀")
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(sellables.length <= 1);
-
-        const next = new ButtonBuilder()
-          .setCustomId("shop_sell:next")
-          .setLabel("▶")
-          .setStyle(ButtonStyle.Secondary)
-          .setDisabled(sellables.length <= 1);
-
-        const sell1 = new ButtonBuilder()
-          .setCustomId("shop_sell:sell:1")
-          .setLabel("Sell 1")
-          .setStyle(ButtonStyle.Success);
-
-        const sell5 = new ButtonBuilder()
-          .setCustomId("shop_sell:sell:5")
-          .setLabel("Sell 5")
-          .setStyle(ButtonStyle.Success)
-          .setDisabled(Number(it.qty || 0) < 5);
-
-        const sellAll = new ButtonBuilder()
-          .setCustomId("shop_sell:sell:all")
-          .setLabel("Sell All")
-          .setStyle(ButtonStyle.Success);
-
-        const custom = new ButtonBuilder()
-          .setCustomId("shop_sell:custom")
-          .setLabel("Custom…")
-          .setStyle(ButtonStyle.Primary);
-
-        const close = new ButtonBuilder()
-          .setCustomId("shop_sell:close")
-          .setLabel("Close")
-          .setStyle(ButtonStyle.Danger);
-
-        const row1 = new ActionRowBuilder().addComponents(prev, next, custom, close);
-        const row2 = new ActionRowBuilder().addComponents(sell1, sell5, sellAll);
-
-        return { embeds: [embed], components: [row1, row2] };
-      };
-
-      const msg = await interaction.editReply({ ...render(), fetchReply: true }).catch(() => null);
-      if (!msg) return;
-
-      const collector = msg.createMessageComponentCollector({ time: 5 * 60 * 1000 });
-
-      const refreshSellables = async () => {
-        sellables = await listSellableItems(guildId, userId);
-        if (idx >= sellables.length) idx = Math.max(0, sellables.length - 1);
-      };
-
-      collector.on("collect", async (btn) => {
-        if (btn.user.id !== userId) {
-          return btn.reply({ content: "❌ This menu isn’t for you.", flags: MessageFlags.Ephemeral }).catch(() => {});
-        }
-
+      // Select menus need deferUpdate too
+      if (btn.isStringSelectMenu()) {
         await btn.deferUpdate().catch(() => {});
-
-        if (btn.customId === "shop_sell:close") {
-          collector.stop("closed");
-          return;
+        if (btn.customId === "shop:category") {
+          state.category = btn.values?.[0] || "All";
+          state.page = 0;
+          await refresh();
         }
-
-        if (btn.customId === "shop_sell:prev") idx = Math.max(0, idx - 1);
-        if (btn.customId === "shop_sell:next") idx = Math.min(sellables.length - 1, idx + 1);
-
-        if (btn.customId.startsWith("shop_sell:sell:")) {
-          const cur = sellables[idx];
-          if (!cur) {
-            await refreshSellables();
-            return interaction.editReply(render()).catch(() => {});
-          }
-
-          const arg = btn.customId.split(":")[2];
-          const amount = arg === "all" ? Number(cur.qty || 0) : Number(arg || 1);
-
-          const res = await sellItem(guildId, userId, cur.item_id, amount, { via: "shop_sell_menu" });
-
-          if (!res.ok) {
-            let msgTxt = "❌ Could not sell that item.";
-            if (res.reason === "not_sellable") msgTxt = "❌ That item is not sellable.";
-            if (res.reason === "not_owned") msgTxt = "❌ You don’t own that item.";
-            if (res.reason === "insufficient_qty") msgTxt = `❌ You only have **${res.owned}**.`;
-            await interaction.followUp({ content: msgTxt, flags: MessageFlags.Ephemeral }).catch(() => {});
-          } else {
-            await interaction.followUp({
-              content: `✅ Sold **${res.qtySold}x** \`${cur.item_id}\` for **${money(res.total)}**.`,
-              flags: MessageFlags.Ephemeral,
-            }).catch(() => {});
-          }
-
-          await refreshSellables();
-        }
-
-        if (btn.customId === "shop_sell:custom") {
-          const cur = sellables[idx];
-          if (!cur) {
-            await refreshSellables();
-            return interaction.editReply(render()).catch(() => {});
-          }
-
-          const modal = new ModalBuilder()
-            .setCustomId("shop_sell_modal")
-            .setTitle("Sell Custom Amount");
-
-          const input = new TextInputBuilder()
-            .setCustomId("amount")
-            .setLabel(`How many to sell? (Max ${Number(cur.qty || 0)})`)
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-            .setPlaceholder("e.g. 12");
-
-          modal.addComponents(new ActionRowBuilder().addComponents(input));
-
-          await btn.showModal(modal).catch(() => {});
-
-          const submitted = await btn.awaitModalSubmit({
-            time: 30 * 1000,
-            filter: (m) => m.user.id === userId && m.customId === "shop_sell_modal",
-          }).catch(() => null);
-
-          if (submitted) {
-            await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-            const raw = submitted.fields.getTextInputValue("amount");
-            const n = Math.floor(Number(raw));
-
-            if (!Number.isFinite(n) || n <= 0) {
-              await submitted.editReply("❌ Please enter a valid positive number.").catch(() => {});
-            } else {
-              const amt = Math.min(n, Number(cur.qty || 0));
-              const res = await sellItem(guildId, userId, cur.item_id, amt, { via: "shop_sell_custom" });
-
-              if (!res.ok) {
-                let msgTxt = "❌ Could not sell that item.";
-                if (res.reason === "not_sellable") msgTxt = "❌ That item is not sellable.";
-                if (res.reason === "not_owned") msgTxt = "❌ You don’t own that item.";
-                if (res.reason === "insufficient_qty") msgTxt = `❌ You only have **${res.owned}**.`;
-                await submitted.editReply(msgTxt).catch(() => {});
-              } else {
-                await submitted.editReply(`✅ Sold **${res.qtySold}x** \`${cur.item_id}\` for **${money(res.total)}**.`).catch(() => {});
-              }
-
-              await refreshSellables();
-            }
-          }
-        }
-
-        await interaction.editReply(render()).catch(() => {});
-      });
-
-      collector.on("end", async () => {
-        await interaction.editReply({ ...render(), components: [] }).catch(() => {});
-      });
-
-      return;
-    }
-
-    // =========================
-    // BUY VIEW (your existing behavior)
-    // =========================
-
-    // /shop -> LIST
-    if (!itemIdRaw) {
-      const items = await listStoreItems(guildId, { enabledOnly: true });
-      if (!items.length) return interaction.editReply("🛒 Shop is empty.");
-
-      const lines = items.slice(0, 20).map((it) => {
-        const daily = Number(it.daily_stock || 0);
-        const stockLabel = daily > 0 ? `daily:${daily}` : `stock:∞`;
-        return `• **${it.name}** — \`${it.item_id}\` — ${money(it.price)} — ${stockLabel}`;
-      });
-
-      const embed = new EmbedBuilder()
-        .setTitle("🛒 Rubicon Royal Store")
-        .setDescription(lines.join("\n"))
-        .setFooter({ text: "Use /shop item:<id> for details • /shop item:<id> qty:<n> to buy • /shop view:sell to sell" });
-
-      return interaction.editReply({ embeds: [embed] });
-    }
-
-    const itemId = itemIdRaw.trim();
-
-    // /shop item:<id>  -> INFO
-    // /shop item:<id> qty:<n> -> BUY
-    if (!qty) {
-      const item = await getStoreItem(guildId, itemId);
-      if (!item || !item.enabled) return interaction.editReply("❌ That item doesn’t exist (or is not for sale).");
-
-      const maxOwned = Number(item.max_owned || 0);
-      const maxUses = Number(item.max_uses || 0);
-      const maxEver = Number(item.max_purchase_ever || 0);
-      const cd = Number(item.cooldown_seconds || 0);
-      const daily = Number(item.daily_stock || 0);
-
-      const limits = [];
-      if (maxOwned > 0) limits.push(`max_owned: ${maxOwned}`);
-      if (maxUses > 0) limits.push(`uses: ${maxUses}`);
-      if (maxEver > 0) limits.push(`ever: ${maxEver}`);
-      if (cd > 0) limits.push(`cooldown: ${formatDuration(cd)}`);
-      if (daily > 0) limits.push(`daily_stock: ${daily}`);
-
-      const embed = new EmbedBuilder()
-        .setTitle(`🛒 ${item.name}`)
-        .setDescription(item.description || "_No description_")
-        .addFields(
-          { name: "Item ID", value: `\`${item.item_id}\``, inline: true },
-          { name: "Price", value: money(item.price), inline: true },
-          { name: "Kind", value: String(item.kind || "item"), inline: true },
-          { name: "Limits", value: limits.length ? limits.join(" • ") : "none", inline: false }
-        )
-        .setFooter({ text: "Buy with /shop item:<id> qty:<n>" });
-
-      return interaction.editReply({ embeds: [embed] });
-    }
-
-    // BUY
-    const res = await purchaseItem(guildId, userId, itemId, qty, { via: "shop_command" });
-
-    if (!res.ok) {
-      if (res.reason === "not_found") return interaction.editReply("❌ That item doesn’t exist (or is not for sale).");
-      if (res.reason === "insufficient_funds") {
-        return interaction.editReply(`❌ Not enough balance. Your balance is **${money(res.balance)}**.`);
+        return;
       }
-      if (res.reason === "max_owned") {
-        return interaction.editReply("❌ You already have the maximum allowed amount of that item.");
-      }
-      if (res.reason === "max_purchase_ever") {
-        return interaction.editReply("❌ That item is a one-time purchase, and you’ve already bought it.");
-      }
-      if (res.reason === "cooldown") {
-        return interaction.editReply(`⏳ You can buy that again in **${formatDuration(res.retryAfterSec)}**.`);
-      }
-      if (res.reason === "sold_out_daily") {
-        return interaction.editReply("❌ Sold out for today.");
-      }
-      return interaction.editReply("❌ Purchase failed.");
-    }
 
-    return interaction.editReply(
-      `✅ Bought **${res.qtyBought}x** \`${res.item.item_id}\` for **${money(res.totalPrice)}**. New balance: **${money(res.newBalance)}**.`
-    );
+      await btn.deferUpdate().catch(() => {});
+
+      const id = btn.customId;
+
+      if (id === "shop:close") {
+        collector.stop("closed");
+        return;
+      }
+
+      if (id === "shop:toggle:buy") {
+        state.view = "buy";
+        state.page = 0;
+        await refresh();
+        return;
+      }
+
+      if (id === "shop:toggle:sell") {
+        state.view = "sell";
+        state.page = 0;
+        await refresh();
+        return;
+      }
+
+      if (id === "shop:prev") {
+        state.page = Math.max(0, state.page - 1);
+        await refresh();
+        return;
+      }
+
+      if (id === "shop:next") {
+        state.page = state.page + 1;
+        await refresh();
+        return;
+      }
+
+      // Buy buttons
+      if (id.startsWith("shop:buy:")) {
+        const n = Number(id.split(":")[2]);
+        const item = findBuyItemByIndex(n);
+        if (!item) return;
+        await showQtyModal(btn, "buy", item);
+        return;
+      }
+
+      // Sell buttons
+      if (id.startsWith("shop:sell:")) {
+        const n = Number(id.split(":")[2]);
+        const item = findSellItemByIndex(n);
+        if (!item) return;
+        await showQtyModal(btn, "sell", item);
+        return;
+      }
+    });
+
+    collector.on("end", async () => {
+      // disable components at end
+      await interaction.editReply({ components: [] }).catch(() => {});
+    });
   },
 };

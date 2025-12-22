@@ -1,5 +1,5 @@
 // commands/shopadmin.js
-const { SlashCommandBuilder, EmbedBuilder, MessageFlags } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 
 const SHOP_ADMIN_ROLE_ID = "741251069002121236";
 
@@ -39,11 +39,25 @@ module.exports = {
             )
         )
         .addBooleanOption((opt) => opt.setName("stackable").setDescription("If false, qty is always 1").setRequired(false))
-        .addIntegerOption((opt) => opt.setName("max_owned").setDescription("Max qty a user can hold (0=unlimited)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("max_uses").setDescription("Charges/uses (0=none)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("max_purchase_ever").setDescription("Max purchased EVER (0=unlimited, 1=one-time)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("cooldown_seconds").setDescription("Buy cooldown (0=none, 86400=24h)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("daily_stock").setDescription("Daily stock per UTC day (0=unlimited)").setMinValue(0).setRequired(false))
+        .addIntegerOption((opt) =>
+          opt.setName("max_owned").setDescription("Max qty a user can hold (0=unlimited)").setMinValue(0).setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt.setName("max_uses").setDescription("Charges/uses (0=none)").setMinValue(0).setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt
+            .setName("max_purchase_ever")
+            .setDescription("Max purchased EVER (0=unlimited, 1=one-time)")
+            .setMinValue(0)
+            .setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt.setName("cooldown_seconds").setDescription("Buy cooldown (0=none, 86400=24h)").setMinValue(0).setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt.setName("daily_stock").setDescription("Daily stock per UTC day (0=unlimited)").setMinValue(0).setRequired(false)
+        )
         .addIntegerOption((opt) => opt.setName("sort").setDescription("Sort order (lower first)").setRequired(false))
         .addStringOption((opt) => opt.setName("description").setDescription("Description").setRequired(false))
     )
@@ -70,14 +84,37 @@ module.exports = {
             )
         )
         .addBooleanOption((opt) => opt.setName("stackable").setDescription("Stackable?").setRequired(false))
-        .addIntegerOption((opt) => opt.setName("max_owned").setDescription("New max_owned (0=unlimited)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("max_uses").setDescription("New max_uses (0=none)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("max_purchase_ever").setDescription("New max_purchase_ever (0=unlimited)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("cooldown_seconds").setDescription("New cooldown_seconds (0=none)").setMinValue(0).setRequired(false))
-        .addIntegerOption((opt) => opt.setName("daily_stock").setDescription("New daily_stock (0=unlimited)").setMinValue(0).setRequired(false))
+        .addIntegerOption((opt) =>
+          opt.setName("max_owned").setDescription("New max_owned (0=unlimited)").setMinValue(0).setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt.setName("max_uses").setDescription("New max_uses (0=none)").setMinValue(0).setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt
+            .setName("max_purchase_ever")
+            .setDescription("New max_purchase_ever (0=unlimited)")
+            .setMinValue(0)
+            .setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt.setName("cooldown_seconds").setDescription("New cooldown_seconds (0=none)").setMinValue(0).setRequired(false)
+        )
+        .addIntegerOption((opt) =>
+          opt.setName("daily_stock").setDescription("New daily_stock (0=unlimited)").setMinValue(0).setRequired(false)
+        )
         .addIntegerOption((opt) => opt.setName("sort").setDescription("New sort order").setRequired(false))
         .addBooleanOption((opt) => opt.setName("enabled").setDescription("Enabled for buying?").setRequired(false))
         .addStringOption((opt) => opt.setName("description").setDescription("Description").setRequired(false))
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("setcategory")
+        .setDescription("Set or change the shop category for an item.")
+        .addStringOption((opt) => opt.setName("item_id").setDescription("Item ID").setRequired(true))
+        .addStringOption((opt) =>
+          opt.setName("category").setDescription("Category label (e.g. Tools, One time buys)").setRequired(true)
+        )
     )
     .addSubcommand((sub) =>
       sub
@@ -107,7 +144,9 @@ module.exports = {
 
     const member = interaction.member;
     if (!member?.roles?.cache?.has(SHOP_ADMIN_ROLE_ID)) {
-      return interaction.reply({ content: "❌ You don’t have permission to use shop admin.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      return interaction
+        .reply({ content: "❌ You don’t have permission to use shop admin.", flags: MessageFlags.Ephemeral })
+        .catch(() => {});
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -264,6 +303,26 @@ module.exports = {
       return interaction.editReply(
         `✅ Updated **${it.name}** (\`${itemId}\`)${tags.length ? ` Tags: ${tags.join(" • ")}` : ""}`
       );
+    }
+
+    if (sub === "setcategory") {
+      const itemId = interaction.options.getString("item_id", true).trim();
+      const category = interaction.options.getString("category", true).trim();
+
+      const res = await db.query(
+        `
+        UPDATE store_items
+        SET meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('category', $3),
+            updated_at = NOW()
+        WHERE guild_id = $1 AND item_id = $2
+        RETURNING name
+        `,
+        [guildId, itemId, category]
+      );
+
+      if (!res.rowCount) return interaction.editReply("❌ Item not found.");
+
+      return interaction.editReply(`✅ Set category for **${res.rows[0].name}** (\`${itemId}\`) to **${category}**.`);
     }
 
     if (sub === "enable" || sub === "disable") {
