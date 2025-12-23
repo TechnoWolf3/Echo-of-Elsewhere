@@ -7,11 +7,9 @@ const {
   getVoiceConnection,
   VoiceConnectionStatus,
   entersState,
-  demuxProbe,
 } = require("@discordjs/voice");
 
 const playdl = require("play-dl");
-const ytdl = require("@distube/ytdl-core");
 const { buildPanelMessagePayload } = require("./panelView");
 
 const guildPlayers = new Map();
@@ -87,21 +85,8 @@ async function spotifyFetchJson(path) {
 }
 
 // -----------------------------
-// URL helpers / validation
+// URL helpers
 // -----------------------------
-function normalizeYouTubeUrl(url) {
-  if (!url || typeof url !== "string") return url;
-
-  const short = url.match(/^https?:\/\/youtu\.be\/([a-zA-Z0-9_-]{6,})/);
-  if (short?.[1]) return `https://www.youtube.com/watch?v=${short[1]}`;
-
-  if (url.includes("music.youtube.com/watch")) {
-    return url.replace("music.youtube.com", "www.youtube.com");
-  }
-
-  return url;
-}
-
 function pickUrl(obj) {
   if (!obj) return null;
   return (
@@ -127,44 +112,8 @@ function isValidUrlString(u) {
 }
 
 // -----------------------------
-// Playback (SoundCloud via play-dl, YouTube via ytdl-core)
+// Playback (SoundCloud only)
 // -----------------------------
-async function createPlayableResource(track) {
-  if (!track?.url) throw new Error("Track missing url");
-
-  if (track.platform === "youtube") {
-    const ytUrl = normalizeYouTubeUrl(track.url);
-
-    // ytdl-core stream (more resilient than play-dl lately)
-    const ytStream = ytdl(ytUrl, {
-      filter: "audioonly",
-      quality: "highestaudio",
-      highWaterMark: 1 << 25,
-      requestOptions: {
-        // Some hosts get weird without a UA
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
-        },
-      },
-    });
-
-    // Detect container/codec and produce correct resource inputType
-    const probed = await demuxProbe(ytStream);
-    return createAudioResource(probed.stream, {
-      inputType: probed.type,
-      inlineVolume: true,
-    });
-  }
-
-  // SoundCloud (and any other SC URL)
-  const source = await playdl.stream(track.url, { quality: 2 });
-  return createAudioResource(source.stream, {
-    inputType: source.type,
-    inlineVolume: true,
-  });
-}
-
 async function tryStartNext(state) {
   if (state.isStarting) return;
   if (state.player.state.status !== AudioPlayerStatus.Idle) return;
@@ -173,19 +122,23 @@ async function tryStartNext(state) {
   try {
     while (state.queue.length) {
       const next = state.queue.shift();
-      const url = next?.url;
-
-      if (!isValidUrlString(url)) {
-        console.warn("[music] skipping invalid queue url:", { title: next?.title, url });
+      if (!isValidUrlString(next?.url)) {
+        console.warn("[music] skipping invalid queue url:", { title: next?.title, url: next?.url });
         continue;
       }
 
       state.now = next;
+
       console.log("[music] starting:", { title: next.title, platform: next.platform, url: next.url });
 
-      const resource = await createPlayableResource(next);
-      if (resource.volume) resource.volume.setVolume(0.5);
+      const source = await playdl.stream(next.url, { quality: 2 });
 
+      const resource = createAudioResource(source.stream, {
+        inputType: source.type,
+        inlineVolume: true,
+      });
+
+      if (resource.volume) resource.volume.setVolume(0.5);
       state.player.play(resource);
       return;
     }
@@ -201,11 +154,12 @@ async function tryStartNext(state) {
 }
 
 // -----------------------------
-// Resolver (SoundCloud first, YouTube fallback)
-// Queue items: { title, platform, url, requestedBy, source }
+// Resolver (SoundCloud only)
+// - Spotify links: metadata -> SoundCloud search
+// - SoundCloud links: direct
+// - Text: SoundCloud search
 // -----------------------------
-async function resolveOneFromTextPreferSoundCloud(text) {
-  // 1) SoundCloud first
+async function resolveSoundCloudFromText(text) {
   const sc = await playdl
     .search(text, { limit: 1, source: { soundcloud: "tracks" } })
     .then((r) => r?.[0])
@@ -223,24 +177,6 @@ async function resolveOneFromTextPreferSoundCloud(text) {
     }
   }
 
-  // 2) YouTube fallback
-  const yt = await playdl
-    .search(text, { limit: 1, source: { youtube: "video" } })
-    .then((r) => r?.[0])
-    .catch(() => null);
-
-  const ytRaw = pickUrl(yt);
-  const ytUrl = normalizeYouTubeUrl(ytRaw);
-
-  // Validate format only; actual streaming handled by ytdl-core
-  if (isValidUrlString(ytUrl) && ytUrl.includes("youtube.com/watch")) {
-    return {
-      title: yt?.title || yt?.name || text,
-      platform: "youtube",
-      url: ytUrl,
-    };
-  }
-
   return null;
 }
 
@@ -248,7 +184,7 @@ async function resolveToTracks(query, user) {
   const tracks = [];
   let cleaned = String(query ?? "").trim();
 
-  // Spotify by pattern
+  // Spotify
   if (cleaned.includes("open.spotify.com/")) cleaned = cleanSpotifyUrl(cleaned);
 
   const spRef = getSpotifyTypeAndId(cleaned);
@@ -256,7 +192,8 @@ async function resolveToTracks(query, user) {
     if (spRef.type === "track") {
       const t = await spotifyFetchJson(`/tracks/${spRef.id}`);
       const q = `${t.name} ${t.artists?.map((a) => a.name).join(" ") || ""}`.trim();
-      const picked = await resolveOneFromTextPreferSoundCloud(q);
+
+      const picked = await resolveSoundCloudFromText(q);
       if (picked) tracks.push({ ...picked, requestedBy: user, source: "spotify" });
       return tracks;
     }
@@ -264,9 +201,10 @@ async function resolveToTracks(query, user) {
     if (spRef.type === "album") {
       const a = await spotifyFetchJson(`/albums/${spRef.id}`);
       const items = a.tracks?.items || [];
+
       for (const t of items) {
         const q = `${t.name} ${t.artists?.map((ar) => ar.name).join(" ") || ""}`.trim();
-        const picked = await resolveOneFromTextPreferSoundCloud(q);
+        const picked = await resolveSoundCloudFromText(q);
         if (picked) tracks.push({ ...picked, requestedBy: user, source: "spotify" });
       }
       return tracks;
@@ -275,18 +213,20 @@ async function resolveToTracks(query, user) {
     if (spRef.type === "playlist") {
       const p = await spotifyFetchJson(`/playlists/${spRef.id}`);
       const items = p.tracks?.items || [];
+
       for (const it of items) {
         const t = it?.track;
         if (!t?.name) continue;
+
         const q = `${t.name} ${t.artists?.map((ar) => ar.name).join(" ") || ""}`.trim();
-        const picked = await resolveOneFromTextPreferSoundCloud(q);
+        const picked = await resolveSoundCloudFromText(q);
         if (picked) tracks.push({ ...picked, requestedBy: user, source: "spotify" });
       }
       return tracks;
     }
   }
 
-  // Non-Spotify input (url or text)
+  // SoundCloud direct
   const type = await playdl.validate(cleaned).catch(() => false);
 
   if (type === "so_track" && isValidUrlString(cleaned)) {
@@ -300,22 +240,26 @@ async function resolveToTracks(query, user) {
     return tracks;
   }
 
-  if (type === "yt_video") {
-    const url = normalizeYouTubeUrl(cleaned);
-    if (isValidUrlString(url)) {
+  if (type === "so_playlist") {
+    const pl = await playdl.soundcloud(cleaned);
+    const items = await pl.all_tracks();
+
+    for (const it of items) {
+      const url = pickUrl(it);
+      if (!isValidUrlString(url)) continue;
       tracks.push({
-        title: "YouTube Track",
-        platform: "youtube",
+        title: it?.name || it?.title || "SoundCloud Track",
+        platform: "soundcloud",
         url,
         requestedBy: user,
-        source: "youtube",
+        source: "soundcloud",
       });
     }
     return tracks;
   }
 
-  // Text search
-  const picked = await resolveOneFromTextPreferSoundCloud(cleaned);
+  // Text -> SoundCloud search
+  const picked = await resolveSoundCloudFromText(cleaned);
   if (picked) tracks.push({ ...picked, requestedBy: user, source: "search" });
 
   return tracks;
@@ -376,7 +320,7 @@ function getOrCreateGuildPlayer(guildId) {
         });
       }
 
-      // ALWAYS subscribe
+      // Always subscribe
       state.connection.subscribe(state.player);
 
       try {
@@ -393,7 +337,7 @@ function getOrCreateGuildPlayer(guildId) {
     async enqueue(query, user) {
       const items = await resolveToTracks(query, user);
       const ok = items.filter((t) => isValidUrlString(t?.url));
-      if (!ok.length) throw new Error("No playable tracks found for that query.");
+      if (!ok.length) throw new Error("No playable SoundCloud match found for that query.");
 
       for (const t of ok) state.queue.push(t);
 
