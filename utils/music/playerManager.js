@@ -50,24 +50,22 @@ async function getSpotifyBearerToken() {
   return spotifyBearer;
 }
 
-function getSpotifyTypeAndId(q) {
-  if (!q || typeof q !== "string") return null;
-
-  // spotify:track:<id> etc
-  const uri = q.match(/^spotify:(track|album|playlist):([a-zA-Z0-9]+)$/i);
-  if (uri) return { type: uri[1].toLowerCase(), id: uri[2] };
-
-  // https://open.spotify.com/track/<id> etc
-  const url = q.match(/open\.spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)/i);
-  if (url) return { type: url[1].toLowerCase(), id: url[2] };
-
-  return null;
-}
-
 function cleanSpotifyUrl(q) {
   if (!q || typeof q !== "string") return q;
   if (q.includes("open.spotify.com/")) return q.split("?")[0];
   return q;
+}
+
+function getSpotifyTypeAndId(q) {
+  if (!q || typeof q !== "string") return null;
+
+  const uri = q.match(/^spotify:(track|album|playlist):([a-zA-Z0-9]+)$/i);
+  if (uri) return { type: uri[1].toLowerCase(), id: uri[2] };
+
+  const url = q.match(/open\.spotify\.com\/(track|album|playlist)\/([a-zA-Z0-9]+)/i);
+  if (url) return { type: url[1].toLowerCase(), id: url[2] };
+
+  return null;
 }
 
 async function spotifyFetchJson(path) {
@@ -87,7 +85,25 @@ async function spotifyFetchJson(path) {
 }
 
 // -----------------------------
-// Playback helpers
+// URL helpers
+// -----------------------------
+function normalizeYouTubeUrl(url) {
+  if (!url || typeof url !== "string") return url;
+
+  // youtu.be/<id> -> youtube.com/watch?v=<id>
+  const short = url.match(/^https?:\/\/youtu\.be\/([a-zA-Z0-9_-]{6,})/);
+  if (short?.[1]) return `https://www.youtube.com/watch?v=${short[1]}`;
+
+  // music.youtube.com -> www.youtube.com
+  if (url.includes("music.youtube.com/watch")) {
+    return url.replace("music.youtube.com", "www.youtube.com");
+  }
+
+  return url;
+}
+
+// -----------------------------
+// Playback
 // -----------------------------
 async function tryStartNext(state) {
   if (state.isStarting) return;
@@ -99,8 +115,14 @@ async function tryStartNext(state) {
     const next = state.queue.shift();
     state.now = next;
 
-    // ✅ Unified streaming for YouTube + SoundCloud
-    const source = await playdl.stream_from_info(next.info);
+    if (!next?.url) {
+      throw new Error("Queue item missing url (cannot stream).");
+    }
+
+    const streamUrl =
+      next.platform === "youtube" ? normalizeYouTubeUrl(next.url) : next.url;
+
+    const source = await playdl.stream(streamUrl, { quality: 2 });
 
     const resource = createAudioResource(source.stream, {
       inputType: source.type,
@@ -112,14 +134,16 @@ async function tryStartNext(state) {
   } catch (e) {
     console.error("[music] failed to start next:", e);
     state.now = null;
-
-    // try next track immediately if this one died
     setImmediate(() => tryStartNext(state));
   } finally {
     state.isStarting = false;
   }
 }
 
+// -----------------------------
+// Search resolver (SC first, YT fallback)
+// Queue items are ALWAYS: { title, platform, url, requestedBy, source }
+// -----------------------------
 async function resolveOneFromTextPreferSoundCloud(text) {
   // 1) SoundCloud first
   const sc = await playdl
@@ -128,11 +152,10 @@ async function resolveOneFromTextPreferSoundCloud(text) {
     .catch(() => null);
 
   if (sc?.url) {
-    const info = await playdl.soundcloud(sc.url);
     return {
       title: sc.name || text,
       platform: "soundcloud",
-      info,
+      url: sc.url,
     };
   }
 
@@ -143,29 +166,23 @@ async function resolveOneFromTextPreferSoundCloud(text) {
     .catch(() => null);
 
   if (yt?.url) {
-    const info = await playdl.video_info(yt.url);
     return {
       title: yt.title || text,
       platform: "youtube",
-      info,
+      url: normalizeYouTubeUrl(yt.url),
     };
   }
 
   return null;
 }
 
-/**
- * Queue items look like:
- * { title, platform, info, requestedBy, source }
- */
 async function resolveToTracks(query, user) {
   const tracks = [];
   let cleaned = String(query ?? "").trim();
 
-  // Make spotify URLs cleaner
+  // Spotify by pattern (most common user input)
   if (cleaned.includes("open.spotify.com/")) cleaned = cleanSpotifyUrl(cleaned);
 
-  // Detect spotify by pattern (more reliable than validate alone)
   const spRef = getSpotifyTypeAndId(cleaned);
   if (spRef) {
     if (spRef.type === "track") {
@@ -176,7 +193,7 @@ async function resolveToTracks(query, user) {
         tracks.push({
           title: picked.title,
           platform: picked.platform,
-          info: picked.info,
+          url: picked.url,
           requestedBy: user,
           source: "spotify",
         });
@@ -194,7 +211,7 @@ async function resolveToTracks(query, user) {
         tracks.push({
           title: picked.title,
           platform: picked.platform,
-          info: picked.info,
+          url: picked.url,
           requestedBy: user,
           source: "spotify",
         });
@@ -214,7 +231,7 @@ async function resolveToTracks(query, user) {
         tracks.push({
           title: picked.title,
           platform: picked.platform,
-          info: picked.info,
+          url: picked.url,
           requestedBy: user,
           source: "spotify",
         });
@@ -223,16 +240,15 @@ async function resolveToTracks(query, user) {
     }
   }
 
-  // Not spotify → let play-dl validate
+  // Not Spotify — validate URL types
   const type = await playdl.validate(cleaned).catch(() => false);
 
-  // ---- SoundCloud direct ----
+  // SoundCloud direct
   if (type === "so_track") {
-    const info = await playdl.soundcloud(cleaned);
     tracks.push({
-      title: info?.name || "SoundCloud Track",
+      title: "SoundCloud Track",
       platform: "soundcloud",
-      info,
+      url: cleaned,
       requestedBy: user,
       source: "soundcloud",
     });
@@ -242,11 +258,16 @@ async function resolveToTracks(query, user) {
   if (type === "so_playlist") {
     const pl = await playdl.soundcloud(cleaned);
     const items = await pl.all_tracks();
+
     for (const it of items) {
+      // SoundCloud playlist item objects vary; we safely pick a url-like property
+      const url = it?.url || it?.permalink_url || it?.link;
+      if (!url) continue;
+
       tracks.push({
         title: it?.name || "SoundCloud Track",
         platform: "soundcloud",
-        info: it,
+        url,
         requestedBy: user,
         source: "soundcloud",
       });
@@ -254,13 +275,12 @@ async function resolveToTracks(query, user) {
     return tracks;
   }
 
-  // ---- YouTube direct ----
+  // YouTube direct
   if (type === "yt_video") {
-    const info = await playdl.video_info(cleaned);
     tracks.push({
-      title: info?.video_details?.title || "YouTube Track",
+      title: "YouTube Track",
       platform: "youtube",
-      info,
+      url: normalizeYouTubeUrl(cleaned),
       requestedBy: user,
       source: "youtube",
     });
@@ -270,12 +290,12 @@ async function resolveToTracks(query, user) {
   if (type === "yt_playlist") {
     const pl = await playdl.playlist_info(cleaned);
     const vids = await pl.all_videos();
+
     for (const v of vids) {
-      const info = await playdl.video_info(v.url);
       tracks.push({
         title: v?.title || "YouTube Track",
         platform: "youtube",
-        info,
+        url: normalizeYouTubeUrl(v.url),
         requestedBy: user,
         source: "youtube",
       });
@@ -283,14 +303,14 @@ async function resolveToTracks(query, user) {
     return tracks;
   }
 
-  // Any other url type → treat as search text (stable UX)
+  // Any other URL type → treat as text (stable UX)
   if (type) {
     const picked = await resolveOneFromTextPreferSoundCloud(cleaned);
     if (picked) {
       tracks.push({
         title: picked.title,
         platform: picked.platform,
-        info: picked.info,
+        url: picked.url,
         requestedBy: user,
         source: "search",
       });
@@ -298,13 +318,13 @@ async function resolveToTracks(query, user) {
     return tracks;
   }
 
-  // ---- Text search: SoundCloud first, YouTube fallback ----
+  // Text search
   const picked = await resolveOneFromTextPreferSoundCloud(cleaned);
   if (picked) {
     tracks.push({
       title: picked.title,
       platform: picked.platform,
-      info: picked.info,
+      url: picked.url,
       requestedBy: user,
       source: "search",
     });
