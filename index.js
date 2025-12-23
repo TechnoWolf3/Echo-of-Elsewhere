@@ -21,6 +21,9 @@ const { loadAchievementsFromJson } = require("./utils/achievementsLoader");
 const achievementEngine = require("./utils/achievementEngine");
 const unlockAchievement = achievementEngine.unlockAchievement;
 
+// ✅ Music interaction router (buttons/selects/modals)
+const { handleMusicInteraction } = require("./utils/music/interactionRouter");
+
 const fetchAchievementInfo =
   achievementEngine.fetchAchievementInfo ||
   (async (db, achievementId) => {
@@ -68,7 +71,11 @@ const announceAchievement =
 // Discord client
 // -----------------------------
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildVoiceStates, // ✅ required for voice playback
+  ],
 });
 
 client.commands = new Collection();
@@ -337,7 +344,6 @@ async function ensureEconomyTables(db) {
     CREATE INDEX IF NOT EXISTS idx_grind_runs_ends_at
     ON grind_runs (ends_at);
 
-
     CREATE INDEX IF NOT EXISTS idx_store_purchases_guild_user_created
     ON store_purchases (guild_id, user_id, created_at DESC);
 
@@ -462,8 +468,26 @@ client.once(Events.ClientReady, async () => {
 
 /* -----------------------------
    ✅ Interaction handler
+   - music panel interactions FIRST
+   - then slash commands
 -------------------------------- */
 client.on(Events.InteractionCreate, async (interaction) => {
+  // ✅ Handle music components (buttons/selects/modals)
+  if (
+    interaction.isButton() ||
+    interaction.isStringSelectMenu() ||
+    interaction.isModalSubmit()
+  ) {
+    try {
+      const handled = await handleMusicInteraction(interaction, client);
+      if (handled) return;
+    } catch (e) {
+      console.error("[music] interaction error:", e);
+      // If music handler blows up, don't kill other interactions
+    }
+  }
+
+  // ✅ Slash commands
   if (!interaction.isChatInputCommand()) return;
 
   const command = client.commands.get(interaction.commandName);
@@ -491,7 +515,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply({ content: "❌ There was an error executing that command." });
       } else {
-        await interaction.reply({ content: "❌ There was an error executing that command.", flags: MessageFlags.Ephemeral });
+        await interaction.reply({
+          content: "❌ There was an error executing that command.",
+          flags: MessageFlags.Ephemeral,
+        });
       }
     } catch {}
   }
