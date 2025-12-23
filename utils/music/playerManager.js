@@ -10,6 +10,17 @@ const {
 } = require("@discordjs/voice");
 
 const playdl = require("play-dl");
+
+// Spotify token setup (metadata resolving)
+if (process.env.SPOTIFY_CLIENT_ID && process.env.SPOTIFY_CLIENT_SECRET) {
+  playdl.setToken({
+    spotify: {
+      client_id: process.env.SPOTIFY_CLIENT_ID,
+      client_secret: process.env.SPOTIFY_CLIENT_SECRET,
+    },
+  });
+}
+
 const { buildPanelMessagePayload } = require("./panelView");
 
 const guildPlayers = new Map();

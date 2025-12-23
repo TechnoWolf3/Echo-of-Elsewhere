@@ -11,6 +11,10 @@ const {
   EmbedBuilder,
 } = require("discord.js");
 
+// Temporary Railway log deubug
+const { generateDependencyReport } = require("@discordjs/voice");
+console.log(generateDependencyReport());
+
 // ✅ Use the shared DB pool (single pool for whole bot)
 const { pool } = require("./utils/db");
 
