@@ -110,8 +110,6 @@ module.exports = {
 
     async function loadSellItems() {
       const items = await listSellableItems(guildId, userId);
-      // sellables don't include meta/kind mapping consistently; category here is optional.
-      // If an item exists in store_items, your listSellableItems already returns name/kind/sell_price.
       return items.map((it) => ({
         ...it,
         _category: "Sellables",
@@ -122,10 +120,6 @@ module.exports = {
       const found = new Set();
       for (const it of allBuyItems) found.add(it._category);
 
-      // Build a nice list:
-      // - Always include "All"
-      // - Then include CATEGORY_ORDER items that exist
-      // - Then any extras found in meta.category but not in CATEGORY_ORDER
       const ordered = [];
       ordered.push("All");
 
@@ -139,7 +133,6 @@ module.exports = {
         if (!ordered.includes(c)) ordered.push(c);
       }
 
-      // Discord select menu limit: 25 options
       return ordered.slice(0, 25).map((label) => ({
         label,
         value: label,
@@ -204,7 +197,6 @@ module.exports = {
             .addOptions(categoryOptions)
         );
 
-        // Buy buttons for 1..5
         const buyButtons = new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("shop:buy:1").setLabel("Buy #1").setStyle(ButtonStyle.Success).setDisabled(!pageItems[0]),
           new ButtonBuilder().setCustomId("shop:buy:2").setLabel("Buy #2").setStyle(ButtonStyle.Success).setDisabled(!pageItems[1]),
@@ -213,7 +205,6 @@ module.exports = {
           new ButtonBuilder().setCustomId("shop:buy:5").setLabel("Buy #5").setStyle(ButtonStyle.Success).setDisabled(!pageItems[4])
         );
 
-        // Store the current page items for button handlers
         return {
           embeds: [embed],
           components: [toggleRow, catRow, navRow, buyButtons],
@@ -287,7 +278,6 @@ module.exports = {
     }
 
     function findBuyItemByIndex(i) {
-      // i is 1..5 for current page
       const idx = i - 1;
       return viewData._pageItems?.[idx] || null;
     }
@@ -315,7 +305,8 @@ module.exports = {
 
       modal.addComponents(new ActionRowBuilder().addComponents(input));
 
-      await btn.showModal(modal).catch(() => {});
+      // ✅ DO NOT deferUpdate before showModal
+      await btn.showModal(modal);
 
       const submitted = await btn
         .awaitModalSubmit({
@@ -358,7 +349,6 @@ module.exports = {
           .editReply(`✅ Bought **${res.qtyBought}x** \`${res.item.item_id}\` for **${money(res.totalPrice)}**.`)
           .catch(() => {});
       } else {
-        // sell: cap to owned
         const owned = Number(item.qty || 0);
         qty = Math.min(qty, owned);
 
@@ -376,17 +366,15 @@ module.exports = {
           .catch(() => {});
       }
 
-      // Refresh panel after action
       await refresh();
     }
 
     collector.on("collect", async (btn) => {
-      // Only the command user can use the panel
       if (btn.user.id !== userId) {
         return btn.reply({ content: "❌ This menu isn’t for you.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
 
-      // Select menus need deferUpdate too
+      // Select menu: safe to deferUpdate
       if (btn.isStringSelectMenu()) {
         await btn.deferUpdate().catch(() => {});
         if (btn.customId === "shop:category") {
@@ -397,9 +385,25 @@ module.exports = {
         return;
       }
 
-      await btn.deferUpdate().catch(() => {});
-
       const id = btn.customId;
+
+      // ✅ MODAL buttons must NOT deferUpdate first
+      if (id.startsWith("shop:buy:")) {
+        const n = Number(id.split(":")[2]);
+        const item = findBuyItemByIndex(n);
+        if (!item) return;
+        return showQtyModal(btn, "buy", item);
+      }
+
+      if (id.startsWith("shop:sell:")) {
+        const n = Number(id.split(":")[2]);
+        const item = findSellItemByIndex(n);
+        if (!item) return;
+        return showQtyModal(btn, "sell", item);
+      }
+
+      // Everything else can deferUpdate
+      await btn.deferUpdate().catch(() => {});
 
       if (id === "shop:close") {
         collector.stop("closed");
@@ -431,28 +435,9 @@ module.exports = {
         await refresh();
         return;
       }
-
-      // Buy buttons
-      if (id.startsWith("shop:buy:")) {
-        const n = Number(id.split(":")[2]);
-        const item = findBuyItemByIndex(n);
-        if (!item) return;
-        await showQtyModal(btn, "buy", item);
-        return;
-      }
-
-      // Sell buttons
-      if (id.startsWith("shop:sell:")) {
-        const n = Number(id.split(":")[2]);
-        const item = findSellItemByIndex(n);
-        if (!item) return;
-        await showQtyModal(btn, "sell", item);
-        return;
-      }
     });
 
     collector.on("end", async () => {
-      // disable components at end
       await interaction.editReply({ components: [] }).catch(() => {});
     });
   },
