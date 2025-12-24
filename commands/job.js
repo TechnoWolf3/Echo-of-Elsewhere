@@ -43,7 +43,7 @@ const startStoreClerk = require("../data/grind/storeClerk");
    ============================================================ */
 
 const JOB_COOLDOWN_SECONDS = 45;
-const BOARD_INACTIVITY_MS = 3 * 60_000;
+const BOARD_INACTIVITY_MS = 10 * 60_000;
 
 // Legendary (kept in command for now)
 const LEGENDARY_CHANCE = 0.012;
@@ -996,16 +996,15 @@ module.exports = {
         // 🚔 Jail gate for buttons (true = BLOCK)
         if (await guardNotJailedComponent(btn)) return;
 
-        // ✅ Ack once for safety (prevents "This interaction failed" if a branch forgets deferUpdate)
-        // ⚠️ Store Clerk runtime buttons (grind_clerk:*) use modals, so do NOT deferUpdate those here.
+        // ✅ Ack once for safety (prevents "This interaction failed")
+        // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
         const isClerkRuntime = btn.customId.startsWith("grind_clerk:");
         if (isClerkRuntime) {
           resetInactivity(); // keep the /job board alive while the grind module runs
-          return; // let the grind module collector handle it (modal-safe)
+          return;            // modal safety: the grind module will handle/ack as needed
         }
 
         await ensureAck(btn);
-
         resetInactivity();
 
         // Stop
