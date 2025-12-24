@@ -998,12 +998,11 @@ module.exports = {
 
         // ✅ Ack once for safety (prevents "This interaction failed" if a branch forgets deferUpdate)
         // ⚠️ BUT: Grind uses modals, so we must NOT deferUpdate for grind actions.
-        const isGrindInteraction = btn.customId.startsWith("grind:") || btn.customId.startsWith("grind_clerk:");
-        if (!isGrindInteraction) {
+        // ✅ ACK everything EXCEPT in-job clerk buttons (they use modals)
+        const isClerkRuntime = btn.customId.startsWith("grind_clerk:");
+
+        if (!isClerkRuntime) {
           await ensureAck(btn);
-        } else {
-          // Let the Grind module collector handle its own buttons.
-          if (btn.customId.startsWith("grind_clerk:")) return;
         }
 
         resetInactivity();
