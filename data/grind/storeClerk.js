@@ -198,11 +198,10 @@ async function consumeBonusItemIfPresent(db, guildId, userId) {
 }
 
 // The entrypoint called from /job
-module.exports = function startStoreClerk(btn, {
+module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId } = {}) {
   return new Promise(async (resolve) => {
     let _resolved = false;
     const resolveOnce = () => { if (_resolved) return; _resolved = true; resolve(); };
- pool, boardMsg, guildId, userId } = {}) {
   const db = pool;
 
   const gate = await canGrind(db, guildId, userId);
@@ -212,7 +211,7 @@ module.exports = function startStoreClerk(btn, {
       content: `🥵 You’re fatigued. Grind unlocks <t:${ts}:R>.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
-    return resolveOnce();
+    return;
   }
 
   // Bonus item: if present, consume 1 and grant +5%
@@ -301,7 +300,6 @@ module.exports = function startStoreClerk(btn, {
 
     await boardMsg.edit({ embeds: [embed], components: [] }).catch(() => {});
     collector.stop("done");
-    
     resolveOnce();
   }
 
