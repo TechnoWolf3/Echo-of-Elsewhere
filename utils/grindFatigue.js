@@ -1,14 +1,17 @@
 // utils/grindFatigue.js
+
 function clamp(n, min, max) {
   const x = Math.floor(Number(n));
   if (!Number.isFinite(x)) return min;
   return Math.max(min, Math.min(max, x));
 }
+
 function randInt(min, max) {
   return Math.floor(min + Math.random() * (max - min + 1));
 }
 
-const MAX_FATIGUE_MS = 5 * 60 * 1000; // 5 minutes
+// ✅ 5 minutes max fatigue
+const MAX_FATIGUE_MS = 5 * 60 * 1000;
 
 async function ensureRow(db, guildId, userId) {
   await db.query(
@@ -25,16 +28,16 @@ async function canGrind(db, guildId, userId) {
     `SELECT locked_until FROM grind_fatigue WHERE guild_id=$1 AND user_id=$2`,
     [guildId, userId]
   );
+
   const row = res.rows[0];
   if (!row?.locked_until) return { ok: true };
 
-  const t = new Date(row.locked_until).getTime();
-  if (!Number.isFinite(t) || t <= Date.now()) return { ok: true };
-  return { ok: false, lockedUntil: new Date(t) };
+  const until = new Date(row.locked_until).getTime();
+  if (!Number.isFinite(until) || until <= Date.now()) return { ok: true };
+
+  return { ok: false, lockedUntil: new Date(until) };
 }
 
-// Apply fatigue based on real elapsed time since last update.
-// If it caps: lock 10–15 mins and reset fatigue to 0.
 async function tickFatigue(db, guildId, userId) {
   await ensureRow(db, guildId, userId);
 
@@ -44,6 +47,7 @@ async function tickFatigue(db, guildId, userId) {
      WHERE guild_id=$1 AND user_id=$2`,
     [guildId, userId]
   );
+
   const row = res.rows[0];
   const now = Date.now();
 
@@ -58,7 +62,7 @@ async function tickFatigue(db, guildId, userId) {
   let fatigue = Number(row.fatigue_ms || 0) + delta;
 
   if (fatigue >= MAX_FATIGUE_MS) {
-    const lockSec = randInt(10 * 60, 15 * 60);
+    const lockSec = randInt(10 * 60, 15 * 60); // ✅ 10–15 min lock
     const until = new Date(now + lockSec * 1000);
 
     await db.query(

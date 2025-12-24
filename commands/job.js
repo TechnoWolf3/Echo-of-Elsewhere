@@ -997,13 +997,14 @@ module.exports = {
         if (await guardNotJailedComponent(btn)) return;
 
         // ✅ Ack once for safety (prevents "This interaction failed" if a branch forgets deferUpdate)
-        // ⚠️ BUT: Grind uses modals, so we must NOT deferUpdate for grind actions.
-        // ✅ ACK everything EXCEPT in-job clerk buttons (they use modals)
+        // ⚠️ Store Clerk runtime buttons (grind_clerk:*) use modals, so do NOT deferUpdate those here.
         const isClerkRuntime = btn.customId.startsWith("grind_clerk:");
-
-        if (!isClerkRuntime) {
-          await ensureAck(btn);
+        if (isClerkRuntime) {
+          resetInactivity(); // keep the /job board alive while the grind module runs
+          return; // let the grind module collector handle it (modal-safe)
         }
+
+        await ensureAck(btn);
 
         resetInactivity();
 
