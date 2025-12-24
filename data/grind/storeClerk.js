@@ -198,9 +198,11 @@ async function consumeBonusItemIfPresent(db, guildId, userId) {
 }
 
 // The entrypoint called from /job
-module.exports = function startStoreClerk(btn, { 
+module.exports = function startStoreClerk(btn, {
   return new Promise(async (resolve) => {
-pool, boardMsg, guildId, userId } = {}) {
+    let _resolved = false;
+    const resolveOnce = () => { if (_resolved) return; _resolved = true; resolve(); };
+ pool, boardMsg, guildId, userId } = {}) {
   const db = pool;
 
   const gate = await canGrind(db, guildId, userId);
@@ -210,7 +212,7 @@ pool, boardMsg, guildId, userId } = {}) {
       content: `🥵 You’re fatigued. Grind unlocks <t:${ts}:R>.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
-    return;
+    return resolveOnce();
   }
 
   // Bonus item: if present, consume 1 and grant +5%
@@ -220,13 +222,6 @@ pool, boardMsg, guildId, userId } = {}) {
   let streak = 0;
   let earned = 0;
   let active = true;
-  let finished = false;
-  const finishOnce = (payload) => {
-    if (finished) return;
-    finished = true;
-    resolve(payload);
-  };
-
 
   let scenario = makeScenario(streak);
 
@@ -306,7 +301,8 @@ pool, boardMsg, guildId, userId } = {}) {
 
     await boardMsg.edit({ embeds: [embed], components: [] }).catch(() => {});
     collector.stop("done");
-    finishOnce({ outcome: "ended", streak, total: totalPayout, fatigue: tick, reason });
+    
+    resolveOnce();
   }
 
   async function nextScenario(correct, feedbackLine) {
@@ -383,11 +379,7 @@ pool, boardMsg, guildId, userId } = {}) {
   });
 
   collector.on("end", async () => {
-    if (active) {
-      await endShift("⏳ Shift timed out.");
-    } else {
-      finishOnce({ outcome: "ended", streak, total: totalPayout, reason: "collector_end" });
-    }
+    if (active) await endShift("⏳ Shift timed out.");
   });
   });
 };
