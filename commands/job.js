@@ -465,8 +465,7 @@ function buildGrindEmbed(cooldownUnix) {
 
   return new EmbedBuilder()
     .setTitle(grindIndex.category?.title || "🕒 Grind")
-    .setDescription([statusLineFromCooldown(cooldownUnix), "", grindIndex.category?.description || ""].join("
-").trim())
+    .setDescription([statusLineFromCooldown(cooldownUnix), "", grindIndex.category?.description || ""].join("\n").trim())
     .addFields({ name: "Jobs", value: lines || "No jobs configured." })
     .setFooter({ text: grindIndex.category?.footer || "Fatigue is shared across all Grind jobs." });
 }
