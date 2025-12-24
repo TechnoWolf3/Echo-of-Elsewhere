@@ -461,8 +461,7 @@ function buildGrindEmbed(cooldownUnix) {
       return `• **${cfg.title || k}** — ${cfg.desc || ""}`.trim();
     })
     .filter(Boolean)
-    .join("
-");
+    .join("\n");
 
   return new EmbedBuilder()
     .setTitle(grindIndex.category?.title || "🕒 Grind")
