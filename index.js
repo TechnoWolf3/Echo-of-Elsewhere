@@ -338,14 +338,17 @@ async function ensureEconomyTables(db) {
       PRIMARY KEY (guild_id, user_id)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_grind_runs_ends_at
-    ON grind_runs (ends_at);
+    CREATE TABLE IF NOT EXISTS grind_fatigue (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      fatigue_ms BIGINT NOT NULL DEFAULT 0,
+      locked_until TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (guild_id, user_id)
+    );
 
-    CREATE INDEX IF NOT EXISTS idx_store_purchases_guild_user_created
-    ON store_purchases (guild_id, user_id, created_at DESC);
-
-    CREATE INDEX IF NOT EXISTS idx_store_purchases_guild_item_created
-    ON store_purchases (guild_id, item_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_grind_fatigue_locked_until
+    ON grind_fatigue (locked_until);
 
     -- ✅ Store limits (safe upgrades)
     ALTER TABLE store_items ADD COLUMN IF NOT EXISTS max_owned INT NOT NULL DEFAULT 0;

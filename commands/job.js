@@ -33,6 +33,10 @@ const nightWalker = require("../data/nightwalker/index");
 const startStoreRobbery = require("../data/crime/storeRobbery");
 const startHeist = require("../data/crime/heist");
 
+// ✅ Grind (NEW)
+const grindIndex = require("../data/grind/index");
+const startStoreClerk = require("../data/grind/storeClerk");
+
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
@@ -446,20 +450,54 @@ function buildNightWalkerComponents(disabled = false) {
 }
 
 function buildGrindEmbed(cooldownUnix) {
+  const list = grindIndex?.list || [];
+  const jobs = grindIndex?.jobs || {};
+
+  const lines = list
+    .map((k) => {
+      const cfg = jobs[k];
+      if (!cfg) return null;
+      return `• **${cfg.title || k}** — ${cfg.desc || ""}`.trim();
+    })
+    .filter(Boolean)
+    .join("
+");
+
   return new EmbedBuilder()
-    .setTitle("🕒 Grind")
-    .setDescription([statusLineFromCooldown(cooldownUnix), "", "Coming soon. These jobs will take time and pay bigger."].join("\n"))
-    .setFooter({ text: "Use ⬅ Back to return." });
+    .setTitle(grindIndex.category?.title || "🕒 Grind")
+    .setDescription([statusLineFromCooldown(cooldownUnix), "", grindIndex.category?.description || ""].join("
+").trim())
+    .addFields({ name: "Jobs", value: lines || "No jobs configured." })
+    .setFooter({ text: grindIndex.category?.footer || "Fatigue is shared across all Grind jobs." });
 }
 
 function buildGrindComponents(disabled = false) {
+  const list = grindIndex?.list || [];
+  const jobs = grindIndex?.jobs || {};
+
+  const row = new ActionRowBuilder();
+  for (const k of list) {
+    const cfg = jobs[k];
+    if (!cfg) continue;
+
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(cfg.buttonId)
+        .setLabel(cfg.title ? safeLabel(cfg.title) : safeLabel(k))
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
+    );
+  }
+
   return [
+    row,
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
       new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     ),
   ];
 }
+
 
 /* ============================================================
    Crime UI builders
@@ -960,7 +998,14 @@ module.exports = {
         if (await guardNotJailedComponent(btn)) return;
 
         // ✅ Ack once for safety (prevents "This interaction failed" if a branch forgets deferUpdate)
-        await ensureAck(btn);
+        // ⚠️ BUT: Grind uses modals, so we must NOT deferUpdate for grind actions.
+        const isGrindInteraction = btn.customId.startsWith("grind:") || btn.customId.startsWith("grind_clerk:");
+        if (!isGrindInteraction) {
+          await ensureAck(btn);
+        } else {
+          // Let the Grind module collector handle its own buttons.
+          if (btn.customId.startsWith("grind_clerk:")) return;
+        }
 
         resetInactivity();
 
@@ -1010,6 +1055,41 @@ module.exports = {
         if (btn.customId === "job_cat:crime") {
           session.view = "crime";
           await redraw();
+          return;
+        }
+
+
+        /* ============================================================
+           GRIND MENU (NEW)
+           ============================================================ */
+        if (btn.customId.startsWith("grind:")) {
+          const key = btn.customId.split(":")[1];
+
+          // Block starting a grind job if on /job payout cooldown
+          if (await checkCooldownOrTell(btn)) return;
+
+          if (key === "clerk") {
+            session.view = "grind_run";
+
+            await startStoreClerk(btn, {
+              pool,
+              boardMsg: msg,
+              guildId,
+              userId,
+            });
+
+            // After the module completes it edits the board; return to Grind menu
+            await new Promise((r) => setTimeout(r, 1500));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+
+            session.view = "grind";
+            await redraw();
+            return;
+          }
+
+          await btn
+            .followUp({ content: "🕒 That Grind job is coming soon.", flags: MessageFlags.Ephemeral })
+            .catch(() => {});
           return;
         }
 
