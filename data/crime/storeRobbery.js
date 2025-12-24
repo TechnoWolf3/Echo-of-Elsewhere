@@ -1,617 +1,1692 @@
-// data/crime/storeRobbery.js
+// commands/job.js
+//Comment to force git push
 const {
+  SlashCommandBuilder,
+  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  EmbedBuilder,
+  MessageFlags,
 } = require("discord.js");
 
-const { pool } = require("../../utils/db");
-const { setJail } = require("../../utils/jail");
+const { pool } = require("../utils/db");
+const { ensureUser, creditUser } = require("../utils/economy");
+const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); // jail blocks ALL jobs while active
+const { unlockAchievement } = require("../utils/achievementEngine");
 
-// Scenarios (data-only)
-let scenarios = require("./storeRobbery.scenarios");
+// ✅ UPDATED: add getCrimeHeatInfo for bar + timer UI
+const {
+  getCrimeHeatInfo,
+  getCrimeHeat,
+  setCrimeHeat,
+  heatTTLMinutesForOutcome,
+} = require("../utils/crimeHeat");
 
-// =====================
-// CONFIG (LOCKED RULES)
-// =====================
+// ✅ Config imports
+const nineToFiveIndex = require("../data/nineToFive/index");
+const contractCfg = require("../data/nineToFive/transportContract");
+const skillCfg = require("../data/nineToFive/skillCheck");
+const shiftCfg = require("../data/nineToFive/shift");
 
-// 3–5 step minigame
-const MIN_STEPS = 3;
-const MAX_STEPS = 5;
+const nightWalker = require("../data/nightwalker/index");
 
-// Cooldowns (minutes)
-const GLOBAL_LOCKOUT_MINUTES = 10;
-const STORE_COOLDOWN_MINUTES = 10;
+// ✅ Crime
+const startStoreRobbery = require("../data/crime/storeRobbery");
+const startHeist = require("../data/crime/heist");
 
-// Heat tiers => outcomes
-const HEAT_TIERS = {
-  CLEAN: 20,        // < 20 => clean
-  SPOTTED: 35,      // 20–34 => spotted
-  PARTIAL: 60,      // 35–59 => partial
-  BUSTED_HARD: 90,  // >= 90 => busted hard
-  // 60–89 => busted
+// ✅ Grind (NEW)
+const grindIndex = require("../data/grind/index");
+const startStoreClerk = require("../data/grind/storeClerk");
+
+/* ============================================================
+   CORE TUNING (keep here; configs handle job-specific values)
+   ============================================================ */
+
+const JOB_COOLDOWN_SECONDS = 45;
+const BOARD_INACTIVITY_MS = 10 * 60_000;
+
+// Legendary (kept in command for now)
+const LEGENDARY_CHANCE = 0.012;
+const LEGENDARY_TTL_MS = 60_000;
+const LEGENDARY_MIN = 50_000;
+const LEGENDARY_MAX = 90_000;
+const LEGENDARY_SKILL_TIME_MS = 7_000;
+
+// Optional global bonus (kept in command)
+const GLOBAL_BONUS_CHANCE = 0.04;
+const GLOBAL_BONUS_MIN = 400;
+const GLOBAL_BONUS_MAX = 2000;
+
+/* ============================================================
+   Crime cooldown keys (Crime-only system)
+   ============================================================ */
+const CRIME_GLOBAL_KEY = "crime_global";
+const CRIME_KEYS = {
+  store: "crime_store",
+  chase: "crime_chase",
+  drugs: "crime_drugs",
+  heist: "crime_heist",
+  major: "crime_heist_major",
 };
 
-// Payouts / fines
-const PAYOUT_MIN = 2000;
-const PAYOUT_MAX = 6000;
-
-const FINE_MIN = 3000;
-const FINE_MAX = 8000;
-
-// Jail chance (only on busted tiers)
-const JAIL_CHANCE_BUSTED = 0.18;       // uncommon
-const JAIL_CHANCE_BUSTED_HARD = 0.28;  // rare-ish
-const JAIL_MIN_MINUTES = 2;
-const JAIL_MAX_MINUTES = 5;
-
-// Random run events
-const LOOT_DROP_CHANCE = 0.12;
-const VALUABLE_FIND_CHANCE = 0.10;
-const LOOT_DROP_MIN = 300;
-const LOOT_DROP_MAX = 1200;
-const VALUABLE_MIN = 250;
-const VALUABLE_MAX = 1500;
-
-// UI / timeout
-const RUN_TIMEOUT_MS = 3 * 60_000;
-
-// =====================
-// OPTIONAL BONUS ITEM (ID ONLY)
-// =====================
-const THEFT_KIT_ITEM_ID = "Crime_Kit";
-// Each decision: reduce heat by extra 1–2 if kit active
-const THEFT_KIT_EXTRA_MIN = 1;
-const THEFT_KIT_EXTRA_MAX = 2;
-
-// ✅ Theft kit: read current uses_remaining
-async function getTheftKitUses(guildId, userId) {
-  const res = await pool.query(
-    `SELECT qty, uses_remaining
-     FROM user_inventory
-     WHERE guild_id=$1 AND user_id=$2 AND item_id=$3`,
-    [guildId, userId, THEFT_KIT_ITEM_ID]
-  );
-
-  if (!res.rowCount) return 0;
-  const qty = Number(res.rows[0].qty || 0);
-  const uses = Number(res.rows[0].uses_remaining || 0);
-  if (qty <= 0) return 0;
-  return uses;
+/* ============================================================
+   Leveling
+   ============================================================ */
+function xpToNext(level) {
+  return 100 + (Math.max(1, level) - 1) * 60;
+}
+function levelMultiplier(level) {
+  const mult = 1 + 0.02 * (Math.max(1, level) - 1);
+  return Math.min(mult, 1.6);
 }
 
-// ✅ Bulletproof: consume uses directly (atomic) and delete row at 0
-async function consumeItemUse(guildId, userId, itemId, usesToConsume = 1) {
-  const n = Math.max(1, Number(usesToConsume || 1));
-
-  const res = await pool.query(
-    `
-    UPDATE user_inventory
-    SET uses_remaining = uses_remaining - $4,
-        updated_at = NOW()
-    WHERE guild_id=$1
-      AND user_id=$2
-      AND item_id=$3
-      AND uses_remaining >= $4
-    RETURNING uses_remaining
-    `,
-    [guildId, userId, itemId, n]
-  );
-
-  if (!res.rowCount) return { ok: false };
-
-  const usesRemaining = Number(res.rows[0].uses_remaining || 0);
-
-  if (usesRemaining <= 0) {
-    await pool.query(
-      `DELETE FROM user_inventory WHERE guild_id=$1 AND user_id=$2 AND item_id=$3`,
-      [guildId, userId, itemId]
-    );
+/* ============================================================
+   Helpers
+   ============================================================ */
+function randInt(min, max) {
+  return Math.floor(min + Math.random() * (max - min + 1));
+}
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function progressBar(pct, size = 12) {
+  const filled = Math.max(0, Math.min(size, Math.round((pct / 100) * size)));
+  return "▰".repeat(filled) + "▱".repeat(size - filled);
+}
+function clamp(n, a, b) {
+  return Math.max(a, Math.min(b, n));
+}
+function safeLabel(s) {
+  const t = String(s ?? "").trim();
+  if (t.length <= 80) return t;
+  return t.slice(0, 77) + "...";
+}
+function sampleUnique(arr, n) {
+  const copy = [...arr];
+  const out = [];
+  while (copy.length && out.length < n) {
+    out.push(copy.splice(Math.floor(Math.random() * copy.length), 1)[0]);
   }
-
-  return { ok: true, usesRemaining };
+  return out;
+}
+function toUnix(date) {
+  return Math.floor(date.getTime() / 1000);
 }
 
-// =====================
-// DB HELPERS
-// =====================
-async function addUserBalance(guildId, userId, amount) {
-  await pool.query(
-    `UPDATE user_balances
-     SET balance = balance + $1
-     WHERE guild_id=$2 AND user_id=$3`,
-    [amount, guildId, userId]
-  );
+// ✅ Heat bar helpers
+function heatBar(value, size = 12) {
+  const v = clamp(Number(value) || 0, 0, 100);
+  const filled = Math.round((v / 100) * size);
+  return "▰".repeat(filled) + "▱".repeat(size - filled);
+}
+function unixFromDate(d) {
+  if (!d) return null;
+  const dt = new Date(d);
+  const t = dt.getTime();
+  if (Number.isNaN(t)) return null;
+  return Math.floor(t / 1000);
+}
+function cdLine(label, unixTs) {
+  return unixTs ? `⏳ ${label}: <t:${unixTs}:R>` : `✅ ${label}: Ready`;
 }
 
-async function subtractUserBalanceAndSendToBank(guildId, userId, amount) {
-  const res = await pool.query(
-    `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
-    [guildId, userId]
-  );
-
-  const current = Number(res.rows?.[0]?.balance || 0);
-  const take = Math.min(current, Math.max(0, amount));
-  if (take <= 0) return 0;
-
-  await pool.query(
-    `UPDATE user_balances
-     SET balance = balance - $1
-     WHERE guild_id=$2 AND user_id=$3`,
-    [take, guildId, userId]
-  );
-
-  await pool.query(
-    `UPDATE guilds
-     SET bank_balance = bank_balance + $1
-     WHERE guild_id=$2`,
-    [take, guildId]
-  );
-
-  return take;
+/**
+ * Ensure the button interaction is acknowledged (prevents "This interaction failed").
+ * Safe to call multiple times.
+ */
+async function ensureAck(i) {
+  if (i.deferred || i.replied) return;
+  await i.deferUpdate().catch(() => {});
 }
 
-async function setCooldown(guildId, userId, key, minutes) {
-  const next = new Date(Date.now() + minutes * 60 * 1000);
+/* ============================================================
+   Heist Heat TTL (S4/S5)
+   - Keep this local for now so you can tweak without touching utils.
+   - /job persists heat AFTER the minigame via setCrimeHeat().
+   ============================================================ */
+function heatTTLMinutesForHeistOutcome(outcome, { mode = "heist" } = {}) {
+  const heist = {
+    clean: 30,
+    spotted: 60,
+    partial: 180,
+    busted: 720,
+    busted_hard: 720,
+  };
+
+  const major = {
+    clean: 60,
+    spotted: 120,
+    partial: 240,
+    busted: 720,
+    busted_hard: 1440, // set to 720 if you want a hard 12h max
+  };
+
+  const map = mode === "major" ? major : heist;
+  return map[outcome] ?? map.spotted;
+}
+
+/* ============================================================
+   Cooldowns
+   ============================================================ */
+async function getCooldown(guildId, userId, key) {
+  const cd = await pool.query(
+    `SELECT next_claim_at FROM cooldowns WHERE guild_id=$1 AND user_id=$2 AND key=$3`,
+    [guildId, userId, key]
+  );
+  if (cd.rowCount === 0) return null;
+
+  const next = new Date(cd.rows[0].next_claim_at);
+  if (Number.isNaN(next.getTime())) return null;
+  return next;
+}
+async function setCooldown(guildId, userId, key, nextClaimAt) {
   await pool.query(
     `INSERT INTO cooldowns (guild_id, user_id, key, next_claim_at)
      VALUES ($1,$2,$3,$4)
      ON CONFLICT (guild_id, user_id, key)
      DO UPDATE SET next_claim_at = EXCLUDED.next_claim_at`,
-    [guildId, userId, key, next]
+    [guildId, userId, key, nextClaimAt]
   );
 }
 
-async function applyCooldowns(guildId, userId) {
-  await setCooldown(guildId, userId, "crime_global", GLOBAL_LOCKOUT_MINUTES);
-  await setCooldown(guildId, userId, "crime_store", STORE_COOLDOWN_MINUTES);
+async function getCooldownUnixIfActive(guildId, userId, key) {
+  const next = await getCooldown(guildId, userId, key);
+  if (!next) return null;
+  const now = new Date();
+  if (now >= next) return null;
+  return Math.floor(next.getTime() / 1000);
 }
 
-// =====================
-// RANDOM HELPERS
-// =====================
-function randInt(min, maxIncl) {
-  return Math.floor(min + Math.random() * (maxIncl - min + 1));
+/* ============================================================
+   Job Progress (xp/level)
+   ============================================================ */
+async function getJobProgress(guildId, userId) {
+  await pool.query(
+    `INSERT INTO job_progress (guild_id, user_id, xp, level, total_jobs)
+     VALUES ($1,$2,0,1,0)
+     ON CONFLICT (guild_id, user_id) DO NOTHING`,
+    [guildId, userId]
+  );
+
+  const res = await pool.query(
+    `SELECT xp, level, total_jobs FROM job_progress WHERE guild_id=$1 AND user_id=$2`,
+    [guildId, userId]
+  );
+
+  const row = res.rows[0] || { xp: 0, level: 1, total_jobs: 0 };
+  return {
+    xp: Number(row.xp) || 0,
+    level: Number(row.level) || 1,
+    totalJobs: Number(row.total_jobs) || 0,
+  };
 }
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-function clamp(n, a, b) {
-  return Math.max(a, Math.min(b, n));
-}
-function safeStr(v, fallback = "…") {
-  if (v === null || v === undefined) return fallback;
-  const s = String(v);
-  return s.trim().length ? s : fallback;
-}
-function safeId(v, fallback = "x") {
-  const s = safeStr(v, fallback);
-  return s.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
-}
 
-// =====================
-// SCENARIO NORMALIZATION
-// Supports: prompt OR text OR description
-// =====================
-function normalizeScenarios(raw) {
-  const src = raw?.phases ? raw.phases : raw;
-  const out = {};
+async function addXpAndMaybeLevel(guildId, userId, xpGain, countJob = true) {
+  const p = await getJobProgress(guildId, userId);
+  let xp = p.xp + (xpGain || 0);
+  let level = p.level;
+  let leveledUp = false;
 
-  for (const [phase, list] of Object.entries(src || {})) {
-    if (!Array.isArray(list)) continue;
-
-    out[phase] = list
-      .filter(Boolean)
-      .map((s, idx) => {
-        const id = safeId(s.id ?? `${phase}_${idx}`);
-        const prompt = safeStr(
-          s.prompt ?? s.text ?? s.description,
-          "You size up the situation…"
-        );
-        const choices = Array.isArray(s.choices) ? s.choices : [];
-
-        const normChoices = choices
-          .filter(Boolean)
-          .map((c, cIdx) => ({
-            label: safeStr(
-              c.label ?? c.text ?? `Option ${cIdx + 1}`,
-              `Option ${cIdx + 1}`
-            ),
-            heat: typeof c.heat === "number" ? c.heat : 0,
-            lootAdd: typeof c.lootAdd === "number" ? c.lootAdd : 0,
-
-            evidenceRisk: !!c.evidenceRisk,
-            evidenceClear: !!c.evidenceClear,
-            usedCar: !!c.usedCar,
-            timerRisk: !!c.timerRisk,
-            witnessRisk: !!c.witnessRisk,
-            crowdBlend: !!c.crowdBlend,
-          }));
-
-        const finalChoices =
-          normChoices.length >= 2
-            ? normChoices
-            : [
-                { label: "Act casual", heat: 0, evidenceRisk: true },
-                { label: "Grab and go", heat: 12, timerRisk: true },
-              ];
-
-        return { id, prompt, choices: finalChoices };
-      });
+  while (xp >= xpToNext(level)) {
+    xp -= xpToNext(level);
+    level += 1;
+    leveledUp = true;
   }
+
+  const totalJobs = p.totalJobs + (countJob ? 1 : 0);
+
+  await pool.query(
+    `UPDATE job_progress
+     SET xp=$1, level=$2, total_jobs=$3
+     WHERE guild_id=$4 AND user_id=$5`,
+    [xp, level, totalJobs, guildId, userId]
+  );
+
+  return { xp, level, totalJobs, leveledUp };
+}
+
+/* ============================================================
+   Achievements — milestones on total_jobs
+   ============================================================ */
+const JOB_MILESTONES = [
+  { id: "job_first_fin", count: 1 },
+  { id: "job_10_fin", count: 10 },
+  { id: "job_50_fin", count: 50 },
+  { id: "job_100_win", count: 100 },
+  { id: "job_250_fin", count: 250 },
+];
+
+async function fetchAchievementInfo(achievementId) {
+  const res = await pool.query(`SELECT id, name, description FROM achievements WHERE id=$1`, [achievementId]);
+  return res.rows[0] || { id: achievementId, name: "Achievement Unlocked", description: "" };
+}
+
+async function announceAchievement(channel, userId, info) {
+  const embed = new EmbedBuilder()
+    .setTitle("🏆 Achievement Unlocked!")
+    .setDescription(`<@${userId}> unlocked **${info.name}**\n${info.description || ""}`.trim())
+    .setColor(0xffd54a)
+    .setFooter({ text: `Achievement ID: ${info.id}` });
+
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+async function handleJobMilestones({ channel, guildId, userId, totalJobs }) {
+  const hit = JOB_MILESTONES.find((m) => m.count === totalJobs);
+  if (!hit) return;
+
+  const res = await unlockAchievement({
+    db: pool,
+    guildId,
+    userId,
+    achievementId: hit.id,
+  });
+
+  if (!res?.unlocked) return;
+
+  const info = await fetchAchievementInfo(hit.id);
+  await announceAchievement(channel, userId, info);
+}
+
+/* ============================================================
+   UI: Hub + Category Boards
+   ============================================================ */
+
+function statusLineFromCooldown(cooldownUnix) {
+  return cooldownUnix ? `⏳ **Next payout** <t:${cooldownUnix}:R>` : `✅ **Ready** — you can work now.`;
+}
+
+function buildHubEmbed(user, progress, cooldownUnix) {
+  const need = xpToNext(progress.level);
+  const mult = levelMultiplier(progress.level);
+  const bonusPct = Math.round((mult - 1) * 100);
+
+  return new EmbedBuilder()
+    .setTitle("🧰 Job Board")
+    .setDescription(
+      [
+        `Pick what kind of work you want to do, **${user.username}**.`,
+        "",
+        statusLineFromCooldown(cooldownUnix),
+      ].join("\n")
+    )
+    .addFields(
+      {
+        name: "Progress",
+        value: `Level ${progress.level} • XP ${progress.xp}/${need} • Bonus +${bonusPct}%`,
+      },
+      {
+        name: "Job Type",
+        value: [
+          "📦 **Work a 9–5** — Classic shift work",
+          "🧠 **Night Walker** — Work to please the night",
+          "🕒 **Grind** — Jobs that take time",
+          "🕶️ **Crime** — High risk, heat & jail",
+        ].join("\n"),
+      },
+      {
+        name: "Rules",
+        value: `Cooldown between payouts: **${JOB_COOLDOWN_SECONDS}s**\nAuto-clears after **3m** inactivity (or **Stop Work**)`,
+      }
+    )
+    .setFooter({ text: "Leveling up increases payout bonus." });
+}
+
+function buildHubComponents(disabled = false) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_cat:95").setLabel("📦 Work a 9–5").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_cat:nw").setLabel("🧠 Night Walker").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_cat:grind").setLabel("🕒 Grind").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_cat:crime").setLabel("🕶️ Crime").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
+function buildNineToFiveEmbed(user, progress, cooldownUnix) {
+  const need = xpToNext(progress.level);
+  const mult = levelMultiplier(progress.level);
+  const bonusPct = Math.round((mult - 1) * 100);
+
+  const jobLines = nineToFiveIndex.jobs
+    .map((j) => `${j.title} — ${j.desc}`)
+    .join("\n");
+
+  return new EmbedBuilder()
+    .setTitle(nineToFiveIndex.category?.title || "📦 Work a 9–5")
+    .setDescription([statusLineFromCooldown(cooldownUnix), "", nineToFiveIndex.category?.description || ""].join("\n").trim())
+    .addFields(
+      { name: "Progress", value: `Level ${progress.level} • XP ${progress.xp}/${need} • Bonus +${bonusPct}%` },
+      { name: "Jobs", value: jobLines || "No jobs configured." }
+    )
+    .setFooter({ text: nineToFiveIndex.category?.footer || "Cooldown blocks payouts, not browsing." });
+}
+
+function buildNineToFiveComponents({ disabled = false, legendary = false } = {}) {
+  const row = new ActionRowBuilder();
+
+  for (const j of nineToFiveIndex.jobs) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(j.button.id)
+        .setLabel(j.button.label)
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
+    );
+  }
+
+  // Legendary appears only if enabled in config AND currently available
+  if (nineToFiveIndex.legendary?.enabled && legendary) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(nineToFiveIndex.legendary.button.id)
+        .setLabel(nineToFiveIndex.legendary.button.label)
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disabled)
+    );
+  }
+
+  return [
+    row,
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
+function buildNightWalkerEmbed(user, progress, cooldownUnix) {
+  const need = xpToNext(progress.level);
+  const mult = levelMultiplier(progress.level);
+  const bonusPct = Math.round((mult - 1) * 100);
+
+  const list = nightWalker?.list || [];
+  const jobs = nightWalker?.jobs || {};
+  const lines = list
+    .map((k) => {
+      const cfg = jobs[k];
+      if (!cfg) return null;
+      return `• **${cfg.title || k}** — ${cfg.rounds ? `${cfg.rounds} rounds` : "interactive"}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return new EmbedBuilder()
+    .setTitle(nightWalker.category?.title || "🧠 Night Walker")
+    .setDescription([statusLineFromCooldown(cooldownUnix), "", nightWalker.category?.description || ""].join("\n").trim())
+    .addFields(
+      { name: "Progress", value: `Level ${progress.level} • XP ${progress.xp}/${need} • Bonus +${bonusPct}%` },
+      { name: "Jobs", value: lines || "No jobs configured." }
+    )
+    .setFooter({ text: nightWalker.category?.footer || "Choices matter." });
+}
+
+function buildNightWalkerComponents(disabled = false) {
+  const list = nightWalker?.list || [];
+  const jobs = nightWalker?.jobs || {};
+
+  const row = new ActionRowBuilder();
+  for (const k of list) {
+    const cfg = jobs[k];
+    if (!cfg) continue;
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`job_nw:${k}`)
+        .setLabel(cfg.title ? safeLabel(cfg.title) : safeLabel(k))
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
+    );
+  }
+
+  return [
+    row,
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
+function buildGrindEmbed(cooldownUnix) {
+  const list = grindIndex?.list || [];
+  const jobs = grindIndex?.jobs || {};
+
+  const lines = list
+    .map((k) => {
+      const cfg = jobs[k];
+      if (!cfg) return null;
+      return `• **${cfg.title || k}** — ${cfg.desc || ""}`.trim();
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  return new EmbedBuilder()
+    .setTitle(grindIndex.category?.title || "🕒 Grind")
+    .setDescription([statusLineFromCooldown(cooldownUnix), "", grindIndex.category?.description || ""].join("\n").trim())
+    .addFields({ name: "Jobs", value: lines || "No jobs configured." })
+    .setFooter({ text: grindIndex.category?.footer || "Fatigue is shared across all Grind jobs." });
+}
+
+function buildGrindComponents(disabled = false) {
+  const list = grindIndex?.list || [];
+  const jobs = grindIndex?.jobs || {};
+
+  const row = new ActionRowBuilder();
+  for (const k of list) {
+    const cfg = jobs[k];
+    if (!cfg) continue;
+
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(cfg.buttonId)
+        .setLabel(cfg.title ? safeLabel(cfg.title) : safeLabel(k))
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
+    );
+  }
+
+  return [
+    row,
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
+
+/* ============================================================
+   Crime UI builders
+   ============================================================ */
+function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
+  const heat = heatInfo?.heat ?? 0;
+  const heatUnix = unixFromDate(heatInfo?.expiresAt);
+
+  const heatBlock =
+    heat > 0 && heatUnix
+      ? [
+          `🔥 Heat: **${heat}** / 100`,
+          `${heatBar(heat)}`,
+          `🧊 Cooling down: <t:${heatUnix}:R>`,
+        ].join("\n")
+      : [
+          `🔥 Heat: **0** / 100`,
+          `${heatBar(0)}`,
+          `🧊 Cooling down: Ready`,
+        ].join("\n");
+
+  // Global crime lockout blocks ALL crime jobs.
+  // Show whichever cooldown ends later so UI matches behaviour.
+  const effectiveCooldown = (jobCd, globalCd) => {
+    if (!globalCd) return jobCd; // no global lockout
+    if (!jobCd) return globalCd; // job would be ready, but global blocks
+    return Math.max(jobCd, globalCd); // whichever ends later
+  };
+
+  const effStore = effectiveCooldown(cooldowns?.store, cooldowns?.crimeGlobal);
+  const effHeist = effectiveCooldown(cooldowns?.heist, cooldowns?.crimeGlobal);
+  const effMajor = effectiveCooldown(cooldowns?.major, cooldowns?.crimeGlobal);
+
+  const cdLines = [
+    cdLine("Crime lockout", cooldowns?.crimeGlobal),
+    cdLine("Store Robbery", effStore),
+    cdLine("Heist", effHeist),
+    cdLine("Major Heist", effMajor),
+  ].join("\n");
+
+  return new EmbedBuilder()
+    .setTitle("🕶️ Crime")
+    .setDescription(
+      [
+        "Pick a job. Heat only affects **Crime** jobs.",
+        "If you get jailed, **ALL jobs** are disabled until release.",
+        "",
+        heatBlock,
+        "",
+        "**Cooldowns:**",
+        cdLines,
+      ].join("\n")
+    )
+    .setColor(0x2b2d31)
+    .setFooter({ text: "Crime cooldowns are separate from the /job payout cooldown." });
+}
+
+function buildCrimeComponents(disabled = false) {
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("crime:store").setLabel("🏪 Store Robbery").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("crime:chase").setLabel("🚗 Car Chase").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("crime:drugs").setLabel("💊 Drug Pushing").setStyle(ButtonStyle.Secondary).setDisabled(disabled)
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("crime:heist").setLabel("🏦 Heist").setStyle(ButtonStyle.Danger).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("crime:major").setLabel("💰 Major Heist").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+
+  const row3 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+
+  return [row1, row2, row3];
+}
+
+async function checkCrimeCooldownOrTell(btn, guildId, userId, jobKey, jobLabel) {
+  const now = new Date();
+
+  const globalNext = await getCooldown(guildId, userId, CRIME_GLOBAL_KEY);
+  if (globalNext && now < globalNext) {
+    await btn
+      .followUp({
+        content: `⏳ Crime lockout active. Try again <t:${toUnix(globalNext)}:R>.`,
+        flags: MessageFlags.Ephemeral,
+      })
+      .catch(() => {});
+    return true;
+  }
+
+  const jobNext = await getCooldown(guildId, userId, jobKey);
+  if (jobNext && now < jobNext) {
+    await btn
+      .followUp({
+        content: `⏳ **${jobLabel}** cooldown. Try again <t:${toUnix(jobNext)}:R>.`,
+        flags: MessageFlags.Ephemeral,
+      })
+      .catch(() => {});
+    return true;
+  }
+
+  return false;
+}
+
+/* ============================================================
+   9–5: Contract UI builders (from contract config)
+   ============================================================ */
+
+function getContractChoices(step, level) {
+  const out = [...(step.baseChoices || [])];
+
+  const vipLevel = contractCfg.unlocks?.vipLevel ?? 10;
+  const dangerLevel = contractCfg.unlocks?.dangerLevel ?? 20;
+
+  if (level >= vipLevel) out.push(...(step.vipChoices || []));
+  if (level >= dangerLevel) out.push(...(step.dangerChoices || []));
 
   return out;
 }
 
-scenarios = normalizeScenarios(scenarios);
+function buildContractEmbed(stepIndex, pickedSoFar = [], level = 1) {
+  const step = contractCfg.steps[stepIndex];
+  const choices = getContractChoices(step, level);
 
-// =====================
-// RENDER HELPERS
-// =====================
-function buildRow(phaseKey, scenarioId, choices) {
+  const pickedText =
+    pickedSoFar.length > 0
+      ? `\n\n**Chosen so far:** ${pickedSoFar.map((p) => `\`${p}\``).join(", ")}`
+      : "";
+
+  return new EmbedBuilder()
+    .setTitle(step.title)
+    .setDescription(`${step.desc}${pickedText}`)
+    .addFields(
+      choices.map((c) => ({
+        name: c.label,
+        value: `Bonus: +$${c.modMin}–$${c.modMax} | Risk: ${(c.risk * 100).toFixed(0)}%`,
+        inline: false,
+      }))
+    )
+    .setFooter({ text: contractCfg.footer || "Finish all 3 steps to get paid." });
+}
+
+function buildContractButtons(stepIndex, level, disabled = false) {
+  const step = contractCfg.steps[stepIndex];
+  const choices = getContractChoices(step, level);
+
+  const rows = [];
+  let row = new ActionRowBuilder();
+
+  for (const c of choices) {
+    if (row.components.length >= 5) {
+      rows.push(row);
+      row = new ActionRowBuilder();
+    }
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`job_contract:${stepIndex}:${c.label}`)
+        .setLabel(safeLabel(c.label))
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
+    );
+  }
+  rows.push(row);
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    )
+  );
+
+  return rows;
+}
+
+/* ============================================================
+   9–5: Skill UI builders
+   ============================================================ */
+function buildSkillEmbed(title, targetEmoji, expiresAtMs) {
+  const unix = Math.floor(expiresAtMs / 1000);
+  return new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(`Click **${targetEmoji}** before time runs out!\n⏳ Ends: <t:${unix}:R>`)
+    .setFooter({ text: "Failing doesn't pay, but browsing is still allowed." });
+}
+
+function buildSkillButtons(targetEmoji, disabled = false, prefix = "job_skill") {
+  const decoys = sampleUnique(skillCfg.emojis.filter((e) => e !== targetEmoji), 4);
+  const options = sampleUnique([targetEmoji, ...decoys], 5);
+
+  const row = new ActionRowBuilder();
+  for (const e of options) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`${prefix}:${e}`)
+        .setLabel(e)
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
+    );
+  }
+
+  return [
+    row,
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
+/* ============================================================
+   9–5: Shift UI builders
+   ============================================================ */
+function buildShiftEmbed(startMs, durationMs) {
+  const now = Date.now();
+  const elapsed = Math.min(durationMs, Math.max(0, now - startMs));
+  const pct = Math.floor((elapsed / durationMs) * 100);
+  const doneAtUnix = Math.floor((startMs + durationMs) / 1000);
+
+  return new EmbedBuilder()
+    .setTitle(shiftCfg.inProgressTitle || "🕒 Shift In Progress")
+    .setDescription(
+      [
+        `${progressBar(pct)} **${pct}%**`,
+        `⏳ Shift ends: <t:${doneAtUnix}:R>`,
+        elapsed >= durationMs ? "✅ Shift complete! Press **Collect Pay**." : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    )
+    .setFooter({ text: shiftCfg.footer || "Stay on the board. Collect when ready." });
+}
+
+function buildShiftButtons({ canCollect, disabled = false }) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("job_shift_collect")
+      .setLabel("💵 Collect Pay")
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled || !canCollect)
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+
+  return [row, row2];
+}
+
+/* ============================================================
+   Night Walker round builders
+   ============================================================ */
+function buildNWRoundEmbed({ title, round, rounds, prompt, statusLines = [] }) {
+  return new EmbedBuilder()
+    .setTitle(`${title} — Round ${round}/${rounds}`)
+    .setDescription([prompt, "", ...statusLines].filter(Boolean).join("\n"));
+}
+
+function buildNWChoiceComponents({ jobKey, roundIndex, choices, disabled = false }) {
   const row = new ActionRowBuilder();
   choices.slice(0, 5).forEach((c, idx) => {
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`sr|${phaseKey}|${scenarioId}|${idx}`)
-        .setLabel(safeStr(c.label, `Option ${idx + 1}`))
+        .setCustomId(`nw:${jobKey}:${roundIndex}:${idx}`)
+        .setLabel(safeLabel(c.label))
         .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
     );
   });
-  return row;
+
+  return [
+    row,
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:nw").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
 }
 
-function renderScenario(phaseKey, scenario, heat, theftKitInfo = null) {
-  const embed = new EmbedBuilder()
-    .setTitle("🏪 Store Robbery")
-    .setDescription(safeStr(scenario?.prompt, "You hesitate, watching the counter…"))
-    .addFields({ name: "🔥 Heat", value: `${clamp(heat, 0, 100)}/100`, inline: true });
+/* ============================================================
+   Main command
+   ============================================================ */
+module.exports = {
+  data: new SlashCommandBuilder().setName("job").setDescription("Open the job board and work for money."),
 
-  if (theftKitInfo?.active) {
-    const uses = Number(theftKitInfo.usesStart || 0);
-    embed.addFields({
-      name: "🛠️ Theft Kit",
-      value: `Active (${uses} uses left)\nBonus: -${theftKitInfo.bonusTotal || 0} heat so far`,
-      inline: true,
-    });
-    if (typeof theftKitInfo.lastBonus === "number") {
-      embed.addFields({
-        name: "✨ Last Bonus",
-        value: `-${theftKitInfo.lastBonus} heat`,
-        inline: true,
-      });
+  async execute(interaction) {
+    if (!interaction.inGuild()) {
+      return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
     }
-  }
 
-  embed.setFooter({ text: "Heat carries forward only in Crime." });
+    // 🚔 Jail gate (true = BLOCK)
+    if (await guardNotJailed(interaction)) return;
 
-  const row = buildRow(phaseKey, safeId(scenario?.id, "x"), scenario?.choices || []);
-  return { embed, components: [row] };
-}
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
-function applyRandomRunEvents() {
-  const notes = [];
-
-  if (Math.random() < LOOT_DROP_CHANCE) {
-    const drop = randInt(LOOT_DROP_MIN, LOOT_DROP_MAX);
-    notes.push(`💨 You fumbled and dropped **$${drop.toLocaleString()}** worth of loot.`);
-    return { payoutDelta: -drop, notes };
-  }
-
-  if (Math.random() < VALUABLE_FIND_CHANCE) {
-    const find = randInt(VALUABLE_MIN, VALUABLE_MAX);
-    notes.push(`✨ You found an extra **$${find.toLocaleString()}** hidden away.`);
-    return { payoutDelta: +find, notes };
-  }
-
-  return { payoutDelta: 0, notes };
-}
-
-function determineOutcomeFromHeat(heat) {
-  if (heat < HEAT_TIERS.CLEAN) return "clean";
-  if (heat < HEAT_TIERS.SPOTTED) return "spotted";
-  if (heat < HEAT_TIERS.PARTIAL) return "partial";
-  if (heat >= HEAT_TIERS.BUSTED_HARD) return "busted_hard";
-  return "busted";
-}
-
-function computeSuccessPayout(outcome) {
-  let base = randInt(PAYOUT_MIN, PAYOUT_MAX);
-  if (outcome === "partial") base = Math.floor(base * 0.75);
-  return Math.max(0, base);
-}
-
-function computeFine(outcome) {
-  let fine = randInt(FINE_MIN, FINE_MAX);
-  if (outcome === "busted_hard") fine = Math.floor(fine * 1.1);
-  return fine;
-}
-
-// =====================
-// MAIN EXPORT
-// =====================
-module.exports = function startStoreRobbery(interaction, context = {}) {
-  return new Promise(async (resolve) => {
     const guildId = interaction.guildId;
     const userId = interaction.user.id;
 
-    let heat = clamp(Number(context.lingeringHeat || 0), 0, 100);
+    await ensureUser(guildId, userId);
 
-    let evidenceRisk = false;
-    let evidenceCleared = false;
-    let usedCar = false;
-    let timerRisk = false;
-    let witnessRisk = false;
-    let crowdBlendUsed = false;
+    const prog = await getJobProgress(guildId, userId);
+    const cdUnix = await getCooldownUnixIfActive(guildId, userId, "job");
 
-    // ✅ Theft kit run state (optional bonus)
-    let theftKitUsesStart = 0;
-    let theftKitActive = false;
-    let theftKitBonusTotal = 0;
-    let theftKitLastBonus = null;
-    let theftKitConsumed = false;
-    let theftKitUsesRemainingAfter = null;
+    const msg = await interaction.channel.send({
+      embeds: [buildHubEmbed(interaction.user, prog, cdUnix)],
+      components: buildHubComponents(false),
+    });
 
-    try {
-      theftKitUsesStart = await getTheftKitUses(guildId, userId);
-      theftKitActive = theftKitUsesStart > 0;
-    } catch {
-      theftKitActive = false;
-      theftKitUsesStart = 0;
-    }
+    await interaction.editReply("✅ Job board posted.");
 
-    let finished = false;
-    const finishOnce = (payload) => {
-      if (finished) return;
-      finished = true;
-      resolve(payload);
+    const session = {
+      view: "hub",
+
+      level: prog.level,
+      legendaryAvailable: false,
+      legendaryExpiresAt: 0,
+
+      // Contract state
+      contractStep: 0,
+      contractPicks: [],
+      contractBonusTotal: 0,
+      contractRiskTotal: 0,
+
+      // Skill state
+      skillExpiresAt: 0,
+
+      // Shift state
+      shiftStartMs: 0,
+      shiftInterval: null,
+      shiftDurationMs: (shiftCfg.durationSeconds || 45) * 1000,
+      shiftReady: false,
+
+      // Night Walker state
+      nw: null,
     };
 
-    const phases = ["approach", "method", "greed", "exit", "aftermath"];
-    const stepCount = randInt(MIN_STEPS, MAX_STEPS);
-    const chosenPhases = phases.slice(0, stepCount);
+    const collector = msg.createMessageComponentCollector({ time: BOARD_INACTIVITY_MS });
 
-    const chosenScenarios = [];
-    const usedIds = new Set();
+    function resetInactivity() {
+      collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+    }
 
-    for (const phase of chosenPhases) {
-      const poolList = scenarios[phase] || [];
-      if (!poolList.length) continue;
+    async function stopWork(reason = "stop") {
+      if (session.shiftInterval) {
+        clearInterval(session.shiftInterval);
+        session.shiftInterval = null;
+      }
+      try {
+        await msg.edit({ components: buildHubComponents(true) });
+      } catch {}
+      collector.stop(reason);
+      setTimeout(() => msg.delete().catch(() => {}), 1000);
+    }
 
-      const available = poolList.filter((s) => s && !usedIds.has(s.id));
-      const s = (available.length ? pick(available) : pick(poolList)) || null;
+    async function checkCooldownOrTell(btn) {
+      const next = await getCooldown(guildId, userId, "job");
+      const now = new Date();
+      if (next && now < next) {
+        const unix = Math.floor(next.getTime() / 1000);
+        await btn
+          .followUp({
+            content: `⏳ You’re on cooldown. Next payout <t:${unix}:R>.`,
+            flags: MessageFlags.Ephemeral,
+          })
+          .catch(() => {});
+        return true;
+      }
+      return false;
+    }
 
-      if (s) {
-        usedIds.add(s.id);
-        chosenScenarios.push({ phase, scenario: s });
+    async function maybeSpawnLegendary() {
+      if (session.legendaryAvailable) return;
+      if (Math.random() < LEGENDARY_CHANCE) {
+        session.legendaryAvailable = true;
+        session.legendaryExpiresAt = Date.now() + LEGENDARY_TTL_MS;
       }
     }
 
-    let phaseIndex = 0;
+    async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true } = {}) {
+      const mult = levelMultiplier(session.level);
+      let amount = Math.floor(amountBase * mult);
 
-    const message = await interaction.fetchReply();
-
-    const collector = message.createMessageComponentCollector({
-      time: RUN_TIMEOUT_MS,
-    });
-
-    async function showCurrentPhase() {
-      const current = chosenScenarios[phaseIndex];
-      if (!current || !current.scenario) {
-        return resolveAndFinish();
+      if (GLOBAL_BONUS_CHANCE > 0 && Math.random() < GLOBAL_BONUS_CHANCE) {
+        const bonus = randInt(GLOBAL_BONUS_MIN, GLOBAL_BONUS_MAX);
+        amount += bonus;
+        meta.globalBonus = bonus;
       }
 
-      const { phase, scenario } = current;
-      const { embed, components } = renderScenario(
-        phase,
-        scenario,
-        heat,
-        theftKitActive
-          ? {
-              active: true,
-              usesStart: theftKitUsesStart,
-              bonusTotal: theftKitBonusTotal,
-              lastBonus: theftKitLastBonus,
-            }
-          : null
-      );
+      const nextClaim = new Date(Date.now() + JOB_COOLDOWN_SECONDS * 1000);
+      await setCooldown(guildId, userId, "job", nextClaim);
 
-      await interaction.editReply({ content: null, embeds: [embed], components });
+      await creditUser(guildId, userId, amount, reason, meta);
+
+      const progUpdate = await addXpAndMaybeLevel(guildId, userId, xpGain, countJob);
+
+      if (countJob) {
+        await handleJobMilestones({
+          channel: msg.channel,
+          guildId,
+          userId,
+          totalJobs: progUpdate.totalJobs,
+        });
+      }
+
+      if (allowLegendarySpawn && countJob) {
+        await maybeSpawnLegendary();
+      }
+
+      return { amount, nextClaim, prog: progUpdate };
     }
 
-    function rollIdentifiedLater() {
-      let chance = 0.05;
+    async function redraw() {
+      const p = await getJobProgress(guildId, userId);
+      session.level = p.level;
 
-      if (evidenceRisk) chance += 0.18;
-      if (timerRisk) chance += 0.10;
-      if (usedCar) chance += 0.10;
-      if (witnessRisk) chance += 0.08;
+      if (session.legendaryAvailable && Date.now() > session.legendaryExpiresAt) {
+        session.legendaryAvailable = false;
+      }
 
-      if (crowdBlendUsed) chance -= 0.08;
-      if (evidenceCleared) chance -= 0.12;
+      const cd = await getCooldownUnixIfActive(guildId, userId, "job");
 
-      chance = clamp(chance, 0, 0.60);
-      return Math.random() < chance;
+      if (session.view === "hub") {
+        return msg
+          .edit({
+            embeds: [buildHubEmbed(interaction.user, p, cd)],
+            components: buildHubComponents(false),
+          })
+          .catch(() => {});
+      }
+
+      if (session.view === "95") {
+        return msg
+          .edit({
+            embeds: [buildNineToFiveEmbed(interaction.user, p, cd)],
+            components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+          })
+          .catch(() => {});
+      }
+
+      if (session.view === "nw") {
+        return msg
+          .edit({
+            embeds: [buildNightWalkerEmbed(interaction.user, p, cd)],
+            components: buildNightWalkerComponents(false),
+          })
+          .catch(() => {});
+      }
+
+      if (session.view === "grind") {
+        return msg
+          .edit({
+            embeds: [buildGrindEmbed(cd)],
+            components: buildGrindComponents(false),
+          })
+          .catch(() => {});
+      }
+
+      // ✅ UPDATED: Crime view includes heat bar + timers
+      if (session.view === "crime") {
+        const heatInfo = await getCrimeHeatInfo(guildId, userId);
+
+        const cooldowns = {
+          crimeGlobal: await getCooldownUnixIfActive(guildId, userId, CRIME_GLOBAL_KEY),
+          store: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.store),
+          heist: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.heist),
+          major: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.major),
+        };
+
+        return msg
+          .edit({
+            embeds: [buildCrimeEmbed({ heatInfo, cooldowns })],
+            components: buildCrimeComponents(false),
+          })
+          .catch(() => {});
+      }
     }
 
-    async function maybeJail(outcome) {
-      const roll = Math.random();
-      const chance = outcome === "busted_hard" ? JAIL_CHANCE_BUSTED_HARD : JAIL_CHANCE_BUSTED;
+    // Adapter so Crime minigames (which use interaction.editReply/fetchReply) work on our board message
+    const boardAdapter = {
+      guildId,
+      user: interaction.user,
+      channel: msg.channel,
+      editReply: (payload) => msg.edit(payload),
+      fetchReply: () => Promise.resolve(msg),
+    };
 
-      if (roll >= chance) return 0;
+    /* ============================================================
+       Collector handlers
+       ============================================================ */
+    collector.on("collect", async (btn) => {
+      try {
+        if (btn.user.id !== userId) {
+          return btn.reply({ content: "❌ This board isn’t for you.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        }
 
-      const minutes = randInt(JAIL_MIN_MINUTES, JAIL_MAX_MINUTES);
-      await setJail(guildId, userId, minutes);
-      return minutes;
-    }
+        // 🚔 Jail gate for buttons (true = BLOCK)
+        if (await guardNotJailedComponent(btn)) return;
 
-    async function resolveAndFinish() {
-      await applyCooldowns(guildId, userId);
+        // ✅ Ack once for safety (prevents "This interaction failed")
+        // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
+        const isClerkRuntime = btn.customId.startsWith("grind_clerk:");
+        if (isClerkRuntime) {
+          resetInactivity(); // keep the /job board alive while the grind module runs
+          return;            // modal safety: the grind module will handle/ack as needed
+        }
 
-      // ✅ Consume 1 theft kit use per run (only if active at start)
-      if (theftKitActive && !theftKitConsumed) {
-        try {
-          const useRes = await consumeItemUse(guildId, userId, THEFT_KIT_ITEM_ID, 1);
-          if (useRes?.ok) {
-            theftKitConsumed = true;
-            theftKitUsesRemainingAfter = Number(useRes.usesRemaining ?? 0);
+        await ensureAck(btn);
+        resetInactivity();
+
+        // Stop
+        if (btn.customId === "job_stop") {
+          return stopWork("stop_button");
+        }
+
+        // Back buttons
+        if (btn.customId === "job_back:hub") {
+          session.view = "hub";
+          session.nw = null;
+          await redraw();
+          return;
+        }
+
+        if (btn.customId === "job_back:95") {
+          session.view = "95";
+          session.nw = null;
+          await redraw();
+          return;
+        }
+
+        if (btn.customId === "job_back:nw") {
+          session.view = "nw";
+          session.nw = null;
+          await redraw();
+          return;
+        }
+
+        // Category nav (allowed even on /job payout cooldown — but jail still blocks)
+        if (btn.customId === "job_cat:95") {
+          session.view = "95";
+          await redraw();
+          return;
+        }
+        if (btn.customId === "job_cat:nw") {
+          session.view = "nw";
+          await redraw();
+          return;
+        }
+        if (btn.customId === "job_cat:grind") {
+          session.view = "grind";
+          await redraw();
+          return;
+        }
+        if (btn.customId === "job_cat:crime") {
+          session.view = "crime";
+          await redraw();
+          return;
+        }
+
+
+        /* ============================================================
+           GRIND MENU (NEW)
+           ============================================================ */
+        if (btn.customId.startsWith("grind:")) {
+          const key = btn.customId.split(":")[1];
+
+          // Block starting a grind job if on /job payout cooldown
+          if (await checkCooldownOrTell(btn)) return;
+
+          if (key === "clerk") {
+            session.view = "grind_run";
+
+            await startStoreClerk(btn, {
+              pool,
+              boardMsg: msg,
+              guildId,
+              userId,
+            });
+
+            // After the module completes it edits the board; return to Grind menu
+            await new Promise((r) => setTimeout(r, 1500));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+
+            session.view = "grind";
+            await redraw();
+            return;
           }
-        } catch {
-          // Avoid punishing player due to DB errors
+
+          await btn
+            .followUp({ content: "🕒 That Grind job is coming soon.", flags: MessageFlags.Ephemeral })
+            .catch(() => {});
+          return;
         }
-      }
 
-      const eventNotes = applyRandomRunEvents();
+        /* ============================================================
+           CRIME MENU (Store Robbery + Heists live)
+           ============================================================ */
+        if (btn.customId.startsWith("crime:")) {
+          const key = btn.customId.split(":")[1];
 
-      let outcome = determineOutcomeFromHeat(heat);
-      const identified = rollIdentifiedLater();
-      if (identified && outcome === "clean") outcome = "spotted";
+          if (key === "store") {
+            if (await checkCrimeCooldownOrTell(btn, guildId, userId, CRIME_KEYS.store, "Store Robbery")) return;
 
-      const resultLines = [];
+            const lingeringHeat = await getCrimeHeat(guildId, userId);
+            session.view = "crime_run";
 
-      if (outcome === "clean" || outcome === "spotted") {
-        const payout = computeSuccessPayout(outcome) + eventNotes.payoutDelta;
-        const finalPayout = Math.max(0, payout);
-        await addUserBalance(guildId, userId, finalPayout);
+            await startStoreRobbery(boardAdapter, {
+              lingeringHeat,
+              onStoreRobberyComplete: async ({ outcome, finalHeat, identified }) => {
+                if (!finalHeat || finalHeat <= 0) return;
+                const ttlMins = heatTTLMinutesForOutcome(outcome, { identified });
+                await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
+              },
+            });
 
-        resultLines.push(
-          outcome === "clean"
-            ? `✅ Clean getaway. You pocket **$${finalPayout.toLocaleString()}**.`
-            : `⚠️ You got out, but it felt risky. You pocket **$${finalPayout.toLocaleString()}**.`
-        );
+            await new Promise((r) => setTimeout(r, 5_000));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
 
-        if (identified) resultLines.push("🧾 You might’ve been **identified later**.");
-      } else if (outcome === "partial") {
-        const payout = computeSuccessPayout("partial") + eventNotes.payoutDelta;
-        const finalPayout = Math.max(0, payout);
-        await addUserBalance(guildId, userId, finalPayout);
+            session.view = "crime";
+            await redraw();
+            return;
+          }
 
-        resultLines.push(`😬 You got something, but not much. You pocket **$${finalPayout.toLocaleString()}**.`);
-      } else {
-        const fine = computeFine(outcome);
-        const taken = await subtractUserBalanceAndSendToBank(guildId, userId, fine);
+          if (key === "heist") {
+            if (await checkCrimeCooldownOrTell(btn, guildId, userId, CRIME_KEYS.heist, "Heist")) return;
 
-        resultLines.push(
-          outcome === "busted_hard"
-            ? `🚨 **BUSTED HARD.** Fine: **$${fine.toLocaleString()}** (paid **$${taken.toLocaleString()}**).`
-            : `🚓 **BUSTED.** Fine: **$${fine.toLocaleString()}** (paid **$${taken.toLocaleString()}**).`
-        );
+            const lingeringHeat = await getCrimeHeat(guildId, userId);
+            session.view = "crime_run";
 
-        const jailedMinutes = await maybeJail(outcome);
-        if (jailedMinutes > 0) {
-          resultLines.push(`⛓️ You were jailed for **${jailedMinutes} minutes**. (All jobs blocked)`);
-        } else {
-          resultLines.push("😮‍💨 You avoided jail this time.");
+            await startHeist(boardAdapter, {
+              mode: "heist",
+              lingeringHeat,
+              onHeistComplete: async ({ outcome, finalHeat, identified, mode }) => {
+                if (!finalHeat || finalHeat <= 0) return;
+                const ttlMins = heatTTLMinutesForHeistOutcome(outcome, { identified, mode });
+                await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
+              },
+            });
+
+            await new Promise((r) => setTimeout(r, 5_000));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+
+            session.view = "crime";
+            await redraw();
+            return;
+          }
+
+          if (key === "major") {
+            if (await checkCrimeCooldownOrTell(btn, guildId, userId, CRIME_KEYS.major, "Major Heist")) return;
+
+            const lingeringHeat = await getCrimeHeat(guildId, userId);
+            session.view = "crime_run";
+
+            await startHeist(boardAdapter, {
+              mode: "major",
+              lingeringHeat,
+              onHeistComplete: async ({ outcome, finalHeat, identified, mode }) => {
+                if (!finalHeat || finalHeat <= 0) return;
+                const ttlMins = heatTTLMinutesForHeistOutcome(outcome, { identified, mode });
+                await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
+              },
+            });
+
+            await new Promise((r) => setTimeout(r, 5_000));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+
+            session.view = "crime";
+            await redraw();
+            return;
+          }
+
+          if (key === "chase") {
+            if (await checkCrimeCooldownOrTell(btn, guildId, userId, CRIME_KEYS.chase, "Car Chase")) return;
+            await btn
+              .followUp({ content: "🚗 Car Chase is coming soon.", flags: MessageFlags.Ephemeral })
+              .catch(() => {});
+            return;
+          }
+
+          if (key === "drugs") {
+            await btn
+              .followUp({ content: "💊 Drug Pushing is a placeholder for now.", flags: MessageFlags.Ephemeral })
+              .catch(() => {});
+            return;
+          }
         }
-      }
 
-      if (theftKitActive) {
-        const usesLeftText =
-          typeof theftKitUsesRemainingAfter === "number"
-            ? `${theftKitUsesRemainingAfter}`
-            : "unknown";
+        /* ============================================================
+           9–5 ENTRY (buttons from data/nineToFive/index.js)
+           ============================================================ */
+        if (btn.customId.startsWith("job_95:")) {
+          const mode = btn.customId.split(":")[1];
 
-        resultLines.push(
-          "",
-          `🛠️ Theft Kit bonus applied: **-${theftKitBonusTotal} heat** across decisions.`,
-          theftKitConsumed
-            ? `🧰 Theft Kit use consumed: **1** (uses left: **${usesLeftText}**)`
-            : `🧰 Theft Kit: **active** (use not consumed due to an error)`
-        );
-      }
+          // Block starting a job if on /job payout cooldown
+          if (await checkCooldownOrTell(btn)) return;
 
-      if (eventNotes.notes?.length) resultLines.push("", ...eventNotes.notes);
+          if (mode === "contract") {
+            session.view = "contract";
+            session.contractStep = 0;
+            session.contractPicks = [];
+            session.contractBonusTotal = 0;
+            session.contractRiskTotal = 0;
 
-      if (outcome === "clean") heat = clamp(heat - 8, 0, 100);
-      if (outcome === "spotted") heat = clamp(heat + 5, 0, 100);
-      if (outcome === "partial") heat = clamp(heat + 12, 0, 100);
-      if (outcome === "busted") heat = clamp(heat + 22, 0, 100);
-      if (outcome === "busted_hard") heat = clamp(heat + 35, 0, 100);
+            await msg
+              .edit({
+                embeds: [buildContractEmbed(0, session.contractPicks, session.level)],
+                components: buildContractButtons(0, session.level, false),
+              })
+              .catch(() => {});
+            return;
+          }
 
-      if (typeof context.onStoreRobberyComplete === "function") {
+          if (mode === "skill") {
+            session.view = "skill";
+            const target = pick(skillCfg.emojis);
+            session.skillExpiresAt = Date.now() + (skillCfg.timeLimitMs || 12_000);
+
+            await msg
+              .edit({
+                embeds: [buildSkillEmbed(skillCfg.title || "🧠 Skill Check", target, session.skillExpiresAt)],
+                components: buildSkillButtons(target, false, "job_skill"),
+              })
+              .catch(() => {});
+            return;
+          }
+
+          if (mode === "shift") {
+            session.view = "shift";
+
+            if (session.shiftInterval) clearInterval(session.shiftInterval);
+            session.shiftStartMs = Date.now();
+            session.shiftReady = false;
+
+            await msg
+              .edit({
+                embeds: [buildShiftEmbed(session.shiftStartMs, session.shiftDurationMs)],
+                components: buildShiftButtons({ canCollect: false, disabled: false }),
+              })
+              .catch(() => {});
+
+            const tickMs = (shiftCfg.tickSeconds || 5) * 1000;
+
+            session.shiftInterval = setInterval(async () => {
+              try {
+                const done = Date.now() - session.shiftStartMs >= session.shiftDurationMs;
+                if (done) session.shiftReady = true;
+
+                await msg
+                  .edit({
+                    embeds: [buildShiftEmbed(session.shiftStartMs, session.shiftDurationMs)],
+                    components: buildShiftButtons({ canCollect: session.shiftReady, disabled: false }),
+                  })
+                  .catch(() => {});
+
+                if (done) {
+                  clearInterval(session.shiftInterval);
+                  session.shiftInterval = null;
+                }
+              } catch {}
+            }, tickMs);
+
+            return;
+          }
+
+          if (mode === "legendary") {
+            if (!session.legendaryAvailable) return;
+
+            if (await checkCooldownOrTell(btn)) return;
+
+            session.view = "legendary";
+            const target = pick(skillCfg.emojis);
+            session.skillExpiresAt = Date.now() + LEGENDARY_SKILL_TIME_MS;
+
+            await msg
+              .edit({
+                embeds: [buildSkillEmbed("🌟 Legendary Job", target, session.skillExpiresAt)],
+                components: buildSkillButtons(target, false, "job_leg"),
+              })
+              .catch(() => {});
+            return;
+          }
+        }
+
+        // Contract clicks
+        if (btn.customId.startsWith("job_contract:")) {
+          if (await checkCooldownOrTell(btn)) return;
+
+          const parts = btn.customId.split(":");
+          const stepIndex = Number(parts[1]);
+          const label = parts.slice(2).join(":");
+
+          const step = contractCfg.steps[stepIndex];
+          const choices = getContractChoices(step, session.level);
+          const chosen = choices.find((c) => c.label === label);
+          if (!chosen) return;
+
+          session.contractPicks.push(label);
+          session.contractBonusTotal += randInt(chosen.modMin, chosen.modMax);
+          session.contractRiskTotal += chosen.risk;
+
+          const nextStep = stepIndex + 1;
+
+          if (nextStep >= contractCfg.steps.length) {
+            const failRoll = Math.random() < session.contractRiskTotal;
+            if (failRoll) {
+              const embed = new EmbedBuilder()
+                .setTitle("📦 Transport Contract — Failed")
+                .setDescription(
+                  [
+                    "The contract went sideways.",
+                    "",
+                    `❌ No payout (risk caught up to you).`,
+                    "",
+                    "Back to Work a 9–5.",
+                  ].join("\n")
+                )
+                .setColor(0xaa0000);
+
+              session.view = "95";
+              await msg
+                .edit({
+                  embeds: [embed],
+                  components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+                })
+                .catch(() => {});
+              return;
+            }
+
+            const base = randInt(contractCfg.payout?.min ?? 2000, contractCfg.payout?.max ?? 5000);
+            const amountBase = base + session.contractBonusTotal;
+
+            const paid = await payUser(
+              amountBase,
+              "job_95_contract",
+              contractCfg.xp?.success ?? 0,
+              { picks: session.contractPicks, bonusTotal: session.contractBonusTotal, riskTotal: session.contractRiskTotal },
+              { countJob: true, allowLegendarySpawn: true }
+            );
+
+            const embed = new EmbedBuilder()
+              .setTitle("📦 Transport Contract — Complete")
+              .setDescription(
+                [
+                  `✅ Paid: **$${paid.amount.toLocaleString()}**`,
+                  `⏳ Next payout: <t:${toUnix(paid.nextClaim)}:R>`,
+                  paid.prog.leveledUp ? `🎉 Level up! You are now **Level ${paid.prog.level}**` : "",
+                  "",
+                  "Back to Work a 9–5.",
+                ]
+                  .filter(Boolean)
+                  .join("\n")
+              )
+              .setColor(0x22aa55);
+
+            session.view = "95";
+            await msg
+              .edit({
+                embeds: [embed],
+                components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+              })
+              .catch(() => {});
+            return;
+          }
+
+          session.contractStep = nextStep;
+
+          await msg
+            .edit({
+              embeds: [buildContractEmbed(nextStep, session.contractPicks, session.level)],
+              components: buildContractButtons(nextStep, session.level, false),
+            })
+            .catch(() => {});
+          return;
+        }
+
+        // Skill checks (normal + legendary)
+        if (btn.customId.startsWith("job_skill:") || btn.customId.startsWith("job_leg:")) {
+          const isLegendary = btn.customId.startsWith("job_leg:");
+          const chosen = btn.customId.split(":")[1];
+
+          const now = Date.now();
+          const expired = now > session.skillExpiresAt;
+
+          if (expired || !chosen) {
+            const embed = new EmbedBuilder()
+              .setTitle(isLegendary ? "🌟 Legendary — Failed" : "🧠 Skill Check — Failed")
+              .setDescription("❌ Too slow. No payout.")
+              .setColor(0xaa0000);
+
+            session.view = "95";
+            await msg
+              .edit({
+                embeds: [embed],
+                components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+              })
+              .catch(() => {});
+            return;
+          }
+
+          if (await checkCooldownOrTell(btn)) return;
+
+          const base = isLegendary
+            ? randInt(LEGENDARY_MIN, LEGENDARY_MAX)
+            : randInt(skillCfg.payout?.min ?? 1000, skillCfg.payout?.max ?? 2000);
+
+          const paid = await payUser(
+            base,
+            isLegendary ? "job_95_legendary" : "job_95_skill",
+            isLegendary ? (skillCfg.xp?.legendary ?? 30) : (skillCfg.xp?.success ?? 10),
+            { legendary: isLegendary },
+            { countJob: true, allowLegendarySpawn: true }
+          );
+
+          const embed = new EmbedBuilder()
+            .setTitle(isLegendary ? "🌟 Legendary — Complete" : "🧠 Skill Check — Complete")
+            .setDescription(
+              [
+                `✅ Paid: **$${paid.amount.toLocaleString()}**`,
+                `⏳ Next payout: <t:${toUnix(paid.nextClaim)}:R>`,
+                paid.prog.leveledUp ? `🎉 Level up! You are now **Level ${paid.prog.level}**` : "",
+                "",
+                "Back to Work a 9–5.",
+              ]
+                .filter(Boolean)
+                .join("\n")
+            )
+            .setColor(0x22aa55);
+
+          session.view = "95";
+          await msg
+            .edit({
+              embeds: [embed],
+              components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+            })
+            .catch(() => {});
+          return;
+        }
+
+        // Shift collect
+        if (btn.customId === "job_shift_collect") {
+          if (!session.shiftReady) return;
+          if (await checkCooldownOrTell(btn)) return;
+
+          const base = randInt(shiftCfg.payout?.min ?? 1200, shiftCfg.payout?.max ?? 2500);
+
+          const paid = await payUser(
+            base,
+            "job_95_shift",
+            shiftCfg.xp?.success ?? 12,
+            { shift: true },
+            { countJob: true, allowLegendarySpawn: true }
+          );
+
+          const embed = new EmbedBuilder()
+            .setTitle("🕒 Shift — Complete")
+            .setDescription(
+              [
+                `✅ Paid: **$${paid.amount.toLocaleString()}**`,
+                `⏳ Next payout: <t:${toUnix(paid.nextClaim)}:R>`,
+                paid.prog.leveledUp ? `🎉 Level up! You are now **Level ${paid.prog.level}**` : "",
+                "",
+                "Back to Work a 9–5.",
+              ]
+                .filter(Boolean)
+                .join("\n")
+            )
+            .setColor(0x22aa55);
+
+          session.view = "95";
+          await msg
+            .edit({
+              embeds: [embed],
+              components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+            })
+            .catch(() => {});
+          return;
+        }
+
+        /* ============================================================
+           Night Walker ENTRY
+           ============================================================ */
+        if (btn.customId.startsWith("job_nw:")) {
+          const jobKey = btn.customId.split(":")[1];
+
+          if (await checkCooldownOrTell(btn)) return;
+
+          const cfg = nightWalker?.jobs?.[jobKey];
+          if (!cfg) return;
+
+          const rounds = cfg.rounds || 1;
+          const poolList = cfg.scenarios || [];
+          const pickedScenarios = sampleUnique(poolList, rounds);
+
+          while (pickedScenarios.length < rounds && poolList.length) {
+            pickedScenarios.push(pick(poolList));
+          }
+
+          session.view = "nw_round";
+          session.nw = {
+            jobKey,
+            cfg,
+            roundIndex: 0,
+            pickedScenarios,
+            wrongCount: 0,
+            penaltyTokens: 0,
+            risk: 0,
+            payoutModPct: 0,
+          };
+
+          const sc = session.nw.pickedScenarios[0];
+          await msg
+            .edit({
+              embeds: [
+                buildNWRoundEmbed({
+                  title: cfg.title || jobKey,
+                  round: 1,
+                  rounds,
+                  prompt: sc?.prompt || "…",
+                  statusLines: [],
+                }),
+              ],
+              components: buildNWChoiceComponents({
+                jobKey,
+                roundIndex: 0,
+                choices: sc?.choices || [],
+              }),
+            })
+            .catch(() => {});
+          return;
+        }
+
+        // NW round choice clicks
+        if (btn.customId.startsWith("nw:")) {
+          if (!session.nw) return;
+
+          const [, jobKey, roundIndexStr, choiceIndexStr] = btn.customId.split(":");
+          const roundIndex = Number(roundIndexStr);
+          const choiceIndex = Number(choiceIndexStr);
+
+          const cfg = nightWalker?.jobs?.[jobKey];
+          if (!cfg) return;
+
+          const sc = session.nw.pickedScenarios?.[roundIndex];
+          const choice = sc?.choices?.[choiceIndex];
+          if (!choice) return;
+
+          if (jobKey === "flirt") {
+            if (choice.correct === false) session.nw.wrongCount++;
+          }
+          if (jobKey === "lapDance") {
+            if (choice.penalty) session.nw.penaltyTokens += choice.penalty;
+          }
+          if (jobKey === "prostitute") {
+            session.nw.risk = clamp(session.nw.risk + (choice.riskDelta || 0), 0, 200);
+          }
+
+          session.nw.payoutModPct = clamp(session.nw.payoutModPct + (choice.payoutDeltaPct || 0), -80, 200);
+
+          if (jobKey === "flirt" && session.nw.wrongCount >= (cfg.failOnWrongs || 2)) {
+            session.view = "nw";
+            session.nw = null;
+
+            const embed = new EmbedBuilder()
+              .setTitle(`${cfg.title || jobKey} — Failed`)
+              .setDescription("❌ Too many wrong answers. No payout.")
+              .setColor(0xaa0000);
+
+            await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
+            return;
+          }
+
+          if (jobKey === "lapDance" && session.nw.penaltyTokens >= (cfg.penalties?.failAt || 3)) {
+            session.view = "nw";
+            session.nw = null;
+
+            const embed = new EmbedBuilder()
+              .setTitle(`${cfg.title || jobKey} — Failed`)
+              .setDescription("❌ You messed up too many times. No payout.")
+              .setColor(0xaa0000);
+
+            await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
+            return;
+          }
+
+          if (jobKey === "prostitute" && session.nw.risk >= (cfg.risk?.failAt || 100)) {
+            session.view = "nw";
+            session.nw = null;
+
+            const embed = new EmbedBuilder()
+              .setTitle(`${cfg.title || jobKey} — Failed`)
+              .setDescription("❌ Heat got too high. No payout.")
+              .setColor(0xaa0000);
+
+            await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
+            return;
+          }
+
+          session.nw.roundIndex++;
+
+          if (session.nw.roundIndex >= (cfg.rounds || 1)) {
+            if (await checkCooldownOrTell(btn)) return;
+
+            const base = randInt(cfg.payout?.min ?? 1000, cfg.payout?.max ?? 2000);
+            const mod = 1 + (session.nw.payoutModPct / 100);
+            const amountBase = Math.max(0, Math.floor(base * mod));
+
+            const paid = await payUser(
+              amountBase,
+              `job_nw_${jobKey}`,
+              cfg.xp?.success ?? 0,
+              { job: jobKey, modPct: session.nw.payoutModPct },
+              { countJob: true, allowLegendarySpawn: true }
+            );
+
+            const embed = new EmbedBuilder()
+              .setTitle(`${cfg.title || jobKey} — Complete`)
+              .setDescription(
+                [
+                  choice.feedback || "Nice.",
+                  "",
+                  `✅ Paid: **$${paid.amount.toLocaleString()}**`,
+                  `⏳ Next payout: <t:${toUnix(paid.nextClaim)}:R>`,
+                  paid.prog.leveledUp ? `🎉 Level up! You are now **Level ${paid.prog.level}**` : "",
+                  "",
+                  "Back to Night Walker.",
+                ]
+                  .filter(Boolean)
+                  .join("\n")
+              )
+              .setColor(0x22aa55);
+
+            session.view = "nw";
+            session.nw = null;
+
+            await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
+            return;
+          }
+
+          const nextSc = session.nw.pickedScenarios?.[session.nw.roundIndex];
+          const statusLines = [];
+
+          if (jobKey === "flirt") statusLines.push(`Wrong answers: **${session.nw.wrongCount}/${cfg.failOnWrongs || 2}**`);
+          if (jobKey === "lapDance") statusLines.push(`Mistakes: **${session.nw.penaltyTokens}/${cfg.penalties?.failAt || 3}**`);
+          if (jobKey === "prostitute") statusLines.push(`Risk: **${session.nw.risk}/${cfg.risk?.failAt || 100}**`);
+
+          await msg
+            .edit({
+              embeds: [
+                buildNWRoundEmbed({
+                  title: cfg.title || jobKey,
+                  round: session.nw.roundIndex + 1,
+                  rounds: cfg.rounds || 1,
+                  prompt: nextSc?.prompt || "…",
+                  statusLines: [choice.feedback || "", "", ...statusLines].filter(Boolean),
+                }),
+              ],
+              components: buildNWChoiceComponents({
+                jobKey,
+                roundIndex: session.nw.roundIndex,
+                choices: nextSc?.choices || [],
+              }),
+            })
+            .catch(() => {});
+          return;
+        }
+      } catch (e) {
+        console.error("/job interaction error:", e);
         try {
-          await context.onStoreRobberyComplete({
-            guildId,
-            userId,
-            outcome,
-            finalHeat: heat,
-            evidenceRisk,
-            identified,
-          });
+          await btn.followUp({ content: "❌ Something went wrong. Check Railway logs.", flags: MessageFlags.Ephemeral });
         } catch {}
       }
-
-      const embed = new EmbedBuilder()
-        .setTitle("🏁 Store Robbery Complete")
-        .setDescription(resultLines.join("\n"))
-        .addFields(
-          { name: "🔥 Final Heat", value: `${heat}/100`, inline: true },
-          { name: "🧾 Identified?", value: identified ? "Yes (possible)" : "No", inline: true }
-        )
-        .setFooter({ text: "Crime heat only affects Crime jobs." })
-        .setColor(outcome.startsWith("busted") ? 0xaa0000 : 0x22aa55);
-
-      await interaction.editReply({ content: null, embeds: [embed], components: [] }).catch(() => {});
-
-      try { collector.stop("done"); } catch {}
-      finishOnce({ outcome, finalHeat: heat, identified });
-    }
-
-    collector.on("collect", async (i) => {
-      if (i.user.id !== userId) {
-        return i.reply({ content: "❌ Not your robbery.", flags: 64 }).catch(() => {});
-      }
-
-      await i.deferUpdate().catch(() => {});
-
-      const parts = String(i.customId || "").split("|");
-      if (parts.length !== 4 || parts[0] !== "sr") return;
-
-      const phase = parts[1];
-      const scenarioId = parts[2];
-      const choiceIndex = Number(parts[3]);
-
-      const poolList = scenarios[phase] || [];
-      const scenario = poolList.find((s) => s.id === scenarioId);
-      const choice = scenario?.choices?.[choiceIndex];
-      if (!choice) return;
-
-      if (typeof choice.heat === "number") heat += choice.heat;
-
-      if (choice.evidenceRisk) evidenceRisk = true;
-      if (choice.evidenceClear) evidenceCleared = true;
-      if (choice.usedCar) usedCar = true;
-      if (choice.timerRisk) timerRisk = true;
-      if (choice.witnessRisk) witnessRisk = true;
-      if (choice.crowdBlend) crowdBlendUsed = true;
-
-      if (theftKitActive) {
-        const extra = randInt(THEFT_KIT_EXTRA_MIN, THEFT_KIT_EXTRA_MAX);
-        heat -= extra;
-        theftKitBonusTotal += extra;
-        theftKitLastBonus = extra;
-      }
-
-      heat = clamp(heat, 0, 100);
-
-      phaseIndex++;
-      if (phaseIndex >= chosenScenarios.length) return resolveAndFinish();
-      return showCurrentPhase();
     });
 
-    collector.on("end", async (_, reason) => {
-      if (reason === "done") return;
-      await interaction
-        .editReply({
-          content: "⏱️ You hesitated too long. The opportunity passed.",
-          embeds: [],
-          components: [],
-        })
-        .catch(() => {});
-      finishOnce({ outcome: "timeout", finalHeat: heat, identified: false });
+    collector.on("end", async () => {
+      if (session.shiftInterval) {
+        clearInterval(session.shiftInterval);
+        session.shiftInterval = null;
+      }
+      try {
+        await msg.edit({ components: buildHubComponents(true) });
+      } catch {}
+      setTimeout(() => msg.delete().catch(() => {}), 1000);
     });
 
-    await showCurrentPhase();
-  });
+    // refresh only updates navigation views
+    const refresh = setInterval(async () => {
+      if (collector.ended) return clearInterval(refresh);
+      if (["hub", "95", "nw", "grind", "crime"].includes(session.view)) {
+        await redraw();
+      }
+    }, 10_000);
+  },
 };
