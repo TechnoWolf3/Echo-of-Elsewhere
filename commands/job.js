@@ -464,7 +464,7 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
       return `• **${cfg.title || k}** — ${cfg.desc || ""}`.trim();
     })
     .filter(Boolean)
-    .join("\\n");
+    .join("\n");
 
   const fatigueMs = Number(fatigueInfo?.fatigueMs || 0);
   const fb = grindFatigueBar ? grindFatigueBar(fatigueMs) : { pct: 0, bar: "" };
@@ -476,14 +476,14 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
           `🧠 Fatigue: **${fb.pct}** / 100`,
           `${fb.bar}`,
           `💤 Recovering: <t:${lockUnix}:R>`,
-        ].join("\\n")
+        ].join("\n")
       : [
           `🧠 Fatigue: **${fb.pct}** / 100`,
           `${fb.bar}`,
           `✅ Rested: Ready`,
-        ].join("\\n");
+        ].join("\n");
 
-  const cdLines = [cdLine("Grind lockout", lockUnix)].join("\\n");
+  const cdLines = [cdLine("Grind lockout", lockUnix)].join("\n");
 
   return new EmbedBuilder()
     .setTitle(grindIndex.category?.title || "🕒 Grind")
@@ -497,7 +497,7 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
         "",
         "**Cooldowns:**",
         cdLines,
-      ].join("\\n")
+      ].join("\n")
     )
     .addFields({ name: "Jobs", value: lines || "No jobs configured." })
     .setColor(0x2b2d31)
