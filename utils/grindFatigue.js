@@ -1,9 +1,17 @@
 // utils/grindFatigue.js
 // Shared fatigue across all Grind jobs.
+//
 // Rules:
 // - You can grind for 5 minutes total (100% fatigue).
-// - At 100% fatigue, ALL grind jobs lock for 10–15 minutes.
-// - Fatigue only increases while you're actively grinding (i.e., while tickFatigue is being called regularly).
+// - If you hit 100% fatigue, ALL grind jobs lock for 10–15 minutes.
+// - While NOT grinding, fatigue recovers linearly: 100% -> 0% in 15 minutes.
+//   (So 50% -> 0% in ~7.5 minutes, etc.)
+//
+// Implementation notes:
+// - We store fatigue_ms as "work-time accumulated" toward MAX_FATIGUE_MS.
+// - While grinding: fatigue_ms += real elapsed time.
+// - While idle: fatigue_ms -= real elapsed time * (MAX_FATIGUE_MS / RECOVERY_MS).
+// - We treat long gaps between ticks as idle recovery (to avoid insta-fatigue from stale updated_at).
 
 function clamp(n, min, max) {
   const x = Number(n);
@@ -18,9 +26,13 @@ function randInt(min, max) {
 // ✅ 5 minutes to reach 100% fatigue
 const MAX_FATIGUE_MS = 5 * 60 * 1000;
 
-// If we haven't ticked fatigue in a while, we assume the player is not actively grinding,
-// so we do NOT count that time towards fatigue.
-const ACTIVE_TICK_WINDOW_MS = 30 * 1000; // 30s
+// ✅ 15 minutes to recover from 100% -> 0%
+const RECOVERY_MS = 15 * 60 * 1000;
+
+// If we haven't ticked in a while, assume idle recovery rather than active grinding.
+const ACTIVE_TICK_WINDOW_MS = 45 * 1000; // 45s
+
+const RECOVERY_RATE = MAX_FATIGUE_MS / RECOVERY_MS; // fatigue-ms recovered per 1ms real time
 
 async function ensureRow(db, guildId, userId) {
   await db.query(
@@ -43,26 +55,55 @@ async function clearIfExpiredLock(db, guildId, userId, lockedUntilMs) {
   }
 }
 
+function applyRecovery(fatigueMs, deltaMs) {
+  const f = Number(fatigueMs || 0);
+  const d = Math.max(0, Number(deltaMs || 0));
+  if (d <= 0 || f <= 0) return Math.max(0, f);
+
+  const recovered = d * RECOVERY_RATE;
+  return Math.max(0, f - recovered);
+}
+
 async function canGrind(db, guildId, userId) {
   await ensureRow(db, guildId, userId);
 
   const res = await db.query(
-    `SELECT fatigue_ms, locked_until FROM grind_fatigue WHERE guild_id=$1 AND user_id=$2`,
+    `SELECT fatigue_ms, locked_until, updated_at FROM grind_fatigue WHERE guild_id=$1 AND user_id=$2`,
     [guildId, userId]
   );
 
-  const row = res.rows[0];
-  if (!row?.locked_until) return { ok: true, fatigueMs: Number(row?.fatigue_ms || 0) };
+  const row = res.rows[0] || {};
+  const now = Date.now();
 
-  const untilMs = new Date(row.locked_until).getTime();
-  if (!Number.isFinite(untilMs)) return { ok: true, fatigueMs: Number(row?.fatigue_ms || 0) };
-
-  if (untilMs <= Date.now()) {
+  const untilMs = row.locked_until ? new Date(row.locked_until).getTime() : 0;
+  if (untilMs && Number.isFinite(untilMs)) {
+    if (untilMs > now) {
+      return { ok: false, lockedUntil: new Date(untilMs), fatigueMs: Number(row.fatigue_ms || 0) };
+    }
     await clearIfExpiredLock(db, guildId, userId, untilMs);
-    return { ok: true, fatigueMs: Number(row?.fatigue_ms || 0) };
   }
 
-  return { ok: false, lockedUntil: new Date(untilMs), fatigueMs: Number(row?.fatigue_ms || 0) };
+  // Apply idle recovery since last update
+  const lastMs = row.updated_at ? new Date(row.updated_at).getTime() : now;
+  const delta = Math.max(0, now - (Number.isFinite(lastMs) ? lastMs : now));
+
+  const current = Number(row.fatigue_ms || 0);
+  const next = applyRecovery(current, delta);
+
+  // Persist recovery so the value is correct across restarts
+  if (Math.abs(next - current) >= 1) {
+    await db.query(
+      `UPDATE grind_fatigue SET fatigue_ms=$3, updated_at=NOW() WHERE guild_id=$1 AND user_id=$2`,
+      [guildId, userId, next]
+    );
+  } else {
+    await db.query(
+      `UPDATE grind_fatigue SET updated_at=NOW() WHERE guild_id=$1 AND user_id=$2`,
+      [guildId, userId]
+    );
+  }
+
+  return { ok: true, fatigueMs: next, maxMs: MAX_FATIGUE_MS };
 }
 
 async function tickFatigue(db, guildId, userId) {
@@ -83,22 +124,22 @@ async function tickFatigue(db, guildId, userId) {
     if (lockedUntilMs > now) {
       return { locked: true, lockedUntil: new Date(lockedUntilMs), fatigueMs: Number(row.fatigue_ms || 0), maxMs: MAX_FATIGUE_MS };
     }
-    // lock expired -> clear
     await clearIfExpiredLock(db, guildId, userId, lockedUntilMs);
   }
 
   const lastMs = row.updated_at ? new Date(row.updated_at).getTime() : now;
-  let delta = Math.max(0, now - (Number.isFinite(lastMs) ? lastMs : now));
+  const delta = Math.max(0, now - (Number.isFinite(lastMs) ? lastMs : now));
 
-  // Only count time if this job is being actively ticked.
-  if (delta > ACTIVE_TICK_WINDOW_MS) {
-    delta = 0;
+  let fatigue = Number(row.fatigue_ms || 0);
+
+  // If ticks are frequent, treat as active grind time. Otherwise, treat as idle recovery.
+  if (delta <= ACTIVE_TICK_WINDOW_MS) {
+    fatigue += delta;
+  } else {
+    fatigue = applyRecovery(fatigue, delta);
   }
 
-  let fatigue = Number(row.fatigue_ms || 0) + delta;
-
   if (fatigue >= MAX_FATIGUE_MS) {
-    // ✅ 10–15 minute lockout
     const lockSec = randInt(10 * 60, 15 * 60);
     const until = new Date(now + lockSec * 1000);
 
@@ -132,6 +173,7 @@ function fatigueBar(fatigueMs) {
 
 module.exports = {
   MAX_FATIGUE_MS,
+  RECOVERY_MS,
   canGrind,
   tickFatigue,
   fatigueBar,

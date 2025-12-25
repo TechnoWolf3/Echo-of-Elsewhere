@@ -13,7 +13,7 @@ const {
 const { canGrind, tickFatigue, fatigueBar } = require("../../utils/grindFatigue");
 
 // ✅ set this to your store item ID that grants +5% and is consumed per shift
-const CLERK_BONUS_ITEM_ID = "CHANGE_ME_ITEM_ID";
+const CLERK_BONUS_ITEM_ID = "Math_Tutour";
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
@@ -211,6 +211,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
       content: `🥵 You’re fatigued. Grind unlocks <t:${ts}:R>.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
+    resolveOnce();
     return;
   }
 
@@ -353,16 +354,13 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
 
       if (!submitted) return;
 
-      await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-
-      if (scenario.tier === 0) {
-        await submitted.editReply("✅ Debit card — easy one.").catch(() => {});
-        return nextScenario(true, "✅ Debit card — no change needed.");
+      await submitted.deferUpdate().catch(() => {});
+if (scenario.tier === 0) {return nextScenario(true, "✅ Debit card — no change needed.");
       }
 
       const entered = parseMoneyToCents(submitted.fields.getTextInputValue("change"));
       if (entered == null) {
-        await submitted.editReply("❌ Invalid format. Use `12` or `12.50`.").catch(() => {});
+        await boardMsg.edit({ embeds: [await buildEmbed("❌ Invalid format. Use `12` or `12.50`.")], components: [actionRow(false)] }).catch(() => {});
         return;
       }
 
