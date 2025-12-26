@@ -477,17 +477,14 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
           `🧠 Fatigue: **${fb.pct}** / 100`,
           `${heatBar(fb.pct)}`,
           `🧃 Recovering: <t:${lockUnix}:R>`,
-        ].join("
-")
+        ].join("\n")
       : [
           `🧠 Fatigue: **${fb.pct}** / 100`,
           `${heatBar(fb.pct)}`,
           `🧃 Recovering: Ready`,
-        ].join("
-");
+        ].join("\n");
 
-  const cdLines = [cdLine("Grind lockout", lockUnix)].join("
-");
+  const cdLines = [cdLine("Grind lockout", lockUnix)].join("\n");
 
   return new EmbedBuilder()
     .setTitle(grindIndex.category?.title || "🕒 Grind")
