@@ -523,7 +523,7 @@ class BlackjackSession {
 
     const joinNote = this.defaultBet
       ? `Join auto-buy-in: **$${Number(this.defaultBet).toLocaleString()}** (override with **/blackjack bet:<amount>**).`
-      : `Set your bet with: **/blackjack bet:<amount>** (min $500).`;
+      : `Place your buy-in using **Set Bet** (modal) or **Quick Bet**. Minimum **$500**.`;
 
     const turnId = this.currentPlayerId();
     const turnLine =
