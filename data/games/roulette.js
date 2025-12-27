@@ -16,7 +16,7 @@ const {
   StringSelectMenuBuilder,
 } = require("discord.js");
 
-const { setActiveGame, updateActiveGame, clearActiveGame, updateHubMessage } = require("../../utils/gamesHubState");
+const { setActiveGame, updateActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 const { activeGames } = require("../../utils/gameManager");
 
 const {
@@ -35,6 +35,22 @@ const {
   computeFeeForBet,
   maybeAnnounceCasinoSecurity,
 } = require("../../utils/casinoSecurity");
+
+
+async function safeEphemeral(interaction, payload) {
+  try {
+    if (interaction.deferred || interaction.replied) return await interaction.followUp(payload);
+    return await interaction.reply(payload);
+  } catch {
+    try { return await interaction.followUp(payload); } catch {}
+  }
+}
+
+async function safeEdit(interaction, payload) {
+  try {
+    if (interaction.deferred || interaction.replied) return await interaction.editReply(payload);
+  } catch {}
+}
 
 const MIN_BET = 500;
 const MAX_BET = 250000;
@@ -489,6 +505,7 @@ async function spinRound({ interaction, table }) {
 
 // ---------- lifecycle ----------
 async function startFromHub(interaction) {
+  const _alreadyAck = Boolean(interaction.deferred || interaction.replied);
   if (!interaction.inGuild()) {
     return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
   }
@@ -530,7 +547,6 @@ async function startFromHub(interaction) {
   // register under gameManager map so hub knows channel is busy
   activeGames.set(channelId, table);
   setActiveGame(channelId, { type: "roulette", state: "lobby", gameId: table.tableId, hostId: table.hostId });
-  await updateHubMessage(channel).catch(() => {});
 
   // host auto-joins (no bet paid yet)
   const hostUser = interaction.user;
@@ -671,7 +687,6 @@ async function startFromHub(interaction) {
   collector.on("end", async () => {
     activeGames.delete(channelId);
     clearActiveGame(channelId);
-    await updateHubMessage(channel).catch(() => {});
 
     setTimeout(() => {
       table.message?.delete().catch(() => {});
