@@ -467,17 +467,22 @@ class BlackjackSession {
   }
 
   lobbyComponents() {
-    return [
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:join`).setLabel("Join").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:leave`).setLabel("Leave").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:start`).setLabel("Start").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(`bj:${this.gameId}:end`).setLabel("End").setStyle(ButtonStyle.Danger),
-      ),
-    ];
-  }
+    const row1 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`bj:${this.gameId}:join`).setLabel("Join").setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`bj:${this.gameId}:leave`).setLabel("Leave").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`bj:${this.gameId}:setbet`).setLabel("Set Bet").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`bj:${this.gameId}:quickbet`).setLabel("Quick Bet").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(`bj:${this.gameId}:clearbet`).setLabel("Clear Bet").setStyle(ButtonStyle.Danger),
+    );
 
-  playComponents() {
+    const row2 = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`bj:${this.gameId}:start`).setLabel("Start").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`bj:${this.gameId}:end`).setLabel("End").setStyle(ButtonStyle.Danger),
+    );
+
+    return [row1, row2];
+  }
+playComponents() {
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`bj:${this.gameId}:hit`).setLabel("Hit").setStyle(ButtonStyle.Success),
