@@ -1,7 +1,7 @@
 // data/games/roulette.js
 // Roulette game module used by /games hub (NOT a slash command).
 // UI-based betting via Join + Set Bet (select + modal) + Last Bet + Clear Bet.
-// Debits on bet placement. Spin is allowed by anyone once everyone joined has paid a bet.
+// Debits on bet placement. Spin is allowed by anyone once everyone joined has paid a bet...
 
 const crypto = require("crypto");
 const {
