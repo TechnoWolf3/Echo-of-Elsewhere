@@ -248,45 +248,6 @@ function buildBetTypeSelect(tableId) {
   );
 }
 
-function buildAmountModalCustomId(tableId, betType) {
-  return `roubet:${tableId}:${betType}`;
-}
-
-async function showAmountModal(i, tableId, betType) {
-  const needs = BET_TYPES.find((t) => t.id === betType)?.needs || null;
-
-  const modal = new ModalBuilder()
-    .setCustomId(buildAmountModalCustomId(tableId, betType))
-    .setTitle("Set Roulette Bet")
-    .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("amount")
-          .setLabel("Bet amount (min 500)")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. 2500")
-          .setRequired(true)
-      )
-    );
-
-  if (needs === "number") {
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("value")
-          .setLabel("Number (0–36)")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. 17")
-          .setRequired(true)
-      )
-    );
-  }
-
-  // IMPORTANT: do NOT defer/reply before showModal
-  await i.showModal(modal);
-}
-
-
 async function promptAmountModal(i, tableId, betType) {
   const needs = BET_TYPES.find((t) => t.id === betType)?.needs || null;
 
@@ -599,8 +560,22 @@ async function startFromHub(interaction, opts = {}) {
     // buttons / select menu
     const cid = String(i.customId || "");
 
-    // select bet type (this select is sent ephemerally, so it is handled via handleInteraction() routed from index.js)
-// Collector will generally never see it. Left intentionally blank.
+    // select bet type
+    if (cid === `roupick:${table.tableId}`) {
+      await i.deferUpdate().catch(() => {});
+      const betType = i.values?.[0];
+      if (!betType) return;
+
+      const submitted = await promptAmountModal(i, table.tableId, betType);
+      if (!submitted) return;
+
+      await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      const amount = parseAmount(submitted.fields.getTextInputValue("amount"));
+      const value = submitted.fields.fields.get("value") ? submitted.fields.getTextInputValue("value") : null;
+
+      await placeBet({ interaction: submitted, table, amount, betType, betValue: value });
+      return submitted.editReply("✅ Done.");
+    }
 
     // roulette buttons
     const [prefix, tableId, action] = cid.split(":");
@@ -698,6 +673,7 @@ async function startFromHub(interaction, opts = {}) {
   });
 
   collector.on("end", async () => {
+    tablesById.delete(table.tableId);
     activeGames.delete(channelId);
     clearActiveGame(channelId);
 
