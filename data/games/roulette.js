@@ -420,6 +420,7 @@ async function spinRound({ interaction, table }) {
   const color = pocketColor(pocket);
 
   const lines = [];
+  // Last spin result (kept on the main panel to avoid extra spam messages)
   const notes = [];
   const guildId = table.guildId;
 
@@ -474,12 +475,10 @@ async function spinRound({ interaction, table }) {
 
   await render(table);
 
-  const embed = new EmbedBuilder()
-    .setTitle("🎡 Roulette Spin")
-    .setDescription(`Result: **${pocket}** (${color})\n\n${lines.join("\n")}${notes.length ? `\n\n${notes.join("\n")}` : ""}`)
-    .setFooter({ text: `Table ID: ${table.tableId}` });
-
-  await interaction.channel.send({ embeds: [embed] }).catch(() => {});
+  
+// Store last result on the main panel (no extra spam messages)
+table.lastResult = `Result: ${pocket} (${color})`;
+await render(table);
 }
 
 // ---------- lifecycle ----------
