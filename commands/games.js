@@ -9,9 +9,6 @@ const {
   PermissionFlagsBits,
 } = require("discord.js");
 
-const Blackjack = require("../data/games/blackjack");
-const Roulette = require("../data/games/roulette");
-
 const { getActiveGame } = require("../utils/gamesHubState");
 const registry = require("../data/games/registry");
 

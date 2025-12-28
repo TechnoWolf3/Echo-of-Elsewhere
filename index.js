@@ -477,33 +477,6 @@ client.once(Events.ClientReady, async () => {
    - slash commands
 -------------------------------- */
 client.on(Events.InteractionCreate, async (interaction) => {
-
-// 🎮 Games UI routing (buttons/select menus/modals)
-// NOTE: Ephemeral select menus are NOT handled by message collectors, so they must be handled here.
-if (interaction.isButton() || interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
-  try {
-    if (typeof rouletteGame.handleInteraction === "function") {
-      const handled = await rouletteGame.handleInteraction(interaction);
-      if (handled) return;
-    }
-    if (typeof blackjackGame.handleInteraction === "function") {
-      const handled = await blackjackGame.handleInteraction(interaction);
-      if (handled) return;
-    }
-  } catch (e) {
-    // Avoid crashing on UI interactions; optionally surface a tiny ephemeral error for admins.
-    try {
-      const msg = e?.message ? String(e.message).slice(0, 1800) : "Unknown error";
-      if (!interaction.deferred && !interaction.replied) {
-        await interaction.reply({ content: `❌ Interaction failed: ${msg}`, ephemeral: true });
-      } else {
-        await interaction.followUp({ content: `❌ Interaction failed: ${msg}`, ephemeral: true });
-      }
-    } catch {}
-    return;
-  }
-}
-
   // ✅ Slash commands
   if (!interaction.isChatInputCommand()) return;
 

@@ -82,7 +82,7 @@ async function bjAnnounceAchievement(channel, userId, info) {
     )
     .setFooter({ text: `Achievement ID: ${info.id}` });
 
-  opts.reuseMessage ? await opts.reuseMessage.edit({ embeds: [embed], components }) : await channel.send({ embeds: [embed], components }).catch(() => {});
+  await channel.send({ embeds: [embed] }).catch(() => {});
 }
 
 async function bjUnlock(thing, guildId, userId, achievementId) {
@@ -598,8 +598,6 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       await applyBetChange({ i, session, guildId, channelId, amount });
       return i.editReply("✅ Bet updated.");
     }
-    if (action === "setbet") return promptBetModal(i, session, guildId, channelId);
-    if (action === "quickbet") return promptQuickBet(i, session, guildId, channelId);
 
     await i.deferUpdate().catch(() => {});
     const [prefix, gameId, action] = String(i.customId || "").split(":");

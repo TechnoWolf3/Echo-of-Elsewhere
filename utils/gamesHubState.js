@@ -1,8 +1,9 @@
 // utils/gamesHubState.js
-// Keeps track of the /games hub message and active game per channel so games can reuse/edit it.
+// Tracks the /games hub message per channel so game UIs can edit/replace it (no extra embeds).
+// Also tracks which game is currently active in a channel for the hub status line.
 
-const hubByChannel = new Map();       // channelId -> { messageId }
-const activeByChannel = new Map();    // channelId -> { key, state, tableId }
+const hubByChannel = new Map();      // channelId -> { messageId }
+const activeByChannel = new Map();   // channelId -> { key, state, tableId }
 
 function setHubMessage(channelId, messageId) {
   hubByChannel.set(channelId, { messageId });
@@ -22,9 +23,7 @@ async function fetchHubMessage(channel) {
   }
 }
 
-// --- active game helpers (used by commands/games.js for the board status) ---
 function setActiveGame(channelId, info) {
-  // info: { key: 'blackjack'|'roulette', state: 'lobby'|'running', tableId?: string }
   activeByChannel.set(channelId, { ...info });
 }
 
