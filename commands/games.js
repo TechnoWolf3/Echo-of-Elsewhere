@@ -9,8 +9,10 @@ const {
   PermissionFlagsBits,
 } = require("discord.js");
 
-const { getActiveGame } = require("../utils/gamesHubState");
+const { getActiveGame, setHubMessage } = require("../utils/gamesHubState");
 const registry = require("../data/games/registry");
+const bjGame = require("../data/games/blackjack");
+const rouGame = require("../data/games/roulette");
 
 // In-memory board tracking (per process)
 const boards = new Map(); // channelId -> { messageId, collector }
@@ -74,6 +76,7 @@ async function upsertBoardMessage(interaction) {
     try {
       msg = await interaction.channel.messages.fetch(existing.messageId);
       await msg.edit({ embeds: [embed], components });
+      setHubMessage(channelId, msg.id);
     } catch {
       msg = null;
     }
@@ -83,6 +86,10 @@ async function upsertBoardMessage(interaction) {
     msg = await interaction.channel.send({ embeds: [embed], components });
     boards.set(channelId, { messageId: msg.id, collector: null });
   }
+
+  // remember hub message id so games can reuse it
+  setHubMessage(channelId, msg.id);
+
 
   // Ensure collector is attached for this board message
   const rec = boards.get(channelId);
@@ -94,7 +101,7 @@ async function upsertBoardMessage(interaction) {
       // Only handle buttons on THIS hub message
       if (i.message.id !== msg.id) return;
 
-      await i.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      await i.deferUpdate().catch(() => {});
 
       const active = getActiveGame(channelId);
 
@@ -108,44 +115,43 @@ async function upsertBoardMessage(interaction) {
 
       if (action === "refresh") {
         await msg.edit({ embeds: [buildBoardEmbed(channelId)], components: buildBoardComponents(false) }).catch(() => {});
-        return i.editReply("🔄 Refreshed.");
+        return i.followUp({ content: "🔄 Refreshed.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
 
       if (action === "close") {
-        if (!canClose) return i.editReply("❌ You need **Manage Channels** (or Admin) to close the hub panel.");
+        if (!canClose) return i.followUp({ content: "❌ You need **Manage Channels** (or Admin) to close the hub panel.", flags: MessageFlags.Ephemeral }).catch(() => {});
         try {
           collector.stop("closed");
         } catch {}
         boards.delete(channelId);
         await msg.delete().catch(() => {});
-        return i.editReply("🗑️ Games hub closed.");
+        return i.followUp({ content: "🗑️ Games hub closed.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
 
       if (action === "launch") {
         if (active) {
-          return i.editReply(`❌ There’s already an active game in this channel: **${active.type}** (${active.state}).`);
+          return i.followUp({ content: `❌ There’s already an active game in this channel: **${active.type}** (${active.state}).`, flags: MessageFlags.Ephemeral }).catch(() => {});
         }
 
-        if (gameKey === "blackjack") {
-          const bj = require('../data/games/blackjack');
-          if (typeof bj.startFromHub !== "function") {
-            return i.editReply("❌ Blackjack is not hub-enabled yet (missing startFromHub export).");
-          }
-          // startFromHub handles its own panel + collector
-          await i.editReply("🃏 Launching Blackjack…");
-          return bj.startFromHub(i);
-        }
+        
+if (gameKey === "blackjack") {
+  if (typeof bjGame.startFromHub !== "function") {
+    return i.followUp({ content: "❌ Blackjack is not hub-enabled yet.", flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
+  // startFromHub will reuse this hub message (no new embeds)
+  await bjGame.startFromHub(i, { hubMessage: msg });
+  return;
+}
 
-        if (gameKey === "roulette") {
-          const rou = require('../data/games/roulette');
-          if (typeof rou.startFromHub !== "function") {
-            return i.editReply("❌ Roulette is not hub-enabled yet (missing startFromHub export).");
-          }
-          await i.editReply("🎡 Launching Roulette…");
-          return rou.startFromHub(i);
-        }
+if (gameKey === "roulette") {
+  if (typeof rouGame.startFromHub !== "function") {
+    return i.followUp({ content: "❌ Roulette is not hub-enabled yet.", flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
+  await rouGame.startFromHub(i, { hubMessage: msg });
+  return;
+}
 
-        return i.editReply("❌ Unknown game.");
+        return i.followUp({ content: "❌ Unknown game.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
     });
 

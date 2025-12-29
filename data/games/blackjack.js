@@ -406,6 +406,7 @@ function buildQuickBetRow(gameId) {
   );
 }
 
+
 async function promptBetModal(i, gameId) {
   const modal = new ModalBuilder()
     .setCustomId(`bjbet:${gameId}`)
@@ -421,16 +422,9 @@ async function promptBetModal(i, gameId) {
       )
     );
 
+  // Important: you cannot show a modal after deferring/replying to this interaction.
   await i.showModal(modal);
-
-  const submitted = await i
-    .awaitModalSubmit({
-      time: 60_000,
-      filter: (m) => m.customId === `bjbet:${gameId}` && m.user.id === i.user.id,
-    })
-    .catch(() => null);
-
-  return submitted;
+  return true;
 }
 
 async function startLobbyFromHub(interaction) {
@@ -442,11 +436,14 @@ async function startLobbyFromHub(interaction) {
   // Jail gate for component actions
   if (await guardNotJailedComponent(interaction)) return;
 
-  // IMPORTANT: don't double-defer if hub already deferred
+  // IMPORTANT: This is a component interaction (hub button).
+  // Acknowledge via deferUpdate so we can edit the hub message in-place.
   if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+    await interaction.deferUpdate().catch(() => {});
   }
 
+  // Reuse the hub message as the blackjack panel (no extra embeds)
+  const hubMessage = interaction.message;
   const channelId = interaction.channelId;
   const guildId = interaction.guildId;
 
@@ -474,6 +471,11 @@ async function startLobbyFromHub(interaction) {
   setActiveGame(channelId, { type: "blackjack", state: "lobby", gameId: session.gameId, hostId: session.hostId });
 
   session.addPlayer(interaction.user);
+
+  if (hubMessage && typeof hubMessage.edit === "function") {
+    session.message = hubMessage;
+  }
+
   await session.postOrEditPanel();
 
   const collector = session.message.createMessageComponentCollector({ time: 30 * 60_000 });
@@ -599,6 +601,14 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       return i.editReply("✅ Bet updated.");
     }
 
+    const cid = String(i.customId || "");
+
+    // Set Bet needs to show a modal, so DO NOT defer/update first.
+    if (cid === `bj:${session.gameId}:setbet`) {
+      await promptBetModal(i, session.gameId);
+      return;
+    }
+
     await i.deferUpdate().catch(() => {});
     const [prefix, gameId, action] = String(i.customId || "").split(":");
     if (prefix !== "bj" || gameId !== session.gameId) return;
@@ -647,37 +657,11 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       return;
     }
 
-    if (action === "setbet") {
-      // Show modal and handle submission inline
-      const submitted = await promptBetModal(i, session.gameId);
-      if (!submitted) return;
-
-      await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-      const amountStr = submitted.fields.getTextInputValue("amount") || "";
-      const amount = Number(String(amountStr).replace(/[^\d]/g, ""));
-
-      await applyBetChange({ i: submitted, session, guildId, channelId, amount });
-
-      // If host set their bet, treat as default bet for joiners
-      if (submitted.user.id === session.hostId) {
-        const p = session.players.get(session.hostId);
-        if (p?.bet) session.defaultBet = Number(p.bet);
-      }
-
-      return submitted.editReply("✅ Done.");
-    }
-
-    if (action === "quickbet") {
-      // Ephemeral buttons with presets
-      try {
-        await i.followUp({
-          content: "Pick a quick bet amount:",
-          components: [buildQuickBetRow(session.gameId)],
-          flags: MessageFlags.Ephemeral,
-        });
-      } catch {}
-      return;
-    }
+    
+if (action === "setbet") {
+  // handled above (before deferUpdate) to allow showModal()
+  return;
+}
 
     if (action === "clearbet") {
       if (session.state !== "lobby") return;
@@ -835,6 +819,34 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
   });
 }
 
+
+async function handleInteraction(interaction) {
+  try {
+    // Modal submit for bet setting
+    const cid = String(interaction.customId || "");
+    if (interaction.isModalSubmit() && cid.startsWith("bjbet:")) {
+      const gameId = cid.split(":")[1];
+      const session = activeGames.get(interaction.channelId);
+      if (!session || session.type !== "blackjack" || session.gameId !== gameId) {
+        // stale modal
+        await interaction.reply({ content: "⚠️ That blackjack table is no longer active.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        return true;
+      }
+
+      const amount = parseAmount(interaction.fields.getTextInputValue("amount"));
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      await applyBetChange({ i: interaction, session, guildId: interaction.guildId, channelId: interaction.channelId, amount });
+      await interaction.editReply("✅ Bet updated.").catch(() => {});
+      return true;
+    }
+  } catch (e) {
+    console.error("[blackjack] handleInteraction failed:", e);
+    throw e;
+  }
+  return false;
+}
+
 module.exports = {
   startFromHub: startLobbyFromHub,
+  handleInteraction,
 };

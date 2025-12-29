@@ -186,10 +186,16 @@ function buildTableEmbed(table) {
   const ready = table.players.size > 0 && allPlayersPaid(table);
   const status = ready ? "✅ All bets placed — ready to spin!" : "🟡 Waiting for everyone to place a bet";
 
+  const last = table.lastResult
+    ? `\n\n**Last Spin:** **${table.lastResult.pocket}** (${table.lastResult.color})\n${table.lastResult.lines.join("\n")}`
+    : "";
+
   return new EmbedBuilder()
     .setTitle("🎡 Roulette")
     .setDescription(
-      `${status}\n\n**Players (${table.players.size}/${table.maxPlayers}):**\n${lines.join("\n")}\n\n` +
+      `${status}${last}
+
+**Players (${table.players.size}/${table.maxPlayers}):**\n${lines.join("\n")}\n\n` +
       `Default join bet: **$${Number(table.defaultBetAmount || MIN_BET).toLocaleString()}**`
     )
     .setFooter({ text: `Table ID: ${table.tableId}` });
@@ -248,6 +254,7 @@ function buildBetTypeSelect(tableId) {
   );
 }
 
+
 async function promptAmountModal(i, tableId, betType) {
   const needs = BET_TYPES.find((t) => t.id === betType)?.needs || null;
 
@@ -279,15 +286,7 @@ async function promptAmountModal(i, tableId, betType) {
   }
 
   await i.showModal(modal);
-
-  const submitted = await i
-    .awaitModalSubmit({
-      time: 60_000,
-      filter: (m) => m.customId === `roubet:${tableId}:${betType}` && m.user.id === i.user.id,
-    })
-    .catch(() => null);
-
-  return submitted;
+  return true;
 }
 
 async function placeBet({ interaction, table, amount, betType, betValue }) {
@@ -480,14 +479,8 @@ async function spinRound({ interaction, table }) {
     p.betValue = null;
   }
 
+  table.lastResult = { pocket, color, lines, notes };
   await render(table);
-
-  const embed = new EmbedBuilder()
-    .setTitle("🎡 Roulette Spin")
-    .setDescription(`Result: **${pocket}** (${color})\n\n${lines.join("\n")}${notes.length ? `\n\n${notes.join("\n")}` : ""}`)
-    .setFooter({ text: `Table ID: ${table.tableId}` });
-
-  await interaction.channel.send({ embeds: [embed] }).catch(() => {});
 }
 
 // ---------- lifecycle ----------
@@ -498,9 +491,11 @@ async function startFromHub(interaction, opts = {}) {
 
   if (await guardNotJailedComponent(interaction)) return;
 
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-  }
+  
+// hub button interaction: ack by deferUpdate so we can edit hub message
+if (!interaction.deferred && !interaction.replied) {
+  await interaction.deferUpdate().catch(() => {});
+}
 
   const channelId = interaction.channelId;
   const guildId = interaction.guildId;
@@ -526,6 +521,7 @@ async function startFromHub(interaction, opts = {}) {
     defaultBetValue: null,
     hostSecurity: null,
     message: null,
+    lastResult: null,
   };
 
   tablesById.set(table.tableId, table);
@@ -547,7 +543,7 @@ async function startFromHub(interaction, opts = {}) {
     paid: false,
   });
 
-  table.message = await interaction.channel.send({
+  table.message = (interaction.message && typeof interaction.message.edit === "function") ? interaction.message : await interaction.channel.send({
     embeds: [buildTableEmbed(table)],
     components: buildComponents(table),
   });
@@ -560,22 +556,6 @@ async function startFromHub(interaction, opts = {}) {
     // buttons / select menu
     const cid = String(i.customId || "");
 
-    // select bet type
-    if (cid === `roupick:${table.tableId}`) {
-      await i.deferUpdate().catch(() => {});
-      const betType = i.values?.[0];
-      if (!betType) return;
-
-      const submitted = await promptAmountModal(i, table.tableId, betType);
-      if (!submitted) return;
-
-      await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-      const amount = parseAmount(submitted.fields.getTextInputValue("amount"));
-      const value = submitted.fields.fields.get("value") ? submitted.fields.getTextInputValue("value") : null;
-
-      await placeBet({ interaction: submitted, table, amount, betType, betValue: value });
-      return submitted.editReply("✅ Done.");
-    }
 
     // roulette buttons
     const [prefix, tableId, action] = cid.split(":");
@@ -682,9 +662,58 @@ async function startFromHub(interaction, opts = {}) {
     }, 15_000);
   });
 
-  await interaction.editReply("🎡 Roulette table launched. Use **Set Bet** to place your bet.");
+  try { await interaction.followUp({ content: "🎡 Roulette table ready. Use **Set Bet** to place your bet.", flags: MessageFlags.Ephemeral }); } catch {}
+
+}
+
+
+async function handleInteraction(interaction) {
+  const cid = String(interaction.customId || "");
+
+  // Bet type select (ephemeral)
+  if (interaction.isStringSelectMenu() && cid.startsWith("roupick:")) {
+    const tableId = cid.split(":")[1];
+    const table = tablesById.get(tableId);
+    if (!table) {
+      await sendEphemeralToast(interaction, "⚠️ That roulette table is no longer active.");
+      return true;
+    }
+
+    const betType = interaction.values?.[0];
+    if (!betType) {
+      await sendEphemeralToast(interaction, "❌ No bet type selected.");
+      return true;
+    }
+
+    // show modal (cannot defer before showModal)
+    await promptAmountModal(interaction, tableId, betType);
+    return true;
+  }
+
+  // Modal submit for bet amount/value
+  if (interaction.isModalSubmit() && cid.startsWith("roubet:")) {
+    const parts = cid.split(":"); // roubet:tableId:betType
+    const tableId = parts[1];
+    const betType = parts[2];
+    const table = tablesById.get(tableId);
+    if (!table) {
+      await interaction.reply({ content: "⚠️ That roulette table is no longer active.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const amount = parseAmount(interaction.fields.getTextInputValue("amount"));
+    const value = interaction.fields.fields.get("value") ? interaction.fields.getTextInputValue("value") : null;
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+    await placeBet({ interaction, table, amount, betType, betValue: value });
+    await interaction.editReply("✅ Bet saved.").catch(() => {});
+    return true;
+  }
+
+  return false;
 }
 
 module.exports = {
   startFromHub,
+  handleInteraction,
 };
