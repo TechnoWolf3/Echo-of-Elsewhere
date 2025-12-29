@@ -186,16 +186,10 @@ function buildTableEmbed(table) {
   const ready = table.players.size > 0 && allPlayersPaid(table);
   const status = ready ? "✅ All bets placed — ready to spin!" : "🟡 Waiting for everyone to place a bet";
 
-  const last = table.lastResult
-    ? `\n\n**Last Spin:** **${table.lastResult.pocket}** (${table.lastResult.color})\n${table.lastResult.lines.join("\n")}`
-    : "";
-
   return new EmbedBuilder()
     .setTitle("🎡 Roulette")
     .setDescription(
-      `${status}${last}
-
-**Players (${table.players.size}/${table.maxPlayers}):**\n${lines.join("\n")}\n\n` +
+      `${status}\n\n**Players (${table.players.size}/${table.maxPlayers}):**\n${lines.join("\n")}\n\n` +
       `Default join bet: **$${Number(table.defaultBetAmount || MIN_BET).toLocaleString()}**`
     )
     .setFooter({ text: `Table ID: ${table.tableId}` });
@@ -254,7 +248,6 @@ function buildBetTypeSelect(tableId) {
   );
 }
 
-
 async function promptAmountModal(i, tableId, betType) {
   const needs = BET_TYPES.find((t) => t.id === betType)?.needs || null;
 
@@ -285,9 +278,10 @@ async function promptAmountModal(i, tableId, betType) {
     );
   }
 
+  // IMPORTANT: do not defer/reply before showModal
   await i.showModal(modal);
-  return true;
 }
+
 
 async function placeBet({ interaction, table, amount, betType, betValue }) {
   const guildId = table.guildId;
@@ -479,8 +473,14 @@ async function spinRound({ interaction, table }) {
     p.betValue = null;
   }
 
-  table.lastResult = { pocket, color, lines, notes };
   await render(table);
+
+  const embed = new EmbedBuilder()
+    .setTitle("🎡 Roulette Spin")
+    .setDescription(`Result: **${pocket}** (${color})\n\n${lines.join("\n")}${notes.length ? `\n\n${notes.join("\n")}` : ""}`)
+    .setFooter({ text: `Table ID: ${table.tableId}` });
+
+  await interaction.channel.send({ embeds: [embed] }).catch(() => {});
 }
 
 // ---------- lifecycle ----------
@@ -491,11 +491,9 @@ async function startFromHub(interaction, opts = {}) {
 
   if (await guardNotJailedComponent(interaction)) return;
 
-  
-// hub button interaction: ack by deferUpdate so we can edit hub message
-if (!interaction.deferred && !interaction.replied) {
-  await interaction.deferUpdate().catch(() => {});
-}
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+  }
 
   const channelId = interaction.channelId;
   const guildId = interaction.guildId;
@@ -521,7 +519,6 @@ if (!interaction.deferred && !interaction.replied) {
     defaultBetValue: null,
     hostSecurity: null,
     message: null,
-    lastResult: null,
   };
 
   tablesById.set(table.tableId, table);
@@ -543,7 +540,7 @@ if (!interaction.deferred && !interaction.replied) {
     paid: false,
   });
 
-  table.message = (interaction.message && typeof interaction.message.edit === "function") ? interaction.message : await interaction.channel.send({
+  table.message = await interaction.channel.send({
     embeds: [buildTableEmbed(table)],
     components: buildComponents(table),
   });
@@ -556,6 +553,22 @@ if (!interaction.deferred && !interaction.replied) {
     // buttons / select menu
     const cid = String(i.customId || "");
 
+    // select bet type
+    if (cid === `roupick:${table.tableId}`) {
+      await i.deferUpdate().catch(() => {});
+      const betType = i.values?.[0];
+      if (!betType) return;
+
+      const submitted = await promptAmountModal(i, table.tableId, betType);
+      if (!submitted) return;
+
+      await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      const amount = parseAmount(submitted.fields.getTextInputValue("amount"));
+      const value = submitted.fields.fields.get("value") ? submitted.fields.getTextInputValue("value") : null;
+
+      await placeBet({ interaction: submitted, table, amount, betType, betValue: value });
+      return submitted.editReply("✅ Done.");
+    }
 
     // roulette buttons
     const [prefix, tableId, action] = cid.split(":");
@@ -662,51 +675,54 @@ if (!interaction.deferred && !interaction.replied) {
     }, 15_000);
   });
 
-  try { await interaction.followUp({ content: "🎡 Roulette table ready. Use **Set Bet** to place your bet.", flags: MessageFlags.Ephemeral }); } catch {}
-
+  await interaction.editReply("🎡 Roulette table launched. Use **Set Bet** to place your bet.");
 }
-
 
 async function handleInteraction(interaction) {
   const cid = String(interaction.customId || "");
 
-  // Bet type select (ephemeral)
-  if (interaction.isStringSelectMenu() && cid.startsWith("roupick:")) {
+  // Ephemeral select: choose bet type
+  if (interaction.isStringSelectMenu?.() && cid.startsWith("roupick:")) {
     const tableId = cid.split(":")[1];
     const table = tablesById.get(tableId);
     if (!table) {
-      await sendEphemeralToast(interaction, "⚠️ That roulette table is no longer active.");
+      await interaction.reply({ content: "❌ That roulette table is no longer active.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
 
     const betType = interaction.values?.[0];
     if (!betType) {
-      await sendEphemeralToast(interaction, "❌ No bet type selected.");
+      await interaction.reply({ content: "❌ No bet type selected.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
 
-    // show modal (cannot defer before showModal)
     await promptAmountModal(interaction, tableId, betType);
     return true;
   }
 
-  // Modal submit for bet amount/value
-  if (interaction.isModalSubmit() && cid.startsWith("roubet:")) {
+  // Modal submit: set bet
+  if (interaction.isModalSubmit?.() && cid.startsWith("roubet:")) {
     const parts = cid.split(":"); // roubet:tableId:betType
     const tableId = parts[1];
     const betType = parts[2];
     const table = tablesById.get(tableId);
     if (!table) {
-      await interaction.reply({ content: "⚠️ That roulette table is no longer active.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.reply({ content: "❌ That roulette table is no longer active.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
 
-    const amount = parseAmount(interaction.fields.getTextInputValue("amount"));
-    const value = interaction.fields.fields.get("value") ? interaction.fields.getTextInputValue("value") : null;
-
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-    await placeBet({ interaction, table, amount, betType, betValue: value });
-    await interaction.editReply("✅ Bet saved.").catch(() => {});
+    const amountStr = interaction.fields.getTextInputValue("amount") || "";
+    const amount = parseAmount(amountStr);
+    const needs = BET_TYPES.find((t) => t.id === betType)?.needs || null;
+
+    let betValue = null;
+    if (needs === "number") {
+      betValue = interaction.fields.getTextInputValue("value") || "";
+    }
+
+    await placeBet({ interaction, table, amount, betType, betValue });
+    await interaction.editReply("✅ Bet placed.").catch(() => {});
     return true;
   }
 
@@ -717,3 +733,4 @@ module.exports = {
   startFromHub,
   handleInteraction,
 };
+

@@ -477,35 +477,41 @@ client.once(Events.ClientReady, async () => {
    - slash commands
 -------------------------------- */
 client.on(Events.InteractionCreate, async (interaction) => {
-  
-// 🎮 Games UI routing (select menus + modals)
-// Ephemeral selects/modals are NOT captured by message collectors, so they must be handled here.
-if (interaction.isStringSelectMenu() || interaction.isModalSubmit()) {
-  try {
-    if (typeof rouletteGame.handleInteraction === "function") {
-      const handled = await rouletteGame.handleInteraction(interaction);
-      if (handled) return;
-    }
-    if (typeof blackjackGame.handleInteraction === "function") {
-      const handled = await blackjackGame.handleInteraction(interaction);
-      if (handled) return;
-    }
-  } catch (e) {
-    // keep logs clean; surface a tiny error to the user
+// 🎮 Games UI routing (ephemeral select menus + modals)
+// Buttons are handled by the per-game message collectors; ephemeral selects/modals must be routed here.
+if (!interaction.isChatInputCommand()) {
+  if (interaction.isAnySelectMenu?.() || interaction.isModalSubmit?.()) {
     try {
-      const msg = e?.message ? String(e.message).slice(0, 1800) : "Unknown error";
+      if (typeof rouletteGame.handleInteraction === "function") {
+        const handled = await rouletteGame.handleInteraction(interaction);
+        if (handled) return;
+      }
+      if (typeof blackjackGame.handleInteraction === "function") {
+        const handled = await blackjackGame.handleInteraction(interaction);
+        if (handled) return;
+      }
+    } catch (e) {
+      console.error("[GAMES-UI] handler error:", e);
+      try {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.reply({ content: "❌ Interaction failed.", flags: MessageFlags.Ephemeral });
+        }
+      } catch {}
+      return;
+    }
+
+    // If nothing claimed it, ACK so Discord doesn't show 'This interaction failed'
+    try {
       if (!interaction.deferred && !interaction.replied) {
-        await interaction.reply({ content: `❌ Interaction failed: ${msg}`, flags: MessageFlags.Ephemeral });
-      } else {
-        await interaction.followUp({ content: `❌ Interaction failed: ${msg}`, flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: "⚠️ That interaction wasn't handled.", flags: MessageFlags.Ephemeral });
       }
     } catch {}
     return;
   }
+  return;
 }
 
-// ✅ Slash commands
-  if (!interaction.isChatInputCommand()) return;
+  // ✅ Slash commands
 
   const command = client.commands.get(interaction.commandName);
 
