@@ -1,7 +1,7 @@
 {
-  "name": "rubicon-royal-bot",
+  "name": "echo-of-elsewhere",
   "version": "1.0.0",
-  "description": "",
+  "description": "A quiet companion for The Place",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
