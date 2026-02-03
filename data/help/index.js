@@ -6,7 +6,9 @@ function loadCategories() {
   const dir = path.join(__dirname, "categories");
   if (!fs.existsSync(dir)) return [];
 
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".js"));
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith(".js") && !f.startsWith("_"));
 
   const cats = [];
   for (const file of files) {
