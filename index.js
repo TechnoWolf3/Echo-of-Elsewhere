@@ -497,6 +497,17 @@ client.once(Events.ClientReady, async () => {
    - slash commands
 -------------------------------- */
 client.on(Events.InteractionCreate, async (interaction) => {
+
+  // ✅ Let /help handle its own dropdowns/buttons via its collector
+  // Prevents the global games UI router from consuming help interactions.
+  if (
+    (interaction.isButton?.() || interaction.isAnySelectMenu?.()) &&
+    interaction.customId?.startsWith("help:")
+  ) {
+    return;
+  }
+
+
   // 🎮 Games UI routing (ephemeral select menus + modals)
   // Buttons are handled by the per-game message collectors; ephemeral selects/modals must be routed here.
   if (!interaction.isChatInputCommand()) {
