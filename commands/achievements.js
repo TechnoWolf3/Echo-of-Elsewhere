@@ -10,13 +10,13 @@ const {
 
 const PAGE_SIZE = 12;
 
-// Heat-style progress bar (easy to tweak)
-function makeProgressBar(current, target, length = 14, filled = "■", empty = "□") {
-  const safeTarget = Math.max(1, Number(target || 1));
-  const safeCurrent = Math.max(0, Number(current || 0));
-  const pct = Math.max(0, Math.min(1, safeCurrent / safeTarget));
-  const fillCount = Math.round(pct * length);
-  return filled.repeat(fillCount) + empty.repeat(Math.max(0, length - fillCount));
+// Heat-style bar like your crimes heat UI
+function renderBar(current, target, width = 16) {
+  const c = Math.max(0, Number(current || 0));
+  const t = Math.max(1, Number(target || 1));
+  const ratio = Math.max(0, Math.min(1, c / t));
+  const filled = Math.round(ratio * width);
+  return "■".repeat(filled) + "□".repeat(width - filled);
 }
 
 module.exports = {
@@ -52,9 +52,9 @@ module.exports = {
     } catch {}
     const displayName = member?.displayName ?? targetUser.username;
 
-    // 1) Fetch all achievements
+    // 1) Fetch all achievements (INCLUDING progress fields)
     const all = await db.query(
-      `SELECT id, name, description, category, hidden, reward_coins,
+      `SELECT id, name, description, category, hidden, reward_coins, sort_order,
               progress_key, progress_target, progress_mode
        FROM achievements
        ORDER BY category ASC, sort_order ASC`
@@ -66,11 +66,10 @@ module.exports = {
     }
 
     // 2) Fetch user's unlocked achievements — schema tolerant
-    const idA = targetUser.id;            // correct
-    const idB = `<@${targetUser.id}>`;    // possible old storage
-    const idC = `<@!${targetUser.id}>`;   // possible old storage
+    const idA = targetUser.id;
+    const idB = `<@${targetUser.id}>`;
+    const idC = `<@!${targetUser.id}>`;
 
-    // Common column name variants we’ll try
     const guildCols = ["guild_id", "guildid", "guildId"];
     const userCols = ["user_id", "userid", "userId"];
     const achCols = ["achievement_id", "achievementId", "achievementid", "achievement", "id"];
@@ -78,7 +77,6 @@ module.exports = {
     let unlockedRows = [];
     let used = null;
 
-    // Try combinations until one works
     for (const gCol of guildCols) {
       for (const uCol of userCols) {
         for (const aCol of achCols) {
@@ -91,15 +89,12 @@ module.exports = {
               [guildId, idA, idB, idC]
             );
 
-            // If query succeeded, we accept it even if empty — but we’ll keep looking
-            // only if it’s empty, because a wrong combo could “work” but never match.
             if (res?.rows) {
               if (res.rows.length > 0) {
                 unlockedRows = res.rows;
                 used = { gCol, uCol, aCol };
                 break;
               } else {
-                // remember a working combo (in case nothing returns rows)
                 if (!used) used = { gCol, uCol, aCol };
               }
             }
@@ -112,7 +107,6 @@ module.exports = {
       if (unlockedRows.length) break;
     }
 
-    // If nothing returned rows, but we found a “working” combo, run it once (empty is still valid)
     if (!unlockedRows.length && used) {
       try {
         const res = await db.query(
@@ -128,36 +122,30 @@ module.exports = {
       }
     }
 
-    if (used) {
-      console.log(`[ACH] read user_achievements via ${used.gCol}/${used.uCol}/${used.aCol} -> ${unlockedRows.length} rows`);
-    } else {
-      console.warn("[ACH] could not find compatible columns in user_achievements");
-    }
-
     const unlockedSet = new Set(unlockedRows.map((r) => r.aid).filter(Boolean));
 
-    // 2.5) Fetch progress counters (for progress bars)
-    let counters = new Map();
-    try {
-      const countersRes = await db.query(
+    // 3) Fetch user's progress counters (messages_sent, roulette_wins, blackjack_wins, etc.)
+    const countersRes = await db
+      .query(
         `SELECT key, value
          FROM public.user_achievement_counters
          WHERE guild_id = $1 AND user_id = $2`,
-        [guildId, String(targetUser.id)]
-      );
-      counters = new Map((countersRes.rows || []).map((r) => [r.key, Number(r.value || 0)]));
-    } catch (e) {
-      // Table may not exist yet if DB hasn't been migrated — don't break command.
-      counters = new Map();
+        [guildId, targetUser.id]
+      )
+      .catch(() => ({ rows: [] }));
+
+    const counters = new Map();
+    for (const row of countersRes.rows || []) {
+      counters.set(row.key, Number(row.value || 0));
     }
 
-    // 3) Build pages
+    // 4) Build pages
     const pages = buildPages({
       achievements,
       unlockedSet,
+      counters,
       targetUser,
       displayName,
-      counters,
     });
 
     let pageIndex = 0;
@@ -181,7 +169,10 @@ module.exports = {
 
         if (btn.user.id !== invokerId) {
           return btn
-            .reply({ content: "❌ Only the person who ran the command can use these buttons.", flags: MessageFlags.Ephemeral })
+            .reply({
+              content: "❌ Only the person who ran the command can use these buttons.",
+              flags: MessageFlags.Ephemeral,
+            })
             .catch(() => {});
         }
 
@@ -230,7 +221,7 @@ function buildRow(pageIndex, totalPages, invokerId, viewedUserId) {
   return new ActionRowBuilder().addComponents(prev, next);
 }
 
-function buildPages({ achievements, unlockedSet, targetUser, displayName, counters }) {
+function buildPages({ achievements, unlockedSet, counters, targetUser, displayName }) {
   const lines = [];
   let currentCategory = null;
 
@@ -257,13 +248,15 @@ function buildPages({ achievements, unlockedSet, targetUser, displayName, counte
     const mark = unlocked ? "✅" : "🔒";
     lines.push(`${mark} **${a.name}**${rewardText} — ${a.description}`);
 
-    // Progress bar line (only for locked progress-based achievements)
-    const hasProgress = !!(a.progress_key && a.progress_target);
-    if (!unlocked && hasProgress) {
-      const cur = counters?.get(a.progress_key) ?? 0;
-      const target = Number(a.progress_target || 0) || 1;
-      const bar = makeProgressBar(cur, target);
-      lines.push(`   🔥 ${cur.toLocaleString()} / ${target.toLocaleString()}  \`${bar}\``);
+    // ✅ Progress bar (only if locked + has progress_key/target)
+    const pk = a.progress_key || null;
+    const pt = a.progress_target != null ? Number(a.progress_target) : null;
+
+    if (!unlocked && pk && pt && pt > 0) {
+      const cur = Number(counters.get(pk) || 0);
+      const bar = renderBar(cur, pt, 16);
+      lines.push(`🔥 **${cur.toLocaleString()} / ${pt.toLocaleString()}**`);
+      lines.push(`${bar}`);
     }
   }
 
@@ -277,10 +270,10 @@ function buildPages({ achievements, unlockedSet, targetUser, displayName, counte
       .setTitle(`🏆 Achievements — ${displayName}`)
       .setDescription(
         `**User:** <@${targetUser.id}>\n` +
-        `**Tag:** ${targetUser.tag}\n` +
-        `**ID:** \`${targetUser.id}\`\n` +
-        `**Unlocked:** **${unlockedCount}**\n\n` +
-        chunk.join("\n").trim()
+          `**Tag:** ${targetUser.tag}\n` +
+          `**ID:** \`${targetUser.id}\`\n` +
+          `**Unlocked:** **${unlockedCount}**\n\n` +
+          chunk.join("\n").trim()
       )
       .setFooter({ text: `Progress: ${progress} • Page ${idx + 1}/${chunks.length}` });
   });
