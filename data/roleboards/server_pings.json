@@ -1,10 +1,11 @@
 {
   "boardId": "server_pings",
   "channelId": "1468556593057759263",
-  "title": "📣 Updates & Pings",
-  "description": "Pick what you want to be notified about. Click again to remove.",
+  "title": "📣 Server related pigns",
+  "description": "Pick what you want to be notified about. Click again to remove.\n These roles will be pinged as changes roll out for the server and are completely optional to add/ remove",
   "roles": [
-    { "roleId": "967943137374920724", "buttonName": "New Games", "emoji": "🛠️", "style": "PRIMARY" },
-    { "roleId": "967943463834370058", "buttonName": "Server Changes", "emoji": "📅", "style": "SECONDARY" }
+    { "roleId": "967943137374920724", "buttonName": "Announcements", "emoji": "📢", "style": "PRIMARY" },
+    { "roleId": "967943463834370058", "buttonName": "Server Changes", "emoji": "🛠️", "style": "PRIMARY" },
+    { "roleId": "967943717866590229", "buttonName": "Outages / Maintenance", "emoji": "🚨", "style": "PRIMARY" }
   ]
 }
