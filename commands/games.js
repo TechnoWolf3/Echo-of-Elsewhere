@@ -57,7 +57,9 @@ function buildCategoryEmbed(channelId, cat) {
 
   return new EmbedBuilder()
     .setTitle(`${cat.emoji || "🎮"} ${cat.name}`)
-    .setDescription(`${statusLine(channelId)}\n\n${cat.description || ""}\n\n**Available:**\n${list}`);
+    .setDescription(
+      `${statusLine(channelId)}\n\n${cat.description || ""}\n\n**Available:**\n${list}`
+    );
 }
 
 function buildCategorySelect(categories) {
@@ -189,55 +191,56 @@ async function upsertPanel(interaction) {
           return i.reply({ content: "🗑️ Games hub closed.", flags: MessageFlags.Ephemeral }).catch(() => {});
         }
 
-        // refresh
+        // refresh (use i.update so Discord never complains)
         if (i.customId === BTN_REFRESH_ID) {
-          await i.deferUpdate().catch(() => {});
           const state = panels.get(channelId);
 
+          // Home view payload
+          const homePayload = {
+            embeds: [buildHomeEmbed(channelId, categoriesNow)],
+            components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
+          };
+
           if (!state || state.view === "home") {
-            return msg.edit({
-              embeds: [buildHomeEmbed(channelId, categoriesNow)],
-              components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
-            });
+            return i.update(homePayload).catch(() => {});
           }
 
           const cat = getCategory(categoriesNow, state.catId);
           if (!cat) {
             state.view = "home";
             state.catId = null;
-            return msg.edit({
-              embeds: [buildHomeEmbed(channelId, categoriesNow)],
-              components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
-            });
+            return i.update(homePayload).catch(() => {});
           }
 
-          return msg.edit({
-            embeds: [buildCategoryEmbed(channelId, cat)],
-            components: [buildGameSelect(cat), buildButtons({ showBack: true })],
-          });
+          return i
+            .update({
+              embeds: [buildCategoryEmbed(channelId, cat)],
+              components: [buildGameSelect(cat), buildButtons({ showBack: true })],
+            })
+            .catch(() => {});
         }
 
-        // home/back
+        // home/back (use i.update)
         if (i.customId === BTN_HOME_ID || i.customId === BTN_BACK_ID) {
-          await i.deferUpdate().catch(() => {});
           const state = panels.get(channelId);
           if (state) {
             state.view = "home";
             state.catId = null;
           }
 
-          return msg.edit({
-            embeds: [buildHomeEmbed(channelId, categoriesNow)],
-            components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
-          });
+          return i
+            .update({
+              embeds: [buildHomeEmbed(channelId, categoriesNow)],
+              components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
+            })
+            .catch(() => {});
         }
 
-        // category select
+        // category select (use i.update)
         if (i.customId === CAT_SELECT_ID) {
-          await i.deferUpdate().catch(() => {});
           const catId = i.values?.[0];
           const cat = getCategory(categoriesNow, catId);
-          if (!cat) return;
+          if (!cat) return i.deferUpdate().catch(() => {});
 
           const state = panels.get(channelId);
           if (state) {
@@ -245,15 +248,25 @@ async function upsertPanel(interaction) {
             state.catId = cat.id;
           }
 
-          return msg.edit({
-            embeds: [buildCategoryEmbed(channelId, cat)],
-            components: [buildGameSelect(cat), buildButtons({ showBack: true })],
-          });
+          return i
+            .update({
+              embeds: [buildCategoryEmbed(channelId, cat)],
+              components: [buildGameSelect(cat), buildButtons({ showBack: true })],
+            })
+            .catch(() => {});
         }
 
-        // game select
+        // game select (deferUpdate is fine; we also don't want to change the hub message immediately here)
         if (i.customId === GAME_SELECT_ID) {
-          await i.deferUpdate().catch(() => {});
+          // IMPORTANT: do NOT swallow failure silently; if this fails Discord shows the warning.
+          try {
+            await i.deferUpdate();
+          } catch {
+            // As a fallback, acknowledge with an update that doesn't change anything.
+            // This prevents "interaction wasn't handled" if deferUpdate fails for any reason.
+            await i.update({}).catch(() => {});
+          }
+
           const state = panels.get(channelId);
           if (!state?.catId) return;
 
@@ -279,10 +292,12 @@ async function upsertPanel(interaction) {
             });
           }
 
-          await i.followUp({
-            content: `${game.emoji || "🎮"} Launching **${game.name}**…`,
-            flags: MessageFlags.Ephemeral,
-          }).catch(() => {});
+          await i
+            .followUp({
+              content: `${game.emoji || "🎮"} Launching **${game.name}**…`,
+              flags: MessageFlags.Ephemeral,
+            })
+            .catch(() => {});
 
           await game.run(i, { reuseMessage: msg }).catch((e) => {
             console.error("[games] launch error:", e);
@@ -291,19 +306,23 @@ async function upsertPanel(interaction) {
           // refresh view after launch
           const fresh = panels.get(channelId);
           if (!fresh || fresh.view === "home") {
-            return msg.edit({
-              embeds: [buildHomeEmbed(channelId, categoriesNow)],
-              components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
-            }).catch(() => {});
+            return msg
+              .edit({
+                embeds: [buildHomeEmbed(channelId, categoriesNow)],
+                components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
+              })
+              .catch(() => {});
           }
 
           const freshCat = getCategory(categoriesNow, fresh.catId);
           if (!freshCat) return;
 
-          return msg.edit({
-            embeds: [buildCategoryEmbed(channelId, freshCat)],
-            components: [buildGameSelect(freshCat), buildButtons({ showBack: true })],
-          }).catch(() => {});
+          return msg
+            .edit({
+              embeds: [buildCategoryEmbed(channelId, freshCat)],
+              components: [buildGameSelect(freshCat), buildButtons({ showBack: true })],
+            })
+            .catch(() => {});
         }
       } catch (e) {
         console.error("[games] panel error:", e);
