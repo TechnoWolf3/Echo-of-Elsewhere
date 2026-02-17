@@ -15,7 +15,6 @@ module.exports = {
           label: "Blackjack",
           emoji: "🃏",
           hint: "1–10 players • splits/double • table fees",
-          // relative to commands/games.js
           modulePath: "../data/games/blackjack",
           startExport: "startFromHub",
         },
@@ -30,37 +29,13 @@ module.exports = {
         {
           key: "higherlower",
           label: "Higher or Lower",
-          emoji: "🔼🔽",
-          hint: "Lobby • shared draws • cash out your streak",
+          // IMPORTANT: must be ONE emoji for select menus
+          emoji: "🔼",
+          hint: "Pick 🔼 or 🔽 • build a streak • cash out",
           modulePath: "../data/games/higherLower",
           startExport: "startFromHub",
         },
       ],
-    },
-
-    {
-      id: "drinking",
-      name: "Drinking Games",
-      emoji: "🍻",
-      blurb: "Party games and chaos (responsibly… allegedly).",
-      games: [
-        {
-          key: "votendrink",
-          label: "Vote & Drink",
-          emoji: "🗳️",
-          hint: "Lobby + rounds • votes decide who drinks",
-          modulePath: "../commands/votendrink",
-          startExport: "startFromHub",
-        },
-      ],
-    },
-
-    {
-      id: "fun",
-      name: "Just for Fun",
-      emoji: "🎉",
-      blurb: "Low-stakes mini-games. (More coming soon.)",
-      games: [],
     },
   ],
 };

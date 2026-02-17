@@ -30,8 +30,10 @@ module.exports = {
     {
       id: "higherlower",
       name: "Higher or Lower",
-      emoji: "🔼🔽",
-      description: "Lobby • shared draws • cash out your streak",
+      // IMPORTANT: select-menu emojis must be ONE emoji.
+      // Put extra flair in the description instead.
+      emoji: "🔼",
+      description: "Pick 🔼 or 🔽 • build a streak • cash out",
       run: async (interaction, ctx = {}) => {
         const hol = require("../higherLower");
         return hol.startFromHub(interaction, ctx);

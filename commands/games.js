@@ -141,7 +141,9 @@ async function ackThenEdit(i, msg, payload) {
       // ignore - if it's already acknowledged or expired, we'll just try editing
     }
   }
-  return msg.edit(payload).catch(() => {});
+  return msg.edit(payload).catch((err) => {
+    console.warn('[GAMES HUB] message.edit failed:', err?.rawError?.message || err?.message || err);
+  });
 }
 
 async function upsertPanel(interaction) {
