@@ -27,6 +27,14 @@ module.exports = {
           modulePath: "../data/games/roulette",
           startExport: "startFromHub",
         },
+        {
+          key: "higherlower",
+          label: "Higher or Lower",
+          emoji: "🔼🔽",
+          hint: "Lobby • shared draws • cash out your streak",
+          modulePath: "../data/games/higherLower",
+          startExport: "startFromHub",
+        },
       ],
     },
 

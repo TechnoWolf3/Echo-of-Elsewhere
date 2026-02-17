@@ -27,5 +27,15 @@ module.exports = {
         return rou.startFromHub(interaction, ctx);
       },
     },
+    {
+      id: "higherlower",
+      name: "Higher or Lower",
+      emoji: "🔼🔽",
+      description: "Lobby • shared draws • cash out your streak",
+      run: async (interaction, ctx = {}) => {
+        const hol = require("../higherLower");
+        return hol.startFromHub(interaction, ctx);
+      },
+    },
   ],
 };
