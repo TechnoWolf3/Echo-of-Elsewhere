@@ -130,6 +130,20 @@ function buildButtons({ showBack }) {
   return row;
 }
 
+
+async function ackThenEdit(i, msg, payload) {
+  // Always acknowledge quickly to avoid Discord's "That interaction wasn't handled."
+  // We use deferUpdate + message.edit for reliability across rapid edits/races.
+  if (!i.deferred && !i.replied) {
+    try {
+      await i.deferUpdate();
+    } catch {
+      // ignore - if it's already acknowledged or expired, we'll just try editing
+    }
+  }
+  return msg.edit(payload).catch(() => {});
+}
+
 async function upsertPanel(interaction) {
   const channelId = interaction.channelId;
   const categories = loadCategories();
@@ -202,22 +216,20 @@ async function upsertPanel(interaction) {
           };
 
           if (!state || state.view === "home") {
-            return i.update(homePayload).catch(() => {});
+            return ackThenEdit(i, msg, homePayload);
           }
 
           const cat = getCategory(categoriesNow, state.catId);
           if (!cat) {
             state.view = "home";
             state.catId = null;
-            return i.update(homePayload).catch(() => {});
+            return ackThenEdit(i, msg, homePayload);
           }
 
-          return i
-            .update({
+          return ackThenEdit(i, msg, {
               embeds: [buildCategoryEmbed(channelId, cat)],
               components: [buildGameSelect(cat), buildButtons({ showBack: true })],
-            })
-            .catch(() => {});
+            });
         }
 
         // home/back (use i.update)
@@ -228,12 +240,10 @@ async function upsertPanel(interaction) {
             state.catId = null;
           }
 
-          return i
-            .update({
-              embeds: [buildHomeEmbed(channelId, categoriesNow)],
-              components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
-            })
-            .catch(() => {});
+          return ackThenEdit(i, msg, {
+            embeds: [buildHomeEmbed(channelId, categoriesNow)],
+            components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
+          });
         }
 
         // category select (use i.update)
@@ -248,12 +258,10 @@ async function upsertPanel(interaction) {
             state.catId = cat.id;
           }
 
-          return i
-            .update({
+          return ackThenEdit(i, msg, {
               embeds: [buildCategoryEmbed(channelId, cat)],
               components: [buildGameSelect(cat), buildButtons({ showBack: true })],
-            })
-            .catch(() => {});
+            });
         }
 
         // game select (deferUpdate is fine; we also don't want to change the hub message immediately here)
