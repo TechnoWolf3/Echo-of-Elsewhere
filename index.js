@@ -638,6 +638,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // Buttons are handled by the per-game message collectors; ephemeral selects/modals must be routed here.
   if (!interaction.isChatInputCommand()) {
     if (interaction.isAnySelectMenu?.() || interaction.isModalSubmit?.()) {
+      // Let the /games hub components handle themselves
+      const _cid = String(interaction.customId || "");
+      if (_cid.startsWith("games:")) return;
+
       try {
         if (typeof rouletteGame.handleInteraction === "function") {
           const handled = await rouletteGame.handleInteraction(interaction);

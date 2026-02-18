@@ -152,7 +152,7 @@ function buildLobbyEmbed(table) {
   const feePct = Math.round(Number(table.hostSecurity?.feePct || 0) * 100);
   e.addFields({ name: "Table Fee", value: feePct > 0 ? `**${feePct}%** (withheld from pot)` : "None", inline: true });
 
-  e.setFooter({ text: "No DM spam: use ‘View Hand’ on your turn (ephemeral, on-demand)." });
+  e.setFooter({ text: "Use ‘View Hand’ on your turn (ephemeral, on-demand)." });
   return e;
 }
 
