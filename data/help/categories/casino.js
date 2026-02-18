@@ -106,20 +106,20 @@ module.exports = {
         "You declare them as the next value in the sequence.\n" +
         "You may lie about what you placed.\n\n" +
         "Other players decide whether they believe you or call you on your **BULLSHIT!**\n\n" +
-        "🎮 **Buttons & What They Do**\n" +
+        "🎮 **Buttons & What They Do**\n\n" +
         "➕ Play Cards\n" +
-        "Select and place the cards you want to put down.\n" +
-        "You must declare them as the current required rank.\n" +
+        "- Select and place the cards you want to put down.\n" +
+        "- You must declare them as the current required rank.\n\n" +
         "📣 Bullshit!\n" +
-        "Call out the previous player if you think they lied.\n" +
-        "If they were lying → they will run the roulette. With any luck, they'll end up dead.\n" +
-        "If they were telling the truth → you will run the roulette. With any luck, you'll live to play another hand.\n\n" +
+        "- Call out the previous player if you think they lied.\n" +
+        "  - If they were lying → they will run the roulette. With any luck, they'll end up dead.\n" +
+        "  - If they were telling the truth → you will run the roulette. With any luck, you'll live to play another hand.\n\n" +
         "💥 Round Outcomes\n" +
         "- Lie successfully → play continues.\n" +
-        "Lie and get caught → pick up the pile.\n" +
-        "Call correctly → opponent picks up pile.\n" +
-        "Call incorrectly → you pick up pile.\n" +
-        "Last player standing wins.\n\n" +
+        "- Lie and get caught → pick up the pile.\n" +
+        "- Call correctly → opponent picks up pile.\n" +
+        "- Call incorrectly → you pick up pile.\n" +
+        "- Last player standing wins.\n\n" +
         "-# Early game lies sell easier, confidence is the game and revenge is common.",
     },
   ],
