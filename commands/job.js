@@ -28,9 +28,9 @@ const { canGrind: canGrindFatigue, fatigueBar: grindFatigueBar } = require("../u
 
 // ✅ Config imports
 const nineToFiveIndex = require("../data/work/categories/nineToFive/index");
-const contractCfg = require("../data/nineToFive/transportContract");
-const skillCfg = require("../data/nineToFive/skillCheck");
-const shiftCfg = require("../data/nineToFive/shift");
+const contractCfg = require("../data/work/categories/nineToFive/transportContract");
+const skillCfg = require("../data/work/categories/nineToFive/skillCheck");
+const shiftCfg = require("../data/work/categories/nineToFive/shift");
 
 const nightWalker = require("../data/work/categories/nightwalker/index");
 
