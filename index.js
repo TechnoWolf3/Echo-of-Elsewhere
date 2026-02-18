@@ -3,6 +3,7 @@ require("dotenv").config();
 const blackjackGame = require("./data/games/blackjack");
 const rouletteGame = require("./data/games/roulette");
 const higherLowerGame = require("./data/games/higherLower");
+const bullshitGame = require("./data/games/bullshit");
 
 const fs = require("fs");
 const path = require("path");
@@ -648,6 +649,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         if (typeof blackjackGame.handleInteraction === "function") {
           const handled = await blackjackGame.handleInteraction(interaction);
+          if (handled) return;
+        }
+        if (typeof bullshitGame.handleInteraction === "function") {
+          const handled = await bullshitGame.handleInteraction(interaction);
           if (handled) return;
         }
       } catch (e) {

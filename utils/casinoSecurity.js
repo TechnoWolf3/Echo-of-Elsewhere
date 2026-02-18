@@ -4,6 +4,7 @@
 // Uses your existing transaction types:
 // - blackjack_*
 // - roulette_*
+// - bullshit_*
 //
 // Requirements:
 // - transactions table has: guild_id, user_id, amount (signed), type, created_at
@@ -31,7 +32,7 @@ const CASINO_SECURITY = Object.freeze({
   windowHours: 24,
 
   // ✅ Match your current economy transaction type names:
-  typePrefixes: ["blackjack_", "roulette_"],
+  typePrefixes: ["blackjack_", "roulette_", "bullshit_"],
 
   // Placeholders — edit freely
   // Rule: pick the highest tier whose minNetProfit <= netProfit24h
