@@ -1113,9 +1113,7 @@ module.exports = {
           return btn.reply({ content: "❌ This board isn’t for you.", flags: MessageFlags.Ephemeral }).catch(() => {});
         }
 
-        // 🚔 Jail gate for buttons (true = BLOCK)
-        if (await guardNotJailedComponent(btn)) return;
-
+        
         const isSelect = typeof btn.isStringSelectMenu === "function" && btn.isStringSelectMenu();
         const actionId = isSelect ? (btn.values?.[0] || "") : (btn.customId || "");
 
@@ -1130,7 +1128,10 @@ module.exports = {
         await ensureAck(btn);
         resetInactivity();
 
-        // Stop
+        
+        // 🚔 Jail gate for buttons (true = BLOCK)
+        if (await guardNotJailedComponent(btn)) return;
+// Stop
         if (actionId === "job_stop") {
           return stopWork("stop_button");
         }
