@@ -1,4 +1,4 @@
-// data/grind/index.js
+// data/work/categories/grind/index.js
 module.exports = {
   category: {
     title: "🕒 Grind",

@@ -7,6 +7,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
+  StringSelectMenuBuilder,
 } = require("discord.js");
 
 const { pool } = require("../utils/db");
@@ -26,20 +27,20 @@ const {
 const { canGrind: canGrindFatigue, fatigueBar: grindFatigueBar } = require("../utils/grindFatigue");
 
 // ✅ Config imports
-const nineToFiveIndex = require("../data/nineToFive/index");
+const nineToFiveIndex = require("../data/work/categories/nineToFive/index");
 const contractCfg = require("../data/nineToFive/transportContract");
 const skillCfg = require("../data/nineToFive/skillCheck");
 const shiftCfg = require("../data/nineToFive/shift");
 
-const nightWalker = require("../data/nightwalker/index");
+const nightWalker = require("../data/work/categories/nightwalker/index");
 
 // ✅ Crime
-const startStoreRobbery = require("../data/crime/storeRobbery");
-const startHeist = require("../data/crime/heist");
+const startStoreRobbery = require("../data/work/categories/crime/storeRobbery");
+const startHeist = require("../data/work/categories/crime/heist");
 
 // ✅ Grind (NEW)
-const grindIndex = require("../data/grind/index");
-const startStoreClerk = require("../data/grind/storeClerk");
+const grindIndex = require("../data/work/categories/grind/index");
+const startStoreClerk = require("../data/work/categories/grind/storeClerk");
 
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
@@ -336,18 +337,26 @@ function buildHubEmbed(user, progress, cooldownUnix) {
 }
 
 function buildHubComponents(disabled = false) {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("job_cat:95").setLabel("📦 Work a 9–5").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("job_cat:nw").setLabel("🧠 Night Walker").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("job_cat:grind").setLabel("🕒 Grind").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("job_cat:crime").setLabel("🕶️ Crime").setStyle(ButtonStyle.Danger).setDisabled(disabled)
-    ),
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
-    ),
-  ];
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+      )
+      .setDisabled(disabled)
+  );
+
+  const navRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+
+  return [catRow, navRow];
 }
+
 
 function buildNineToFiveEmbed(user, progress, cooldownUnix) {
   const need = xpToNext(progress.level);
@@ -369,6 +378,53 @@ function buildNineToFiveEmbed(user, progress, cooldownUnix) {
 }
 
 function buildNineToFiveComponents({ disabled = false, legendary = false } = {}) {
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦", default: true },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+      )
+      .setDisabled(disabled)
+  );
+
+  const jobMenu = new StringSelectMenuBuilder()
+    .setCustomId("job_select:job")
+    .setPlaceholder("Choose a job...")
+    .setDisabled(disabled);
+
+  for (const j of nineToFiveIndex.jobs) {
+    jobMenu.addOptions({
+      label: safeLabel(j.title || j.key),
+      value: j.button.id,
+      description: j.desc ? safeDesc(j.desc) : undefined,
+      emoji: (j.button?.label || "").split(" ")[0] || "🧩",
+    });
+  }
+
+  if (nineToFiveIndex.legendary?.enabled && legendary) {
+    jobMenu.addOptions({
+      label: safeLabel("Legendary"),
+      value: nineToFiveIndex.legendary.button.id,
+      description: safeDesc("Special jobs (when available)."),
+      emoji: "🌟",
+    });
+  }
+
+  const jobRow = new ActionRowBuilder().addComponents(jobMenu);
+
+  const navRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+
+  return [catRow, jobRow, navRow];
+}
+ = {}) {
   const row = new ActionRowBuilder();
 
   for (const j of nineToFiveIndex.jobs) {
@@ -428,30 +484,47 @@ function buildNightWalkerEmbed(user, progress, cooldownUnix) {
 }
 
 function buildNightWalkerComponents(disabled = false) {
-  const list = nightWalker?.list || [];
-  const jobs = nightWalker?.jobs || {};
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠", default: true },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+      )
+      .setDisabled(disabled)
+  );
 
-  const row = new ActionRowBuilder();
+  const jobMenu = new StringSelectMenuBuilder()
+    .setCustomId("job_select:job")
+    .setPlaceholder("Choose a job...")
+    .setDisabled(disabled);
+
+  const list = nightWalker?.list || Object.keys(nightWalker?.jobs || {});
   for (const k of list) {
-    const cfg = jobs[k];
+    const cfg = nightWalker?.jobs?.[k];
     if (!cfg) continue;
-    row.addComponents(
-      new ButtonBuilder()
-        .setCustomId(`job_nw:${k}`)
-        .setLabel(cfg.title ? safeLabel(cfg.title) : safeLabel(k))
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(disabled)
-    );
+    jobMenu.addOptions({
+      label: safeLabel(cfg.title || k),
+      value: `job_nw:${k}`,
+      description: cfg.desc ? safeDesc(cfg.desc) : undefined,
+      emoji: (cfg.title || "🧠").split(" ")[0] || "🧠",
+    });
   }
 
-  return [
-    row,
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
-    ),
-  ];
+  const jobRow = new ActionRowBuilder().addComponents(jobMenu);
+
+  const navRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+
+  return [catRow, jobRow, navRow];
 }
+
 
 function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
   const list = grindIndex?.list || [];
@@ -506,31 +579,48 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
 }
 
 function buildGrindComponents(disabled = false) {
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒", default: true },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+      )
+      .setDisabled(disabled)
+  );
+
+  const jobMenu = new StringSelectMenuBuilder()
+    .setCustomId("job_select:job")
+    .setPlaceholder("Choose a job...")
+    .setDisabled(disabled);
+
   const list = grindIndex?.list || [];
   const jobs = grindIndex?.jobs || {};
-
-  const row = new ActionRowBuilder();
   for (const k of list) {
     const cfg = jobs[k];
     if (!cfg) continue;
-
-    row.addComponents(
-      new ButtonBuilder()
-        .setCustomId(cfg.buttonId)
-        .setLabel(cfg.title ? safeLabel(cfg.title) : safeLabel(k))
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(disabled)
-    );
+    jobMenu.addOptions({
+      label: safeLabel(cfg.title || k),
+      value: cfg.buttonId || `grind:${k}`,
+      description: cfg.desc ? safeDesc(cfg.desc) : undefined,
+      emoji: (cfg.title || "🕒").split(" ")[0] || "🕒",
+    });
   }
 
-  return [
-    row,
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
-    ),
-  ];
+  const jobRow = new ActionRowBuilder().addComponents(jobMenu);
+
+  const navRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  );
+
+  return [catRow, jobRow, navRow];
 }
+
 
 
 /* ============================================================
@@ -590,24 +680,42 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
 }
 
 function buildCrimeComponents(disabled = false) {
-  const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("crime:store").setLabel("🏪 Store Robbery").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("crime:chase").setLabel("🚗 Car Chase").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("crime:drugs").setLabel("💊 Drug Pushing").setStyle(ButtonStyle.Secondary).setDisabled(disabled)
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️", default: true }
+      )
+      .setDisabled(disabled)
   );
 
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("crime:heist").setLabel("🏦 Heist").setStyle(ButtonStyle.Danger).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("crime:major").setLabel("💰 Major Heist").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+  const jobRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:job")
+      .setPlaceholder("Choose a job...")
+      .addOptions(
+        { label: "Store Robbery", value: "crime:store", emoji: "🏪", description: safeDesc("Risky grab-and-go.") },
+        { label: "Car Chase", value: "crime:chase", emoji: "🚗", description: safeDesc("Coming soon.") },
+        { label: "Drug Pushing", value: "crime:drugs", emoji: "💊", description: safeDesc("Coming soon.") },
+        { label: "Heist", value: "crime:heist", emoji: "🏦", description: safeDesc("Big job, big heat.") },
+        { label: "Major Heist", value: "crime:major", emoji: "💎", description: safeDesc("High stakes.") }
+      )
+      .setDisabled(disabled)
   );
 
-  const row3 = new ActionRowBuilder().addComponents(
+  const navRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
   );
 
-  return [row1, row2, row3];
+  return [catRow, jobRow, navRow];
 }
+
 
 async function checkCrimeCooldownOrTell(btn, guildId, userId, jobKey, jobLabel) {
   const now = new Date();
@@ -1033,9 +1141,12 @@ module.exports = {
         // 🚔 Jail gate for buttons (true = BLOCK)
         if (await guardNotJailedComponent(btn)) return;
 
+        const isSelect = typeof btn.isStringSelectMenu === "function" && btn.isStringSelectMenu();
+        const actionId = isSelect ? (btn.values?.[0] || "") : actionId;
+
         // ✅ Ack once for safety (prevents "This interaction failed")
         // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
-        const isClerkRuntime = btn.customId.startsWith("grind_clerk:");
+        const isClerkRuntime = actionId.startsWith("grind_clerk:");
         if (isClerkRuntime) {
           resetInactivity(); // keep the /job board alive while the grind module runs
           return;            // modal safety: the grind module will handle/ack as needed
@@ -1045,26 +1156,33 @@ module.exports = {
         resetInactivity();
 
         // Stop
-        if (btn.customId === "job_stop") {
+        if (actionId === "job_stop") {
           return stopWork("stop_button");
         }
 
-        // Back buttons
-        if (btn.customId === "job_back:hub") {
+        if (actionId === "job_home") {
           session.view = "hub";
           session.nw = null;
           await redraw();
           return;
         }
 
-        if (btn.customId === "job_back:95") {
+        // Back buttons
+        if (actionId === "job_back:hub") {
+          session.view = "hub";
+          session.nw = null;
+          await redraw();
+          return;
+        }
+
+        if (actionId === "job_back:95") {
           session.view = "95";
           session.nw = null;
           await redraw();
           return;
         }
 
-        if (btn.customId === "job_back:nw") {
+        if (actionId === "job_back:nw") {
           session.view = "nw";
           session.nw = null;
           await redraw();
@@ -1072,22 +1190,22 @@ module.exports = {
         }
 
         // Category nav (allowed even on /job payout cooldown — but jail still blocks)
-        if (btn.customId === "job_cat:95") {
+        if (actionId === "job_cat:95") {
           session.view = "95";
           await redraw();
           return;
         }
-        if (btn.customId === "job_cat:nw") {
+        if (actionId === "job_cat:nw") {
           session.view = "nw";
           await redraw();
           return;
         }
-        if (btn.customId === "job_cat:grind") {
+        if (actionId === "job_cat:grind") {
           session.view = "grind";
           await redraw();
           return;
         }
-        if (btn.customId === "job_cat:crime") {
+        if (actionId === "job_cat:crime") {
           session.view = "crime";
           await redraw();
           return;
@@ -1097,8 +1215,8 @@ module.exports = {
         /* ============================================================
            GRIND MENU (NEW)
            ============================================================ */
-        if (btn.customId.startsWith("grind:")) {
-          const key = btn.customId.split(":")[1];
+        if (actionId.startsWith("grind:")) {
+          const key = actionId.split(":")[1];
 
           // Block starting a grind job if on /job payout cooldown
           if (await checkCooldownOrTell(btn)) return;
@@ -1131,8 +1249,8 @@ module.exports = {
         /* ============================================================
            CRIME MENU (Store Robbery + Heists live)
            ============================================================ */
-        if (btn.customId.startsWith("crime:")) {
-          const key = btn.customId.split(":")[1];
+        if (actionId.startsWith("crime:")) {
+          const key = actionId.split(":")[1];
 
           if (key === "store") {
             if (await checkCrimeCooldownOrTell(btn, guildId, userId, CRIME_KEYS.store, "Store Robbery")) return;
@@ -1224,8 +1342,8 @@ module.exports = {
         /* ============================================================
            9–5 ENTRY (buttons from data/nineToFive/index.js)
            ============================================================ */
-        if (btn.customId.startsWith("job_95:")) {
-          const mode = btn.customId.split(":")[1];
+        if (actionId.startsWith("job_95:")) {
+          const mode = actionId.split(":")[1];
 
           // Block starting a job if on /job payout cooldown
           if (await checkCooldownOrTell(btn)) return;
@@ -1318,10 +1436,10 @@ module.exports = {
         }
 
         // Contract clicks
-        if (btn.customId.startsWith("job_contract:")) {
+        if (actionId.startsWith("job_contract:")) {
           if (await checkCooldownOrTell(btn)) return;
 
-          const parts = btn.customId.split(":");
+          const parts = actionId.split(":");
           const stepIndex = Number(parts[1]);
           const label = parts.slice(2).join(":");
 
@@ -1410,9 +1528,9 @@ module.exports = {
         }
 
         // Skill checks (normal + legendary)
-        if (btn.customId.startsWith("job_skill:") || btn.customId.startsWith("job_leg:")) {
-          const isLegendary = btn.customId.startsWith("job_leg:");
-          const chosen = btn.customId.split(":")[1];
+        if (actionId.startsWith("job_skill:") || actionId.startsWith("job_leg:")) {
+          const isLegendary = actionId.startsWith("job_leg:");
+          const chosen = actionId.split(":")[1];
 
           const now = Date.now();
           const expired = now > session.skillExpiresAt;
@@ -1473,7 +1591,7 @@ module.exports = {
         }
 
         // Shift collect
-        if (btn.customId === "job_shift_collect") {
+        if (actionId === "job_shift_collect") {
           if (!session.shiftReady) return;
           if (await checkCooldownOrTell(btn)) return;
 
@@ -1515,8 +1633,8 @@ module.exports = {
         /* ============================================================
            Night Walker ENTRY
            ============================================================ */
-        if (btn.customId.startsWith("job_nw:")) {
-          const jobKey = btn.customId.split(":")[1];
+        if (actionId.startsWith("job_nw:")) {
+          const jobKey = actionId.split(":")[1];
 
           if (await checkCooldownOrTell(btn)) return;
 
@@ -1566,10 +1684,10 @@ module.exports = {
         }
 
         // NW round choice clicks
-        if (btn.customId.startsWith("nw:")) {
+        if (actionId.startsWith("nw:")) {
           if (!session.nw) return;
 
-          const [, jobKey, roundIndexStr, choiceIndexStr] = btn.customId.split(":");
+          const [, jobKey, roundIndexStr, choiceIndexStr] = actionId.split(":");
           const roundIndex = Number(roundIndexStr);
           const choiceIndex = Number(choiceIndexStr);
 

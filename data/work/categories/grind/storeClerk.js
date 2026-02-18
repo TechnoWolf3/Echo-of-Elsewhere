@@ -1,4 +1,4 @@
-// data/grind/storeClerk.js
+// data/work/categories/grind/storeClerk.js
 const {
   EmbedBuilder,
   ActionRowBuilder,
@@ -10,7 +10,7 @@ const {
   MessageFlags,
 } = require("discord.js");
 
-const { canGrind, tickFatigue, fatigueBar } = require("../../utils/grindFatigue");
+const { canGrind, tickFatigue, fatigueBar } = require("../../../../utils/grindFatigue");
 
 // ✅ set this to your store item ID that grants +5% and is consumed per shift
 const CLERK_BONUS_ITEM_ID = "Math_Tutour";
