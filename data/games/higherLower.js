@@ -1,6 +1,7 @@
 // data/games/higherLower.js
 // Higher or Lower game module used by /games hub (NOT a slash command).
-// UI flow matches Blackjack/Roulette: buttons handled by message collector, modal submits routed via root index.js.
+// Buttons are handled via message component collector.
+// Modals are routed via root index.js calling handleInteraction(interaction).
 
 const {
   MessageFlags,
@@ -41,8 +42,10 @@ const ACH = {
 };
 const RULES = { HIGH_ROLLER_BET: 50_000 };
 
+// IMPORTANT:
+// Custom IDs use colon delimiters. Do NOT put colons inside tableId itself.
 function makeTableId() {
-  return `hol:${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 6)}`;
+  return `${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 6)}`;
 }
 
 function parseAmount(input) {
@@ -54,7 +57,7 @@ function parseAmount(input) {
   return Math.floor(n);
 }
 
-async function sendEphemeralToast(interaction, content) {
+async function sendEphemeral(interaction, content) {
   try {
     if (interaction.deferred || interaction.replied) {
       await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -64,7 +67,7 @@ async function sendEphemeralToast(interaction, content) {
   } catch {}
 }
 
-// ---------- Casino Security fee helper (copied style from roulette) ----------
+// ---------- Casino Security fee helper ----------
 async function ensureHostSecurity(table, guildId, hostId) {
   if (table.hostSecurity) return table.hostSecurity;
   try {
@@ -129,22 +132,21 @@ async function chargeWithCasinoFee({ guildId, userId, amountStake, type, meta, t
 // ---------- Cards ----------
 const SUITS = ["♠", "♥", "♦", "♣"];
 const RANKS = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
-function newDeck() {
-  const deck = [];
-  for (const s of SUITS) for (const r of RANKS) deck.push({ r, s, v: rankValue(r) });
-  // shuffle
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
-}
 function rankValue(r) {
   if (r === "A") return 14;
   if (r === "K") return 13;
   if (r === "Q") return 12;
   if (r === "J") return 11;
   return Number(r);
+}
+function newDeck() {
+  const deck = [];
+  for (const s of SUITS) for (const r of RANKS) deck.push({ r, s, v: rankValue(r) });
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
 }
 function cardStr(c) {
   return `**${c.r}${c.s}**`;
@@ -166,7 +168,7 @@ function buildLobbyEmbed(table) {
       `Players (${table.players.size}/${table.maxPlayers}):\n${playersBlock}\n\n` +
       `**Rules**\nMinimum bet: **$${MIN_BET.toLocaleString()}** • Ties are a loss.`
     )
-    .setFooter({ text: `Table ID: ${table.tableId}` });
+    .setFooter({ text: `Table ID: hol${table.tableId}` });
 }
 
 function buildRoundEmbed(table) {
@@ -185,21 +187,27 @@ function buildRoundEmbed(table) {
       `**Alive (${alive.length})**\n${lines.join("\n") || "_Nobody alive._"}\n\n` +
       `Pick **Higher (🔼)** or **Lower (🔽)**.`
     )
-    .setFooter({ text: `Table ID: ${table.tableId}` });
+    .setFooter({ text: `Table ID: hol${table.tableId}` });
+}
+
+function btn(tableId, action, label, style, extra = {}) {
+  const b = new ButtonBuilder()
+    .setCustomId(`hol:${tableId}:${action}`)
+    .setStyle(style);
+  if (label) b.setLabel(label);
+  if (extra.emoji) b.setEmoji(extra.emoji);
+  if (typeof extra.disabled === "boolean") b.setDisabled(extra.disabled);
+  return b;
 }
 
 function buildLobbyComponents(table) {
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:join`).setLabel("Join").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:leave`).setLabel("Leave").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:setbet`).setLabel("Set Bet").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`hol:${table.tableId}:start`)
-        .setLabel("Start")
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(table.players.size === 0 || !allPlayersPaid(table)),
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:end`).setLabel("End").setStyle(ButtonStyle.Danger)
+      btn(table.tableId, "join", "Join", ButtonStyle.Success),
+      btn(table.tableId, "leave", "Leave", ButtonStyle.Secondary),
+      btn(table.tableId, "setbet", "Set Bet", ButtonStyle.Primary),
+      btn(table.tableId, "start", "Start", ButtonStyle.Success, { disabled: table.players.size === 0 || !allPlayersPaid(table) }),
+      btn(table.tableId, "end", "End", ButtonStyle.Danger)
     ),
   ];
 }
@@ -208,10 +216,10 @@ function buildRoundComponents(table) {
   const anyAlive = [...table.players.values()].some((p) => p.alive);
   return [
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:higher`).setEmoji("🔼").setLabel("Higher").setStyle(ButtonStyle.Primary).setDisabled(!anyAlive),
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:lower`).setEmoji("🔽").setLabel("Lower").setStyle(ButtonStyle.Primary).setDisabled(!anyAlive),
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:cashout`).setLabel("Cash Out").setStyle(ButtonStyle.Success).setDisabled(!anyAlive),
-      new ButtonBuilder().setCustomId(`hol:${table.tableId}:end`).setLabel("End").setStyle(ButtonStyle.Danger)
+      btn(table.tableId, "higher", "Higher", ButtonStyle.Primary, { emoji: "🔼", disabled: !anyAlive }),
+      btn(table.tableId, "lower", "Lower", ButtonStyle.Primary, { emoji: "🔽", disabled: !anyAlive }),
+      btn(table.tableId, "cashout", "Cash Out", ButtonStyle.Success, { disabled: !anyAlive }),
+      btn(table.tableId, "end", "End", ButtonStyle.Danger)
     ),
   ];
 }
@@ -247,7 +255,6 @@ async function promptAmountModal(i, tableId) {
       )
     );
 
-  // IMPORTANT: do not defer/reply before showModal
   await i.showModal(modal);
 }
 
@@ -257,45 +264,43 @@ async function placeBet({ interaction, table, amount }) {
   const userId = interaction.user.id;
 
   if (!Number.isFinite(amount) || Number.isNaN(amount)) {
-    await sendEphemeralToast(interaction, "❌ Please enter a valid number (e.g. 5000).");
+    await sendEphemeral(interaction, "❌ Please enter a valid number (e.g. 5000).");
     return false;
   }
   if (amount < MIN_BET) {
-    await sendEphemeralToast(interaction, `❌ Minimum bet is **$${MIN_BET.toLocaleString()}**.`);
+    await sendEphemeral(interaction, `❌ Minimum bet is **$${MIN_BET.toLocaleString()}**.`);
     return false;
   }
   if (amount > MAX_BET) {
-    await sendEphemeralToast(interaction, `❌ Max bet is **$${MAX_BET.toLocaleString()}**.`);
+    await sendEphemeral(interaction, `❌ Max bet is **$${MAX_BET.toLocaleString()}**.`);
     return false;
   }
 
   const p = table.players.get(userId);
   if (!p) {
-    await sendEphemeralToast(interaction, "❌ You must **Join** the table first.");
+    await sendEphemeral(interaction, "❌ You must **Join** the table first.");
     return false;
   }
 
-  // Charge stake (+ fee)
   const charge = await chargeWithCasinoFee({
     guildId,
     userId,
     amountStake: amount,
     type: "higherlower_bet",
-    meta: { channelId, tableId: table.tableId },
+    meta: { channelId, tableId: `hol${table.tableId}` },
     table,
     channel: interaction.channel,
     hostId: table.hostId,
   });
 
   if (!charge.ok) {
-    await sendEphemeralToast(interaction, "❌ You don’t have enough funds for that bet (including casino fee).");
+    await sendEphemeral(interaction, "❌ You don’t have enough funds for that bet (including casino fee).");
     return false;
   }
 
   p.betAmount = charge.betAmount;
   p.paid = true;
 
-  // Achievements
   try {
     if (charge.betAmount >= RULES.HIGH_ROLLER_BET) {
       await unlockAchievement(interaction.channel, guildId, userId, ACH.HIGH_ROLLER);
@@ -307,7 +312,6 @@ async function placeBet({ interaction, table, amount }) {
 }
 
 function payoutMultiplier(streak) {
-  // 0 => 1.0x (cashout returns stake), then +0.5 per correct, capped.
   const m = 1 + 0.5 * Math.max(0, Number(streak || 0));
   return Math.min(10, m);
 }
@@ -324,24 +328,22 @@ async function cashOut(interaction, table) {
   const stake = Number(p.betAmount || 0);
   const wanted = Math.floor(stake * mult);
 
-  // Pay from server bank if possible
   const pay = await bankToUserIfEnough(guildId, userId, wanted, "higherlower_payout", {
     channelId: table.channelId,
-    tableId: table.tableId,
+    tableId: `hol${table.tableId}`,
     streak,
     multiplier: mult,
   });
 
   if (!pay?.ok) {
-    // fallback: refund stake only
     await bankToUserIfEnough(guildId, userId, stake, "higherlower_refund", {
       channelId: table.channelId,
-      tableId: table.tableId,
+      tableId: `hol${table.tableId}`,
       reason: "bank_insufficient",
     });
-    await sendEphemeralToast(interaction, "⚠️ Server bank couldn’t cover the payout — your stake was refunded.");
+    await sendEphemeral(interaction, "⚠️ Server bank couldn’t cover the payout — your stake was refunded.");
   } else {
-    await sendEphemeralToast(
+    await sendEphemeral(
       interaction,
       `✅ Cashed out! Streak **${streak}** → **x${mult.toFixed(1)}** payout: **$${wanted.toLocaleString()}**`
     );
@@ -362,7 +364,6 @@ async function resolveRound(table) {
   if (alive.length === 0) {
     table.state = "lobby";
     table.currentCard = null;
-    // reset for next game
     for (const p of table.players.values()) {
       p.paid = false;
       p.pick = null;
@@ -372,7 +373,6 @@ async function resolveRound(table) {
     return;
   }
 
-  // Everyone picked?
   if (alive.some((p) => !p.pick)) return;
 
   const next = table.deck.pop() || (table.deck = newDeck(), table.deck.pop());
@@ -382,7 +382,6 @@ async function resolveRound(table) {
   for (const p of alive) {
     const correct =
       (p.pick === "higher" && next.v > prev.v) || (p.pick === "lower" && next.v < prev.v);
-    // ties are loss
     if (correct) {
       p.streak = (p.streak || 0) + 1;
       p.pick = null;
@@ -396,11 +395,11 @@ async function resolveRound(table) {
 
 async function startRound(interaction, table) {
   if (table.players.size === 0) {
-    await sendEphemeralToast(interaction, "❌ No players to start.");
+    await sendEphemeral(interaction, "❌ No players to start.");
     return;
   }
   if (!allPlayersPaid(table)) {
-    await sendEphemeralToast(interaction, "❌ Waiting for everyone to place a bet.");
+    await sendEphemeral(interaction, "❌ Waiting for everyone to place a bet.");
     return;
   }
 
@@ -419,7 +418,6 @@ async function startRound(interaction, table) {
 
 // ---------- Hub entry ----------
 async function startFromHub(interaction, { reuseMessage } = {}) {
-  const guildId = interaction.guildId;
   const channelId = interaction.channelId;
 
   if (activeGames.has(channelId)) {
@@ -430,11 +428,11 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
   const tableId = makeTableId();
   const table = {
     tableId,
-    guildId,
+    guildId: interaction.guildId,
     channelId,
     hostId: interaction.user.id,
     maxPlayers: 10,
-    players: new Map(), // userId -> { userId, paid, betAmount, alive, pick, streak }
+    players: new Map(),
     state: "lobby",
     deck: [],
     currentCard: null,
@@ -459,11 +457,11 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
   collector.on("collect", async (i) => {
     if (await guardNotJailedComponent(i)) return;
 
-    // Only handle our buttons
     const cid = String(i.customId || "");
     if (!cid.startsWith(`hol:${tableId}:`)) return;
 
-    const action = cid.split(":")[2];
+    const parts = cid.split(":"); // hol, <tableId>, <action>
+    const action = parts[2];
 
     try {
       if (action === "join") {
@@ -488,11 +486,10 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
         const p = table.players.get(i.user.id);
         if (!p) return;
 
-        // If already paid, refund stake only (fee stays with house like roulette)
         if (p.paid && p.betAmount) {
           await bankToUserIfEnough(table.guildId, i.user.id, Number(p.betAmount), "higherlower_leave_refund", {
             channelId: table.channelId,
-            tableId: table.tableId,
+            tableId: `hol${table.tableId}`,
           }).catch(() => {});
         }
 
@@ -502,7 +499,6 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
       }
 
       if (action === "setbet") {
-        // showModal must NOT be preceded by defer/update/reply
         if (!table.players.has(i.user.id)) {
           await i.reply({ content: "❌ You must **Join** first.", flags: MessageFlags.Ephemeral }).catch(() => {});
           return;
@@ -538,6 +534,9 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
         await cashOut(i, table);
         return;
       }
+
+      // If we reached here, we did not handle it — ACK to avoid "interaction failed"
+      await i.deferUpdate().catch(() => {});
     } catch (e) {
       console.error("[HigherLower] button handler error:", e);
       try {
@@ -558,7 +557,6 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
     }, 15_000);
   });
 
-  // IMPORTANT: games.js already deferred the hub interaction. Don't spam ephemerals here.
   await interaction.editReply("✅ Higher or Lower table launched. Use **Join** then **Set Bet**.");
 }
 
