@@ -1,18 +1,22 @@
 // data/games/higherLower.js
-// Higher or Lower game module used by /games hub (NOT a slash command).
-// Multiplayer lobby (up to 10) with shared draw, individual guesses, and optional cash out.
-// Bets are debited on placement (like Blackjack/Roulette).
+// Higher or Lower (Casino) — modular game for /games hub
+// Pattern-matched to blackjack.js / roulette.js in this repo.
+// - Lobby: Join / Leave / Set Bet (modal) / Start / End
+// - Game: Higher / Lower / Cash Out
+// - Ties are a loss (house edge)
+// - Debits on bet placement (plus casino fee). Payouts use bankToUserIfEnough.
 
 const crypto = require("crypto");
 const {
-  MessageFlags,
-  EmbedBuilder,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  EmbedBuilder,
+  MessageFlags,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ComponentType,
 } = require("discord.js");
 
 const { activeGames } = require("../../utils/gameManager");
@@ -22,11 +26,8 @@ const {
   tryDebitUser,
   addServerBank,
   bankToUserIfEnough,
-  getServerBank,
+  getBalance,
 } = require("../../utils/economy");
-
-const { unlockAchievement } = require("../../utils/achievementEngine");
-const { guardNotJailedComponent } = require("../../utils/jail");
 
 const {
   getUserCasinoSecurity,
@@ -36,714 +37,546 @@ const {
   maybeAnnounceCasinoSecurity,
 } = require("../../utils/casinoSecurity");
 
+const { awardProgress } = require("../../utils/achievementEngine");
+const { isUserJailed } = require("../../utils/jail");
+
 const MIN_BET = 500;
 const MAX_BET = 250000;
 
-/* =========================================================
-   🏆 ACHIEVEMENTS (HIGHER/LOWER)
-   Safe even if you haven't added these IDs yet.
-========================================================= */
-const HOL_ACH = {
-  FIRST_CASHOUT: "hol_first_cashout",
-  FIRST_BUST: "hol_first_bust",
-  STREAK_5: "hol_streak_5",
-  HIGH_ROLLER: "hol_high_roller",
-};
-const HOL_RULES = { HIGH_ROLLER_BET: 50_000, MULTIPLIER_CAP: 10 };
+// tableId -> table (so index.js can route modal submits if you do that style)
+const tablesById = new Map();
 
-async function holFetchAchievementInfo(db, achievementId) {
-  if (!db) return null;
+function makeId(prefix) {
+  return `${prefix}:${crypto.randomBytes(6).toString("hex")}`;
+}
+
+function parseBetAmount(raw) {
+  if (typeof raw !== "string") return null;
+  const cleaned = raw.replace(/[$,\s_]/g, "").trim();
+  if (!cleaned) return null;
+  // allow decimals but round down to int
+  const num = Number(cleaned);
+  if (!Number.isFinite(num)) return null;
+  const amt = Math.floor(num);
+  if (!Number.isSafeInteger(amt)) return null;
+  return amt;
+}
+
+function cardRank(n) {
+  // 2..14 (A)
+  if (n === 14) return "A";
+  if (n === 13) return "K";
+  if (n === 12) return "Q";
+  if (n === 11) return "J";
+  return String(n);
+}
+function cardSuit(n) {
+  return ["♠", "♥", "♦", "♣"][n % 4];
+}
+function drawCard() {
+  // rank 2..14 and suit 0..3
+  const rank = 2 + Math.floor(Math.random() * 13);
+  const suit = Math.floor(Math.random() * 4);
+  return { rank, suit, label: `${cardRank(rank)}${["♠", "♥", "♦", "♣"][suit]}` };
+}
+
+function compareNext(prev, next) {
+  // returns "higher" | "lower" | "tie"
+  if (next.rank > prev.rank) return "higher";
+  if (next.rank < prev.rank) return "lower";
+  return "tie";
+}
+
+function streakMultiplier(streak) {
+  // start 1.0, +0.5 per correct, cap 10x
+  const m = 1 + 0.5 * Math.max(0, streak);
+  return Math.min(10, Math.round(m * 10) / 10);
+}
+
+async function ensureHostSecurity(table, guildId, hostId) {
+  if (table.hostSecurity) return table.hostSecurity;
   try {
-    const res = await db.query(
-      `SELECT id, name, description, category, hidden, reward_coins, reward_role_id
-       FROM achievements
-       WHERE id = $1`,
-      [achievementId]
-    );
-    return res.rows?.[0] ?? null;
-  } catch (e) {
-    console.error("holFetchAchievementInfo failed:", e);
-    return null;
-  }
-}
-
-async function holAnnounceAchievement(channel, userId, info) {
-  if (!channel?.send || !info) return;
-  const rewardCoins = Number(info.reward_coins || 0);
-  const embed = new EmbedBuilder()
-    .setTitle("🏆 Achievement Unlocked!")
-    .setDescription(`**<@${userId}>** unlocked **${info.name}**`)
-    .addFields(
-      { name: "Description", value: info.description || "—" },
-      { name: "Category", value: info.category || "General", inline: true },
-      { name: "Reward", value: rewardCoins > 0 ? `+$${rewardCoins.toLocaleString()}` : "None", inline: true }
-    )
-    .setFooter({ text: `Achievement ID: ${info.id}` });
-
-  await channel.send({ embeds: [embed] }).catch(() => {});
-}
-
-async function holUnlock(thingOrChannel, guildId, userId, achievementId) {
-  try {
-    const channel = thingOrChannel?.channel || thingOrChannel;
-    const db = channel?.client?.db;
-    if (!db) return null;
-
-    const cleanUserId = String(userId).replace(/[<@!>]/g, "");
-    const res = await unlockAchievement({ db, guildId, userId: cleanUserId, achievementId });
-    if (!res?.unlocked) return res;
-
-    const info = await holFetchAchievementInfo(db, achievementId);
-    await holAnnounceAchievement(channel, cleanUserId, info);
-
-    return res;
-  } catch (e) {
-    console.error("[higherLower] holUnlock failed:", e);
-    return null;
-  }
-}
-
-/* ========================================================= */
-
-function parseAmount(raw) {
-  const v = Number(String(raw || "").replace(/[^\d]/g, ""));
-  return Number.isFinite(v) ? v : 0;
-}
-
-function sendEphemeralToast(i, content) {
-  return i
-    .followUp({ content, flags: MessageFlags.Ephemeral })
-    .catch(async () => i.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {}));
-}
-
-function buildDeck() {
-  const suits = ["♠", "♥", "♦", "♣"];
-  const deck = [];
-  for (const s of suits) {
-    for (let v = 2; v <= 14; v++) {
-      deck.push({ v, s });
-    }
-  }
-  // Fisher-Yates shuffle
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
-}
-
-function cardLabel(card) {
-  if (!card) return "?";
-  const map = { 11: "J", 12: "Q", 13: "K", 14: "A" };
-  const val = map[card.v] || String(card.v);
-  return `${val}${card.s}`;
-}
-
-function compare(nextV, curV) {
-  if (nextV === curV) return 0;
-  return nextV > curV ? 1 : -1;
-}
-
-function multiplierForStreak(streak) {
-  // streak 0 => 1.0x
-  // each correct adds +0.5x
-  const m = 1 + 0.5 * Number(streak || 0);
-  return Math.min(m, HOL_RULES.MULTIPLIER_CAP);
-}
-
-// ---------- Casino Security fee helper (same idea as BJ/Rou) ----------
-async function ensureHostSecurity(game, guildId, hostId) {
-  if (game.hostSecurity) return game.hostSecurity;
-  try {
-    game.hostSecurity = await getHostBaseSecurity(guildId, hostId);
+    table.hostSecurity = await getHostBaseSecurity(guildId, hostId);
   } catch (e) {
     console.error("[higherLower] failed to get host base security:", e);
-    game.hostSecurity = { level: 0, label: "Normal", feePct: 0 };
+    table.hostSecurity = { level: 0, label: "Normal", feePct: 0 };
   }
-  return game.hostSecurity;
+  return table.hostSecurity;
 }
 
 async function getPlayerSecuritySafe(guildId, userId) {
   try {
     return await getUserCasinoSecurity(guildId, userId);
   } catch (e) {
-    console.error("[higherLower] failed to get player security:", e);
+    console.error("[higherLower] get user casino security failed:", e);
     return { level: 0, label: "Normal", feePct: 0 };
   }
 }
 
-async function chargeWithCasinoFee({ guildId, userId, amountStake, type, meta, game, channel, hostId }) {
-  const hostSec = await ensureHostSecurity(game, guildId, hostId);
-  const playerSec = await getPlayerSecuritySafe(guildId, userId);
-  const effectiveFeePct = getEffectiveFeePct(hostSec, playerSec);
-  const feeAmount = computeFeeForBet(Number(amountStake || 0), effectiveFeePct);
-  const total = Number(amountStake || 0) + Number(feeAmount || 0);
-
-  const ok = await tryDebitUser(guildId, userId, total, type, {
-    ...meta,
-    stake: Number(amountStake || 0),
-    feeAmount: Number(feeAmount || 0),
-    effectiveFeePct,
-    hostSecurityLevel: hostSec?.level ?? 0,
-    playerSecurityLevel: playerSec?.level ?? 0,
-  });
-
-  return { ok, feeAmount: Number(feeAmount || 0), effectiveFeePct, hostSec, playerSec };
+function playersList(table) {
+  const arr = Array.from(table.players.values());
+  arr.sort((a, b) => (a.joinedAt ?? 0) - (b.joinedAt ?? 0));
+  return arr;
 }
 
-function buildLobbyEmbed(game) {
-  const players = [...game.players.values()];
-  const list = players.length
-    ? players
-        .map((p) => {
-          const paid = p.paid ? "✅" : "❌";
-          const bet = p.betAmount ? `$${Number(p.betAmount).toLocaleString()}` : "—";
-          return `${paid} ${p.user} — Bet: **${bet}**`;
-        })
-        .join("\n")
-    : "_No players yet. Hit **Join** to sit down._";
+function buildLobbyEmbed(table, guildId) {
+  const e = new EmbedBuilder().setTitle("🔼🔽 Higher or Lower");
 
-  return new EmbedBuilder()
-    .setTitle("🔼🔽 Higher or Lower")
-    .setDescription(
-      [
-        `Dealer: _Not dealt yet_`,
-        `Players (${players.length}/${game.maxPlayers}):`,
-        list,
-        "",
-        `Minimum bet: **$${MIN_BET.toLocaleString()}** • Ties are a **loss**.`,
-      ].join("\n")
-    )
-    .setFooter({ text: `Table ID: ${game.gameId}` });
-}
-
-function buildPlayEmbed(game) {
-  const cur = game.currentCard;
-  const next = game.revealedNext ? game.nextCard : null;
-
-  const alive = [...game.players.values()].filter((p) => p.status === "alive");
-  const out = [...game.players.values()].filter((p) => p.status !== "alive");
-
-  const aliveLines = alive.length
-    ? alive
-        .map((p) => {
-          const m = multiplierForStreak(p.streak);
-          const guess = p.guess ? ` • Guess: **${p.guess.toUpperCase()}**` : " • Guess: _pending_";
-          return `🟢 ${p.user} — Bet: **$${Number(p.betAmount).toLocaleString()}** • Streak: **${p.streak}** • Cashout: **x${m.toFixed(1)}**${guess}`;
-        })
-        .join("\n")
-    : "_No one left in the round._";
-
-  const outLines = out.length
-    ? out
-        .slice(0, 10)
-        .map((p) => {
-          const why =
-            p.status === "cashed"
-              ? `💰 Cashed out x${Number(p.cashoutMult || 0).toFixed(1)}`
-              : p.status === "spectator"
-              ? "👀 Spectating"
-              : "💀 Busted";
-          return `⚪ ${p.user} — ${why}`;
-        })
-        .join("\n")
-    : "_—_";
+  e.setDescription(
+    [
+      `Dealer: ${table.state === "lobby" ? "*Not dealt yet*" : `**${table.currentCard?.label ?? "?"}**`}`,
+      `Players (${table.players.size}/10):`,
+    ].join("\n")
+  );
 
   const lines = [];
-  lines.push(`**Current card:** ${cardLabel(cur)}`);
-  lines.push(`**Next card:** ${next ? cardLabel(next) : "❓"}`);
-  if (game.lastRevealNote) lines.push(`\n${game.lastRevealNote}`);
-  lines.push("\n**Players still in:**");
-  lines.push(aliveLines);
-  lines.push("\n**Out:**");
-  lines.push(outLines);
+  for (const p of playersList(table)) {
+    const paid = p.paid ? "✅" : "❌";
+    lines.push(`${paid} <@${p.userId}> — Bet: **$${p.bet ?? MIN_BET}**`);
+  }
+  if (!lines.length) lines.push("*No players yet.*");
 
-  return new EmbedBuilder().setTitle("🔼🔽 Higher or Lower").setDescription(lines.join("\n"));
+  e.addFields(
+    { name: "Lobby", value: lines.join("\n") },
+    { name: "Rules", value: `Minimum bet: **$${MIN_BET}** • Ties are a loss.` }
+  );
+
+  e.setFooter({ text: `Table ID: ${table.tableId}` });
+  return e;
 }
 
-function buildLobbyComponents(game) {
-  return [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId(`hol:${game.gameId}:join`).setLabel("Join").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`hol:${game.gameId}:leave`).setLabel("Leave").setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId(`hol:${game.gameId}:setbet`).setLabel("Set Bet").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId(`hol:${game.gameId}:start`).setLabel("Start").setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(`hol:${game.gameId}:end`).setLabel("End").setStyle(ButtonStyle.Danger)
-    ),
-  ];
+function buildPlayEmbed(table) {
+  const e = new EmbedBuilder().setTitle("🔼🔽 Higher or Lower");
+
+  const cardLine = table.currentCard ? `Current card: **${table.currentCard.label}**` : "Current card: *Not dealt yet*";
+  const streakLine = `Streak: **${table.streak}** • Multiplier: **x${streakMultiplier(table.streak)}**`;
+  const potLine = `Base bet: **$${table.bet}** • Potential cashout: **$${Math.floor(table.bet * streakMultiplier(table.streak))}**`;
+
+  const alive = table.alive.size ? Array.from(table.alive).map((id) => `<@${id}>`).join(", ") : "*None*";
+  e.setDescription([cardLine, streakLine, potLine, "", `Alive: ${alive}`].join("\n"));
+
+  return e;
 }
 
-function buildPlayComponents(game) {
+function lobbyComponents(table, isHost) {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`hol:${game.gameId}:higher`).setLabel("Higher").setEmoji("🔼").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`hol:${game.gameId}:lower`).setLabel("Lower").setEmoji("🔽").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(`hol:${game.gameId}:cashout`).setLabel("Cash Out").setEmoji("💰").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId(`hol:${game.gameId}:end`).setLabel("End").setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(`hol:join:${table.tableId}`).setStyle(ButtonStyle.Success).setLabel("Join"),
+    new ButtonBuilder().setCustomId(`hol:leave:${table.tableId}`).setStyle(ButtonStyle.Secondary).setLabel("Leave"),
+    new ButtonBuilder().setCustomId(`hol:setbet:${table.tableId}`).setStyle(ButtonStyle.Primary).setLabel("Set Bet"),
+    new ButtonBuilder().setCustomId(`hol:start:${table.tableId}`).setStyle(ButtonStyle.Success).setLabel("Start").setDisabled(!isHost),
+    new ButtonBuilder().setCustomId(`hol:end:${table.tableId}`).setStyle(ButtonStyle.Danger).setLabel("End").setDisabled(!isHost)
   );
   return [row];
 }
 
-async function render(game) {
-  if (!game.message) return;
-
-  if (game.state === "lobby") {
-    await game.message
-      .edit({ embeds: [buildLobbyEmbed(game)], components: buildLobbyComponents(game) })
-      .catch(() => {});
-    updateActiveGame(game.channelId, { type: "higherlower", state: "lobby" });
-    return;
-  }
-
-  if (game.state === "playing") {
-    await game.message
-      .edit({ embeds: [buildPlayEmbed(game)], components: buildPlayComponents(game) })
-      .catch(() => {});
-    updateActiveGame(game.channelId, { type: "higherlower", state: "playing" });
-    return;
-  }
-
-  // ended
-  await game.message.edit({ components: [] }).catch(() => {});
+function playComponents(table, isHost) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`hol:higher:${table.tableId}`).setStyle(ButtonStyle.Primary).setLabel("Higher 🔼"),
+    new ButtonBuilder().setCustomId(`hol:lower:${table.tableId}`).setStyle(ButtonStyle.Primary).setLabel("Lower 🔽"),
+    new ButtonBuilder().setCustomId(`hol:cashout:${table.tableId}`).setStyle(ButtonStyle.Success).setLabel("Cash Out 💰"),
+    new ButtonBuilder().setCustomId(`hol:end:${table.tableId}`).setStyle(ButtonStyle.Danger).setLabel("End").setDisabled(!isHost)
+  );
+  return [row];
 }
 
-async function promptBetModal(i, gameId) {
-  const modal = new ModalBuilder()
-    .setCustomId(`holbet:${gameId}`)
-    .setTitle("Set Higher/Lower Bet")
-    .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("amount")
-          .setLabel(`Bet amount (min ${MIN_BET})`)
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("e.g. 5000")
-          .setRequired(true)
-      )
-    );
+async function render(table, message, guildId) {
+  const isHost = true; // host-only buttons are set per-interaction, but message components can be host-enabled always; we enforce in handler
+  const embed =
+    table.state === "lobby" ? buildLobbyEmbed(table, guildId) : buildPlayEmbed(table);
 
-  await i.showModal(modal);
+  const components = table.state === "lobby" ? lobbyComponents(table, true) : playComponents(table, true);
 
-  const submitted = await i
-    .awaitModalSubmit({
-      time: 60_000,
-      filter: (m) => m.customId === `holbet:${gameId}` && m.user.id === i.user.id,
-    })
-    .catch(() => null);
-
-  return submitted;
+  await message.edit({ embeds: [embed], components }).catch(() => {});
 }
 
-async function placeBet({ interaction, game, amount }) {
-  const userId = interaction.user.id;
-  const guildId = interaction.guildId;
+async function chargeWithCasinoFee(table, guildId, userId, betAmount, channelId) {
+  const hostSec = await ensureHostSecurity(table, guildId, table.hostId);
+  const playerSec = await getPlayerSecuritySafe(guildId, userId);
 
-  const p = game.players.get(userId);
-  if (!p) return { ok: false, msg: "You need to **Join** first." };
-  if (game.state !== "lobby") return { ok: false, msg: "You can’t change your bet once the round starts." };
+  const effectiveFeePct = getEffectiveFeePct(hostSec, playerSec);
+  const feeCalc = computeFeeForBet(betAmount, effectiveFeePct);
 
-  const bet = Math.floor(Number(amount || 0));
-  if (!Number.isFinite(bet) || bet <= 0) return { ok: false, msg: "Enter a valid bet amount." };
-  if (bet < MIN_BET) return { ok: false, msg: `Minimum bet is $${MIN_BET.toLocaleString()}.` };
-  if (bet > MAX_BET) return { ok: false, msg: `Maximum bet is $${MAX_BET.toLocaleString()}.` };
-
-  // If previously paid, refund the stake (not the fee) before re-betting.
-  if (p.paid && p.betAmount) {
-    await bankToUserIfEnough(guildId, userId, Number(p.betAmount), "higherlower_rebet_refund", {
-      channelId: game.channelId,
-      gameId: game.gameId,
-      userId,
-      prevBet: Number(p.betAmount),
-    }).catch(() => {});
-    p.paid = false;
-  }
-
-  const charge = await chargeWithCasinoFee({
-    guildId,
-    userId,
-    amountStake: bet,
-    type: "higherlower_bet",
-    meta: {
-      channelId: game.channelId,
-      gameId: game.gameId,
-      username: interaction.user.username,
-      displayName: interaction.member?.displayName || interaction.user.globalName || interaction.user.username,
-      bet,
+  // Debit user total charge
+  const meta = { channelId, tableId: table.tableId, userId, game: "higherlower" };
+  await tryDebitUser(guildId, userId, feeCalc.totalCharge, "higherlower_buyin", {
+    ...meta,
+    casinoSecurity: {
+      hostBaseLevel: hostSec.level,
+      hostBaseFeePct: hostSec.feePct,
+      playerLevel: playerSec.level,
+      playerFeePct: playerSec.feePct,
+      effectiveFeePct,
+      feeAmount: feeCalc.feeAmount,
+      betAmount: feeCalc.betAmount,
+      totalCharge: feeCalc.totalCharge,
     },
-    game,
-    channel: interaction.channel,
-    hostId: game.hostId,
   });
 
-  if (!charge.ok) return { ok: false, msg: "Not enough balance to place that bet (including table fee)." };
+  // Add to server bank
+  await addServerBank(guildId, feeCalc.totalCharge, "higherlower_bank_buyin", meta);
 
-  await addServerBank(guildId, bet, "higherlower_bank_bet", { channelId: game.channelId, gameId: game.gameId, userId, bet });
-  if (charge.feeAmount > 0) {
-    await addServerBank(guildId, charge.feeAmount, "higherlower_fee_bank_bet", {
-      channelId: game.channelId,
-      gameId: game.gameId,
-      userId,
-      feeAmount: charge.feeAmount,
-      effectiveFeePct: charge.effectiveFeePct,
-    });
-  }
+  // Optional security announce (same vibe as roulette)
+  await maybeAnnounceCasinoSecurity(guildId, channelId, hostSec, playerSec, effectiveFeePct).catch(() => {});
 
-  p.betAmount = bet;
-  p.paid = true;
-
-  // Achievements (safe if not defined)
-  if (bet >= HOL_RULES.HIGH_ROLLER_BET) {
-    await holUnlock(interaction, guildId, userId, HOL_ACH.HIGH_ROLLER);
-  }
-
-  const bankNow = await getServerBank(guildId).catch(() => null);
-  await render(game);
-
-  return {
-    ok: true,
-    msg: `✅ Bet set: **$${bet.toLocaleString()}** (buy-in paid)\n🛡️ Fee: **$${charge.feeAmount.toLocaleString()}**${
-      Number.isFinite(bankNow) ? `\n🏦 Server bank: **$${Number(bankNow).toLocaleString()}**` : ""
-    }`,
-  };
+  return feeCalc;
 }
 
-function allAliveHaveGuessed(game) {
-  for (const p of game.players.values()) {
-    if (p.status === "alive" && !p.guess) return false;
+async function placeBet(table, interaction, userId, betAmount) {
+  const guildId = interaction.guildId;
+  const channelId = interaction.channelId;
+
+  const p = table.players.get(userId);
+  if (!p) throw new Error("You are not in this table.");
+
+  if (await isUserJailed(guildId, userId)) {
+    throw new Error("You can't gamble while jailed.");
+  }
+
+  const amt = betAmount;
+  if (!Number.isInteger(amt) || amt < MIN_BET || amt > MAX_BET) {
+    throw new Error(`Bet must be an integer between $${MIN_BET} and $${MAX_BET}.`);
+  }
+
+  // If they already paid, do not double-charge — just update their preferred bet for next round (if you extend later)
+  if (p.paid) {
+    p.bet = amt;
+    return { feeCalc: null, alreadyPaid: true };
+  }
+
+  // Check balance early for nicer UX
+  const bal = await getBalance(guildId, userId);
+  // compute total charge to verify affordability (uses same fee calc)
+  const hostSec = await ensureHostSecurity(table, guildId, table.hostId);
+  const playerSec = await getPlayerSecuritySafe(guildId, userId);
+  const effectiveFeePct = getEffectiveFeePct(hostSec, playerSec);
+  const feeCalc = computeFeeForBet(amt, effectiveFeePct);
+
+  if (bal < feeCalc.totalCharge) {
+    throw new Error(`Insufficient funds. Need **$${feeCalc.totalCharge}**, you have **$${bal}**.`);
+  }
+
+  const charged = await chargeWithCasinoFee(table, guildId, userId, amt, channelId);
+
+  p.bet = amt;
+  p.paid = true;
+
+  // Table uses a single base bet: host's bet, or first paid bet.
+  // If you want per-player bets later, we can extend — for now keep it simple & consistent.
+  if (!table.bet) table.bet = amt;
+
+  // Achievements (safe/no-op if IDs not configured)
+  awardProgress(guildId, userId, "hol_first_cashout", 0).catch(() => {});
+  // High roller tracking on bet placement
+  if (amt >= 50000) {
+    awardProgress(guildId, userId, "hol_high_roller", 1).catch(() => {});
+  }
+
+  return { feeCalc: charged, alreadyPaid: false };
+}
+
+function allPaid(table) {
+  if (!table.players.size) return false;
+  for (const p of table.players.values()) {
+    if (!p.paid) return false;
   }
   return true;
 }
 
-async function revealNext(game) {
-  // draw next
-  game.nextCard = game.deck.pop() || null;
-  game.revealedNext = true;
+async function startRound(table, message) {
+  table.state = "play";
+  table.streak = 0;
+  table.currentCard = drawCard();
+  table.alive = new Set(Array.from(table.players.keys())); // everyone who joined is alive
+  table.finished = false;
 
-  const cur = game.currentCard;
-  const next = game.nextCard;
-  if (!next) {
-    game.lastRevealNote = "🃏 Deck is empty — ending table.";
-    game.state = "ended";
+  await render(table, message, message.guildId);
+}
+
+async function endTable(table, message, reason = "Table ended.") {
+  table.finished = true;
+  tablesById.delete(table.tableId);
+  activeGames.delete(message.channelId);
+  clearActiveGame(message.channelId);
+
+  // Disable components
+  await message.edit({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("🔼🔽 Higher or Lower")
+        .setDescription(reason)
+        .setFooter({ text: `Table ID: ${table.tableId}` }),
+    ],
+    components: [],
+  }).catch(() => {});
+}
+
+async function resolveChoice(table, message, choice) {
+  const next = drawCard();
+  const result = compareNext(table.currentCard, next);
+  table.currentCard = next;
+
+  if (result === "tie") {
+    // tie is a loss: everyone dies
+    table.alive.clear();
+  } else if (result !== choice) {
+    // wrong guess: everyone dies (shared table)
+    table.alive.clear();
+  } else {
+    table.streak += 1;
+  }
+
+  // If nobody alive, table ends with no payout
+  if (!table.alive.size) {
+    table.state = "lobby";
+    // reset paid flags so they must pay again (new hand)
+    for (const p of table.players.values()) {
+      p.paid = false;
+    }
+    table.bet = null;
+    table.streak = 0;
+    table.currentCard = null;
+
+    await message.edit({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("🔼🔽 Higher or Lower")
+          .setDescription(`**${next.label}** — ${result.toUpperCase()}.\nEveryone lost. Ties are a loss.`),
+      ],
+      components: lobbyComponents(table, true),
+    }).catch(() => {});
     return;
   }
 
-  const cmp = compare(next.v, cur.v);
-  const isTie = cmp === 0;
+  await render(table, message, message.guildId);
 
-  let survived = 0;
-  for (const p of game.players.values()) {
-    if (p.status !== "alive") continue;
-
-    const g = p.guess;
-    p.guess = null;
-
-    // tie = loss
-    let ok = false;
-    if (!isTie) {
-      if (g === "higher" && cmp === 1) ok = true;
-      if (g === "lower" && cmp === -1) ok = true;
+  // Achievements for streak
+  if (table.streak >= 5) {
+    for (const id of table.alive) {
+      awardProgress(message.guildId, id, "hol_streak_5", 1).catch(() => {});
     }
-
-    if (ok) {
-      p.streak += 1;
-      survived += 1;
-    } else {
-      p.status = "busted";
-    }
-  }
-
-  game.lastRevealNote = isTie
-    ? `😬 **Tie!** Next card was ${cardLabel(next)} — ties are a **loss**.`
-    : `Next card was **${cardLabel(next)}**. ${survived} player(s) survived.`;
-
-  game.currentCard = next;
-  game.revealedNext = false;
-
-  // If nobody alive, end.
-  const anyAlive = [...game.players.values()].some((p) => p.status === "alive");
-  if (!anyAlive) {
-    game.state = "ended";
   }
 }
 
-async function cashOut(interaction, game) {
-  const userId = interaction.user.id;
-  const guildId = interaction.guildId;
-  const p = game.players.get(userId);
-  if (!p) return sendEphemeralToast(interaction, "❌ You’re not in this table.");
-  if (game.state !== "playing") return sendEphemeralToast(interaction, "❌ You can only cash out during a round.");
-  if (p.status !== "alive") return sendEphemeralToast(interaction, "❌ You’re not alive in the round.");
-  if (!p.paid || !p.betAmount) return sendEphemeralToast(interaction, "❌ You haven’t placed a bet.");
+async function cashOut(table, message, interactionUserId) {
+  const guildId = message.guildId;
+  const channelId = message.channelId;
 
-  const mult = multiplierForStreak(p.streak);
-  const payout = Math.floor(Number(p.betAmount) * mult);
-
-  const ok = await bankToUserIfEnough(guildId, userId, payout, "higherlower_cashout", {
-    channelId: game.channelId,
-    gameId: game.gameId,
-    userId,
-    bet: Number(p.betAmount),
-    streak: p.streak,
-    multiplier: mult,
-    payout,
-  }).catch(() => false);
-
-  if (!ok) {
-    return sendEphemeralToast(interaction, "❌ The server bank can’t cover that cashout right now.");
+  if (!table.alive.has(interactionUserId)) {
+    throw new Error("You are not currently alive in this round.");
+  }
+  if (!table.bet || !table.players.get(interactionUserId)?.bet) {
+    throw new Error("No bet found to cash out.");
   }
 
-  p.status = "cashed";
-  p.cashoutMult = mult;
+  const payout = Math.floor(table.bet * streakMultiplier(table.streak));
+  const meta = { channelId, tableId: table.tableId, userId: interactionUserId, game: "higherlower", payout, streak: table.streak };
+
+  await bankToUserIfEnough(guildId, interactionUserId, payout, "higherlower_cashout", meta);
 
   // Achievements
-  await holUnlock(interaction, guildId, userId, HOL_ACH.FIRST_CASHOUT);
-  if (p.streak >= 5) await holUnlock(interaction, guildId, userId, HOL_ACH.STREAK_5);
+  awardProgress(guildId, interactionUserId, "hol_first_cashout", 1).catch(() => {});
+  if (payout >= 100000) awardProgress(guildId, interactionUserId, "hol_high_roller", 1).catch(() => {});
 
-  await render(game);
-  return sendEphemeralToast(
-    interaction,
-    `💰 Cashed out for **$${payout.toLocaleString()}** (x${mult.toFixed(1)}).\nStreak: **${p.streak}**`
-  );
+  // End round back to lobby
+  table.state = "lobby";
+  for (const p of table.players.values()) p.paid = false;
+  table.bet = null;
+  table.streak = 0;
+  table.currentCard = null;
+  table.alive.clear();
+
+  await message.edit({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("🔼🔽 Higher or Lower")
+        .setDescription(`<@${interactionUserId}> cashed out **$${payout}**!`)
+        .setFooter({ text: `Table ID: ${table.tableId}` }),
+      buildLobbyEmbed(table, guildId),
+    ],
+    components: lobbyComponents(table, true),
+  }).catch(() => {});
 }
 
-async function endTable(game) {
-  game.state = "ended";
-  await render(game);
-
-  activeGames.delete(game.channelId);
-  clearActiveGame(game.channelId);
-
-  setTimeout(() => {
-    game.message?.delete().catch(() => {});
-  }, 15_000);
-}
-
-// ---------- lifecycle ----------
-async function startFromHub(interaction, opts = {}) {
-  if (!interaction.inGuild()) {
-    return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
-  }
-
-  if (await guardNotJailedComponent(interaction)) return;
-
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-  }
-
+async function startFromHub(interaction) {
   const channelId = interaction.channelId;
   const guildId = interaction.guildId;
 
-  // Block if already running
+  // If hub enforces active game, this is redundant, but keep safe:
   if (activeGames.has(channelId)) {
-    await interaction.editReply("❌ There’s already an active game in this channel.").catch(() => {});
+    await interaction.reply({
+      content: "There is already an active game in this channel.",
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
     return;
   }
 
-  const game = {
-    type: "higherlower",
-    state: "lobby",
-    gameId: crypto.randomBytes(6).toString("hex"),
-    channelId,
-    guildId,
+  const tableId = makeId("hol");
+  const table = {
+    tableId,
     hostId: interaction.user.id,
-    maxPlayers: 10,
-    hostSecurity: null,
-    players: new Map(), // userId -> player
-    deck: [],
+    state: "lobby",
+    players: new Map(), // userId -> { userId, bet, paid, joinedAt }
+    bet: null,
     currentCard: null,
-    nextCard: null,
-    revealedNext: false,
-    lastRevealNote: null,
-    message: null,
+    streak: 0,
+    alive: new Set(),
+    finished: false,
+    hostSecurity: null,
   };
 
-  await ensureHostSecurity(game, guildId, game.hostId);
+  tablesById.set(tableId, table);
 
   // register under gameManager map so hub knows channel is busy
-  activeGames.set(channelId, game);
-  setActiveGame(channelId, { type: "higherlower", state: "lobby", gameId: game.gameId, hostId: game.hostId });
+  activeGames.set(channelId, { type: "higherlower", tableId });
 
-  // host auto-joins (no bet paid yet)
-  game.players.set(interaction.user.id, {
-    userId: interaction.user.id,
-    user: `<@${interaction.user.id}>`,
-    betAmount: MIN_BET,
-    paid: false,
-    status: "alive",
-    streak: 0,
-    guess: null,
-    cashoutMult: null,
+  setActiveGame(channelId, { type: "higherlower", state: "lobby", gameId: tableId, hostId: table.hostId });
+
+  const embed = buildLobbyEmbed(table, guildId);
+  const comps = lobbyComponents(table, true);
+
+  // Post the table message
+  const message = await interaction.channel.send({ embeds: [embed], components: comps }).catch(() => null);
+  if (!message) return;
+
+  const collector = message.createMessageComponentCollector({
+    componentType: ComponentType.Button,
+    time: 30 * 60 * 1000,
   });
-
-  game.message = await interaction.channel.send({
-    embeds: [buildLobbyEmbed(game)],
-    components: buildLobbyComponents(game),
-  });
-
-  const collector = game.message.createMessageComponentCollector({ time: 30 * 60 * 60_000 });
 
   collector.on("collect", async (i) => {
-    const cid = String(i.customId || "");
-    const [prefix, gameId, action] = cid.split(":");
-    if (prefix !== "hol" || gameId !== game.gameId) return;
+    const [prefix, action, tid] = (i.customId || "").split(":");
+    if (prefix !== "hol" || tid !== tableId) return;
 
-    // Set Bet is modal-based and must happen BEFORE defer/update.
-    if (action === "setbet") {
-      if (await guardNotJailedComponent(i)) return;
-      if (!game.players.has(i.user.id)) {
-        return i.reply({ content: "❌ You need to **Join** first.", flags: MessageFlags.Ephemeral }).catch(() => {});
-      }
+    // ACK immediately so Discord doesn't complain
+    if (!i.deferred && !i.replied) await i.deferUpdate().catch(() => {});
 
-      const submitted = await promptBetModal(i, game.gameId);
-      if (!submitted) return;
+    try {
+      const isHost = i.user.id === table.hostId;
 
-      await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-      try {
-        const amount = parseAmount(submitted.fields.getTextInputValue("amount"));
-        const res = await placeBet({ interaction: submitted, game, amount });
-        if (!res.ok) {
-          await submitted.editReply(`❌ ${res.msg}`).catch(() => {});
-        } else {
-          await submitted.editReply(res.msg).catch(() => {});
-        }
-      } catch (err) {
-        console.error("[HigherLower] placeBet failed:", err);
-        await submitted.editReply("❌ Something went wrong placing that bet. Try again in a moment.").catch(() => {});
-      }
-      return;
-    }
-
-    if (await guardNotJailedComponent(i)) return;
-    await i.deferUpdate().catch(() => {});
-
-    const isHost = i.user.id === game.hostId;
-
-    if (action === "join") {
-      if (game.players.has(i.user.id)) return sendEphemeralToast(i, "ℹ️ You’re already in.");
-      if (game.players.size >= game.maxPlayers) return sendEphemeralToast(i, "❌ Table is full.");
-
-      game.players.set(i.user.id, {
-        userId: i.user.id,
-        user: `<@${i.user.id}>`,
-        betAmount: MIN_BET,
-        paid: false,
-        status: "alive",
-        streak: 0,
-        guess: null,
-        cashoutMult: null,
-      });
-
-      await render(game);
-      return sendEphemeralToast(i, `✅ Joined. Default bet is **$${MIN_BET.toLocaleString()}** — hit **Set Bet** to pay in.`);
-    }
-
-    if (action === "leave") {
-      const p = game.players.get(i.user.id);
-      if (!p) return sendEphemeralToast(i, "ℹ️ You’re not in this table.");
-
-      // refund stake only if paid
-      if (p.paid && p.betAmount) {
-        await bankToUserIfEnough(guildId, i.user.id, Number(p.betAmount), "higherlower_leave_refund", {
-          channelId,
-          gameId: game.gameId,
-          userId: i.user.id,
-        }).catch(() => {});
-      }
-
-      game.players.delete(i.user.id);
-      if (i.user.id === game.hostId) {
-        collector.stop("host_left");
+      if (action === "end") {
+        if (!isHost) throw new Error("Only the host can end the table.");
+        collector.stop("ended");
+        await endTable(table, message, "Table ended by host.");
         return;
       }
 
-      await render(game);
-      return sendEphemeralToast(i, "✅ Left the table.");
-    }
-
-    if (action === "start") {
-      if (!isHost) return sendEphemeralToast(i, "❌ Only the host can start the round.");
-      if (game.state !== "lobby") return sendEphemeralToast(i, "ℹ️ Round already started.");
-
-      // Require at least 1 paid player
-      const paidPlayers = [...game.players.values()].filter((p) => p.paid);
-      if (paidPlayers.length === 0) return sendEphemeralToast(i, "❌ At least one player must **Set Bet** (pay in) before starting.");
-
-      // Announce casino security once per table
-      await maybeAnnounceCasinoSecurity(i.channel, guildId, game.hostId).catch(() => {});
-
-      // Reset round state
-      game.deck = buildDeck();
-      game.currentCard = game.deck.pop();
-      game.nextCard = null;
-      game.revealedNext = false;
-      game.lastRevealNote = null;
-      game.state = "playing";
-
-      for (const p of game.players.values()) {
-        p.status = p.paid ? "alive" : "spectator";
-        p.streak = 0;
-        p.guess = null;
-        p.cashoutMult = null;
+      if (action === "join") {
+        if (table.players.size >= 10) throw new Error("Table is full (10 players).");
+        if (!table.players.has(i.user.id)) {
+          table.players.set(i.user.id, { userId: i.user.id, bet: MIN_BET, paid: false, joinedAt: Date.now() });
+        }
+        await render(table, message, guildId);
+        return;
       }
 
-      await render(game);
-      return sendEphemeralToast(i, "🃏 Round started! Pick **Higher** or **Lower**.");
-    }
-
-    if (action === "higher" || action === "lower") {
-      if (game.state !== "playing") return;
-      const p = game.players.get(i.user.id);
-      if (!p) return sendEphemeralToast(i, "❌ You’re not in this table.");
-      if (p.status !== "alive") return sendEphemeralToast(i, "❌ You’re not alive in this round.");
-
-      p.guess = action;
-      await render(game);
-
-      if (allAliveHaveGuessed(game)) {
-        await revealNext(game);
-
-        // Bust achievements
-        for (const pl of game.players.values()) {
-          if (pl.status === "busted") {
-            await holUnlock(i, guildId, pl.userId, HOL_ACH.FIRST_BUST);
-          }
-        }
-
-        if (game.state === "ended") {
-          collector.stop("round_over");
-          return;
-        }
-
-        await render(game);
+      if (action === "leave") {
+        table.players.delete(i.user.id);
+        table.alive.delete(i.user.id);
+        await render(table, message, guildId);
+        return;
       }
-      return;
+
+      if (action === "setbet") {
+        if (!table.players.has(i.user.id)) throw new Error("Join the table first.");
+        const modal = new ModalBuilder()
+          .setCustomId(`holbet:${tableId}`)
+          .setTitle("Set Higher or Lower Bet")
+          .addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                // MUST match blackjack/roulette: "amount"
+                .setCustomId("amount")
+                .setLabel(`Bet amount (min ${MIN_BET})`)
+                .setPlaceholder(`e.g. 5000`)
+                .setStyle(TextInputStyle.Short)
+                .setRequired(true)
+            )
+          );
+
+        await i.showModal(modal).catch(() => {});
+        return;
+      }
+
+      if (action === "start") {
+        if (!isHost) throw new Error("Only the host can start the table.");
+        if (!table.players.size) throw new Error("No players have joined.");
+        if (!allPaid(table)) throw new Error("All joined players must Set Bet first.");
+        await startRound(table, message);
+        updateActiveGame(channelId, { state: "play" });
+        return;
+      }
+
+      if (action === "higher") {
+        if (table.state !== "play") throw new Error("Round hasn't started yet.");
+        if (!table.alive.has(i.user.id)) throw new Error("You're not alive in this round.");
+        await resolveChoice(table, message, "higher");
+        return;
+      }
+
+      if (action === "lower") {
+        if (table.state !== "play") throw new Error("Round hasn't started yet.");
+        if (!table.alive.has(i.user.id)) throw new Error("You're not alive in this round.");
+        await resolveChoice(table, message, "lower");
+        return;
+      }
+
+      if (action === "cashout") {
+        if (table.state !== "play") throw new Error("Round hasn't started yet.");
+        await cashOut(table, message, i.user.id);
+        updateActiveGame(channelId, { state: "lobby" });
+        return;
+      }
+    } catch (err) {
+      await i.followUp({
+        content: err?.message || "Something went wrong.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
     }
+  });
 
-    if (action === "cashout") {
-      await cashOut(i, game);
+  // Modal submit handler (scoped to this tableId)
+  const modalCollector = message.channel.createMessageComponentCollector({
+    componentType: ComponentType.ModalSubmit,
+    time: 30 * 60 * 1000,
+  });
 
-      // If no alive players remain, end.
-      const anyAlive = [...game.players.values()].some((p) => p.status === "alive");
-      if (!anyAlive) collector.stop("no_alive");
-      return;
-    }
+  modalCollector.on("collect", async (i) => {
+    if (i.customId !== `holbet:${tableId}`) return;
 
-    if (action === "end") {
-      if (!isHost) return sendEphemeralToast(i, "❌ Only the host can end the table.");
-      collector.stop("ended_by_host");
-      return;
+    // Always ACK the modal quickly (ephemeral), then do work
+    await i.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
+    try {
+      const p = table.players.get(i.user.id);
+      if (!p) throw new Error("Join the table first.");
+      if (table.state !== "lobby") throw new Error("You can only set your bet in the lobby.");
+
+      const raw = i.fields.getTextInputValue("amount"); // MUST be "amount"
+      const amt = parseBetAmount(raw);
+
+      if (!amt) throw new Error("Please enter a valid whole number bet amount.");
+      if (amt < MIN_BET) throw new Error(`Minimum bet is $${MIN_BET}.`);
+      if (amt > MAX_BET) throw new Error(`Maximum bet is $${MAX_BET}.`);
+
+      await placeBet(table, i, i.user.id, amt);
+
+      await i.editReply({ content: `✅ Bet set to **$${amt}**.` }).catch(() => {});
+      await render(table, message, guildId);
+    } catch (err) {
+      console.warn("[HigherLower] placeBet failed:", err?.message || err);
+      await i.editReply({ content: `⚠️ ${err?.message || "Bet failed."}` }).catch(() => {});
     }
   });
 
   collector.on("end", async () => {
-    // Mark ended and clean up
-    game.state = "ended";
-    await render(game);
-    await endTable(game);
+    modalCollector.stop();
+    if (!table.finished) {
+      await endTable(table, message, "Table timed out due to inactivity.");
+    }
   });
-
-  await interaction.editReply("🔼🔽 Higher or Lower table launched. Players: **Join** then **Set Bet**.").catch(() => {});
 }
 
 module.exports = {
   startFromHub,
+  tablesById,
 };
