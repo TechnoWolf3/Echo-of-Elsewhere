@@ -130,6 +130,21 @@ function buildButtons({ showBack }) {
   return row;
 }
 
+
+async function ackThenEdit(i, msg, payload) {
+  // Always ACK quickly (Discord requires this within ~3s)
+  try {
+    if (!i.deferred && !i.replied) await i.deferUpdate();
+  } catch {}
+
+  // Then edit the hub message directly (more reliable than i.update when payload can be large/emoji-heavy)
+  try {
+    await msg.edit(payload);
+  } catch (err) {
+    console.warn("[GAMES HUB] message.edit failed:", err?.rawError?.message || err?.message || err);
+  }
+}
+
 async function upsertPanel(interaction) {
   const channelId = interaction.channelId;
   const categories = loadCategories();
@@ -202,22 +217,20 @@ async function upsertPanel(interaction) {
           };
 
           if (!state || state.view === "home") {
-            return i.update(homePayload).catch(() => {});
+            return ackThenEdit(i, msg, homePayload);
           }
 
           const cat = getCategory(categoriesNow, state.catId);
           if (!cat) {
             state.view = "home";
             state.catId = null;
-            return i.update(homePayload).catch(() => {});
+            return ackThenEdit(i, msg, homePayload);
           }
 
-          return i
-            .update({
+                    return ackThenEdit(i, msg, {
               embeds: [buildCategoryEmbed(channelId, cat)],
               components: [buildGameSelect(cat), buildButtons({ showBack: true })],
-            })
-            .catch(() => {});
+            });
         }
 
         // home/back (use i.update)
@@ -228,12 +241,10 @@ async function upsertPanel(interaction) {
             state.catId = null;
           }
 
-          return i
-            .update({
+                    return ackThenEdit(i, msg, {
               embeds: [buildHomeEmbed(channelId, categoriesNow)],
               components: [buildCategorySelect(categoriesNow), buildButtons({ showBack: false })],
-            })
-            .catch(() => {});
+            });
         }
 
         // category select (use i.update)
@@ -248,12 +259,10 @@ async function upsertPanel(interaction) {
             state.catId = cat.id;
           }
 
-          return i
-            .update({
+                    return ackThenEdit(i, msg, {
               embeds: [buildCategoryEmbed(channelId, cat)],
               components: [buildGameSelect(cat), buildButtons({ showBack: true })],
-            })
-            .catch(() => {});
+            });
         }
 
         // game select (deferUpdate is fine; we also don't want to change the hub message immediately here)
@@ -291,8 +300,8 @@ async function upsertPanel(interaction) {
               flags: MessageFlags.Ephemeral,
             });
           }
-          // (no ephemeral launch spam)
-await game.run(i, { reuseMessage: msg }).catch((e) => {
+
+          await game.run(i, { reuseMessage: msg }).catch((e) => {
             console.error("[games] launch error:", e);
           });
 

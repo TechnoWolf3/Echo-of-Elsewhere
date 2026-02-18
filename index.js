@@ -2,6 +2,7 @@ require("dotenv").config();
 // 🎮 Games UI routing (buttons/selects/modals)
 const blackjackGame = require("./data/games/blackjack");
 const rouletteGame = require("./data/games/roulette");
+const higherLowerGame = require("./data/games/higherLower");
 
 const fs = require("fs");
 const path = require("path");
@@ -639,6 +640,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       try {
         if (typeof rouletteGame.handleInteraction === "function") {
           const handled = await rouletteGame.handleInteraction(interaction);
+          if (handled) return;
+        }
+        if (typeof higherLowerGame.handleInteraction === "function") {
+          const handled = await higherLowerGame.handleInteraction(interaction);
           if (handled) return;
         }
         if (typeof blackjackGame.handleInteraction === "function") {

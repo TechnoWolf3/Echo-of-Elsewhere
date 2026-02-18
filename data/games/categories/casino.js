@@ -8,6 +8,17 @@ module.exports = {
 
   games: [
     {
+      id: "higherlower",
+      name: "Higher or Lower",
+      emoji: "🔼",
+      description: "Pick 🔼 or 🔽 • build a streak • cash out",
+      run: async (interaction, ctx = {}) => {
+        const hol = require("../higherLower");
+        return hol.startFromHub(interaction, ctx);
+      },
+    },
+
+    {
       id: "blackjack",
       name: "Blackjack",
       emoji: "🃏",
@@ -25,18 +36,6 @@ module.exports = {
       run: async (interaction, ctx = {}) => {
         const rou = require("../roulette");
         return rou.startFromHub(interaction, ctx);
-      },
-    },
-    {
-      id: "higherlower",
-      name: "Higher or Lower",
-      // IMPORTANT: select-menu emojis must be ONE emoji.
-      // Put extra flair in the description instead.
-      emoji: "🔼",
-      description: "Pick 🔼 or 🔽 • build a streak • cash out",
-      run: async (interaction, ctx = {}) => {
-        const hol = require("../higherLower");
-        return hol.startFromHub(interaction, ctx);
       },
     },
   ],
