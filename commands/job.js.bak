@@ -424,6 +424,39 @@ function buildNineToFiveComponents({ disabled = false, legendary = false } = {})
 
   return [catRow, jobRow, navRow];
 }
+ = {}) {
+  const row = new ActionRowBuilder();
+
+  for (const j of nineToFiveIndex.jobs) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(j.button.id)
+        .setLabel(j.button.label)
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(disabled)
+    );
+  }
+
+  // Legendary appears only if enabled in config AND currently available
+  if (nineToFiveIndex.legendary?.enabled && legendary) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(nineToFiveIndex.legendary.button.id)
+        .setLabel(nineToFiveIndex.legendary.button.label)
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disabled)
+    );
+  }
+
+  return [
+    row,
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
 function buildNightWalkerEmbed(user, progress, cooldownUnix) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
