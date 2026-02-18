@@ -8,6 +8,17 @@ module.exports = {
 
   games: [
     {
+      id: "bullshit",
+      name: "Bullshit - The card game",
+      emoji: "💩",
+      description: "Place cards that mach the rank... or not. Think someones lying? **BULLSHIT!**",
+      run: async (interaction, ctx = {}) => {
+        const hol = require("../bullshit");
+        return hol.startFromHub(interaction, ctx);
+      },
+    },
+
+    {
       id: "higherlower",
       name: "Higher or Lower",
       emoji: "🔼",
@@ -28,6 +39,7 @@ module.exports = {
         return bj.startFromHub(interaction, ctx);
       },
     },
+
     {
       id: "roulette",
       name: "Roulette",
