@@ -76,16 +76,7 @@ module.exports = {
         "**Note:** Some items may have limited stock.",
     },
 
-    // These are “hubs” but you listed them inside economy too — we’ll keep them.
-    {
-      id: "gamesHub",
-      name: "/games",
-      short: "Open the casino / games hub.",
-      detail:
-        "**/games**\n" +
-        "Opens the casino hub (games like blackjack/roulette, etc).\n\n" +
-        "**Heads up:** Winnings/losses affect your balance.",
-    },
+    // These are “hubs” but listed inside economy too — we’ll keep them.
     {
       id: "jobHub",
       name: "/job",
