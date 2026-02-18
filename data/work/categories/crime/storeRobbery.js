@@ -2,9 +2,9 @@
 //To push store clerk
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 
-const { pool } = require("../../../utils/db");
-const { setJail } = require("../../../utils/jail");
-
+const path = require("path");
+const { pool } = require(path.join(process.cwd(), "utils", "db"));
+const { setJail } = require(path.join(process.cwd(), "utils", "jail"));
 // Scenarios (data-only)
 let scenarios = require("./storeRobbery.scenarios");
 
