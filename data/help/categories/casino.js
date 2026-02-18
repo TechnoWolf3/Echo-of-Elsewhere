@@ -89,5 +89,38 @@ module.exports = {
         "- There is no partial win. Only streak or defeat.\n" +
         "Best of luck out there!",
     },
+    {
+      id: "bullshit",
+      name: "How to Play - BULLSHIT!",
+      short: "Found inside the /games hub.",
+      detail:
+        "**Bullshit**\n" +
+        "🎯 **Objective**\n" +
+        "**Be the first player to get rid of all your cards or be the last man standing.**\n" +
+        "Players take turns placing cards face down and declaring what they are.\n" +
+        "They can tell the truth… or they can lie.\n\n" +
+        "If someone thinks you’re lying, they can call “Bullshit!”\n\n" +
+        "🃏 **Basic Rules**\n" +
+        "- The game follows a sequence (e.g., A → 2 → 3 → 4 … → K → repeat).\n" +
+        "- On your turn, you must place one or more cards face down.\n" +
+        "You declare them as the next value in the sequence.\n" +
+        "You may lie about what you placed.\n\n" +
+        "Other players decide whether they believe you or call you on your **BULLSHIT!**\n\n" +
+        "🎮 **Buttons & What They Do**\n" +
+        "➕ Play Cards\n" +
+        "Select and place the cards you want to put down.\n" +
+        "You must declare them as the current required rank.\n" +
+        "📣 Bullshit!\n" +
+        "Call out the previous player if you think they lied.\n" +
+        "If they were lying → they will run the roulette. With any luck, they'll end up dead.\n" +
+        "If they were telling the truth → you will run the roulette. With any luck, you'll live to play another hand.\n\n" +
+        "💥 Round Outcomes\n" +
+        "- Lie successfully → play continues.\n" +
+        "Lie and get caught → pick up the pile.\n" +
+        "Call correctly → opponent picks up pile.\n" +
+        "Call incorrectly → you pick up pile.\n" +
+        "Last player standing wins.\n\n" +
+        "-# Early game lies sell easier, confidence is the game and revenge is common.",
+    },
   ],
 };
