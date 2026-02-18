@@ -4,7 +4,7 @@ module.exports = {
   order: 3,
   name: "Casino",
   emoji: "🎰",
-  blurb: "Home to risk-based games where you wager your server balance for a chance at bigger payouts.",
+  blurb: "Home to risk-based games & payouts.",
 
   commands: [
     {
