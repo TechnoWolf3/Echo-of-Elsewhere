@@ -105,6 +105,14 @@ function safeLabel(s) {
   if (t.length <= 80) return t;
   return t.slice(0, 77) + "...";
 }
+function safeDesc(s) {
+  const t = String(s ?? "").trim();
+  if (!t) return "";
+  // Discord select option descriptions are capped at 100 chars.
+  if (t.length <= 100) return t;
+  return t.slice(0, 97) + "...";
+}
+
 function sampleUnique(arr, n) {
   const copy = [...arr];
   const out = [];
@@ -1109,7 +1117,7 @@ module.exports = {
         if (await guardNotJailedComponent(btn)) return;
 
         const isSelect = typeof btn.isStringSelectMenu === "function" && btn.isStringSelectMenu();
-        const actionId = isSelect ? (btn.values?.[0] || "") : actionId;
+        const actionId = isSelect ? (btn.values?.[0] || "") : (btn.customId || "");
 
         // ✅ Ack once for safety (prevents "This interaction failed")
         // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
