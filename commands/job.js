@@ -929,6 +929,10 @@ module.exports = {
     const session = {
       view: "hub",
 
+      // remembers last category for auto-return
+      lastCategory: "hub",
+      returnTimer: null,
+
       level: prog.level,
       legendaryAvailable: false,
       legendaryExpiresAt: 0,
@@ -958,7 +962,30 @@ module.exports = {
       collector.resetTimer({ time: BOARD_INACTIVITY_MS });
     }
 
+function cancelAutoReturn() {
+  if (session.returnTimer) {
+    clearTimeout(session.returnTimer);
+    session.returnTimer = null;
+  }
+}
+
+function scheduleReturnToCategory(delayMs = 5000) {
+  cancelAutoReturn();
+
+  session.returnTimer = setTimeout(async () => {
+    try {
+      if (collector.ended) return;
+      const target = session.lastCategory;
+      if (!["95", "nw", "grind", "crime"].includes(target)) return;
+
+      session.view = target;
+      await redraw();
+    } catch {}
+  }, delayMs);
+}
+
     async function stopWork(reason = "stop") {
+      cancelAutoReturn();
       if (session.shiftInterval) {
         clearInterval(session.shiftInterval);
         session.shiftInterval = null;
@@ -1121,12 +1148,15 @@ module.exports = {
         // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
         const isClerkRuntime = actionId.startsWith("grind_clerk:");
         if (isClerkRuntime) {
-          resetInactivity(); // keep the /job board alive while the grind module runs
+          resetInactivity();
+          cancelAutoReturn();
+          // keep the /job board alive while the grind module runs
           return;            // modal safety: the grind module will handle/ack as needed
         }
 
         await ensureAck(btn);
         resetInactivity();
+        cancelAutoReturn();
 
         
         // 🚔 Jail gate for buttons (true = BLOCK)
@@ -1153,6 +1183,7 @@ module.exports = {
 
         if (actionId === "job_back:95") {
           session.view = "95";
+          session.lastCategory = "95";
           session.nw = null;
           await redraw();
           return;
@@ -1160,6 +1191,7 @@ module.exports = {
 
         if (actionId === "job_back:nw") {
           session.view = "nw";
+          session.lastCategory = "nw";
           session.nw = null;
           await redraw();
           return;
@@ -1168,21 +1200,25 @@ module.exports = {
         // Category nav (allowed even on /job payout cooldown — but jail still blocks)
         if (actionId === "job_cat:95") {
           session.view = "95";
+          session.lastCategory = "95";
           await redraw();
           return;
         }
         if (actionId === "job_cat:nw") {
           session.view = "nw";
+          session.lastCategory = "nw";
           await redraw();
           return;
         }
         if (actionId === "job_cat:grind") {
           session.view = "grind";
+          session.lastCategory = "grind";
           await redraw();
           return;
         }
         if (actionId === "job_cat:crime") {
           session.view = "crime";
+          session.lastCategory = "crime";
           await redraw();
           return;
         }
@@ -1453,7 +1489,8 @@ module.exports = {
                   components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
                 })
                 .catch(() => {});
-              return;
+              scheduleReturnToCategory(5000);
+            return;
             }
 
             const base = randInt(contractCfg.payout?.min ?? 2000, contractCfg.payout?.max ?? 5000);
@@ -1489,6 +1526,7 @@ module.exports = {
                 components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
               })
               .catch(() => {});
+            scheduleReturnToCategory(5000);
             return;
           }
 
@@ -1524,6 +1562,7 @@ module.exports = {
                 components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
               })
               .catch(() => {});
+            scheduleReturnToCategory(5000);
             return;
           }
 
@@ -1563,7 +1602,8 @@ module.exports = {
               components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
             })
             .catch(() => {});
-          return;
+          scheduleReturnToCategory(5000);
+            return;
         }
 
         // Shift collect
@@ -1603,7 +1643,8 @@ module.exports = {
               components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
             })
             .catch(() => {});
-          return;
+          scheduleReturnToCategory(5000);
+            return;
         }
 
         /* ============================================================
@@ -1709,6 +1750,7 @@ module.exports = {
               .setColor(0xaa0000);
 
             await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
+            scheduleReturnToCategory(5000);
             return;
           }
 
@@ -1722,6 +1764,7 @@ module.exports = {
               .setColor(0xaa0000);
 
             await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
+            scheduleReturnToCategory(5000);
             return;
           }
 
@@ -1763,6 +1806,7 @@ module.exports = {
             session.nw = null;
 
             await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
+            scheduleReturnToCategory(5000);
             return;
           }
 
@@ -1802,6 +1846,7 @@ module.exports = {
     });
 
     collector.on("end", async () => {
+      cancelAutoReturn();
       if (session.shiftInterval) {
         clearInterval(session.shiftInterval);
         session.shiftInterval = null;
