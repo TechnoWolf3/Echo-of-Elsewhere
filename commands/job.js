@@ -1154,7 +1154,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           return;            // modal safety: the grind module will handle/ack as needed
         }
 
-        await ensureAck(btn);
+        ensureAck(btn);
         resetInactivity();
         cancelAutoReturn();
 
