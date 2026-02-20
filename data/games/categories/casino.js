@@ -44,7 +44,7 @@ module.exports = {
       id: "bullshit",
       name: "Bullshit - The card game",
       emoji: "💩",
-      description: "Place cards that mach the rank... or not. Think someones lying? **BULLSHIT!**",
+      description: "Match the rank... or not. Someones lying? **BULLSHIT!**",
       run: async (interaction, ctx = {}) => {
         const hol = require("../bullshit");
         return hol.startFromHub(interaction, ctx);

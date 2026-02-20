@@ -142,7 +142,7 @@ function buildLobbyEmbed(table) {
   const pot = potTotalReal(table);
 
   const e = new EmbedBuilder()
-    .setTitle("🧢 Bullshit — Liar’s Bar Edition")
+    .setTitle("🧢 Bullshit — The Place Edition")
     .setDescription(
       `**${MIN_PLAYERS}–${MAX_PLAYERS} players** • Last standing wins\n\n` +
       `Each player chooses their own buy-in (**min $${MIN_BUYIN.toLocaleString()}**) and pays **before** the game starts.\n` +
@@ -1127,12 +1127,13 @@ async function startFromHub(interaction, opts = {}) {
     const [prefix, tId, action] = cid.split(":");
     if (prefix !== "bs" || tId !== table.tableId) return;
 
-    // IMPORTANT: do not deferUpdate before showModal actions
-    if (action !== "buyin" && action !== "play") {
+    // IMPORTANT: only deferUpdate on actions that do NOT need a reply/showModal
+    const noDeferActions = new Set(["buyin", "play", "join", "leave", "addbots", "clearbots", "hand"]);
+    if (!noDeferActions.has(action)) {
       await i.deferUpdate().catch(() => {});
     }
 
-    try {
+try {
       await handleButton(i, table, action);
     } catch (e) {
       console.error("[Bullshit] button handler error:", e);
