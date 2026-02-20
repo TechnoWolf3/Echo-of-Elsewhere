@@ -240,7 +240,7 @@ function buildGameEmbed(table, stage = "turn") {
     const who = pl?.user || `<@${pp.playerId}>`;
     e.addFields({
       name: "🕵️ Pending Play",
-      value: `${who} claimed **${pp.cards.length}× ${table.tableRank}**. Choose **BULLSHIT!** or **Let it slide**.`,
+      value: `${who} claimed **${pp.cards.length}× ${table.tableRank}**. It’s now the next player’s turn: **Call BULLSHIT!** or **Play Cards** to accept.`,
       inline: false,
     });
   }
@@ -269,9 +269,8 @@ function buildGameEmbed(table, stage = "turn") {
 
 function buildGameComponents(table) {
   const tableId = table.tableId;
-  const hasPending = Boolean(table.pendingPlay);
-
   const currentIsBot = table.currentPlayerId && isBotId(table.currentPlayerId);
+  const hasPending = Boolean(table.pendingPlay);
 
   return [
     new ActionRowBuilder().addComponents(
@@ -279,28 +278,23 @@ function buildGameComponents(table) {
         .setCustomId(bsId(tableId, "hand"))
         .setLabel("View Hand")
         .setStyle(ButtonStyle.Secondary)
-        .setDisabled(!table.currentPlayerId || hasPending || currentIsBot),
-
-      new ButtonBuilder()
-        .setCustomId(bsId(tableId, "play"))
-        .setLabel("Play Cards")
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(!table.currentPlayerId || hasPending || currentIsBot),
+        .setDisabled(!table.currentPlayerId || currentIsBot),
 
       new ButtonBuilder()
         .setCustomId(bsId(tableId, "call"))
         .setLabel("BULLSHIT!")
         .setStyle(ButtonStyle.Danger)
-        .setDisabled(!hasPending),
+        .setDisabled(!hasPending || currentIsBot),
 
       new ButtonBuilder()
-        .setCustomId(bsId(tableId, "pass"))
-        .setLabel("Let it slide")
-        .setStyle(ButtonStyle.Success)
-        .setDisabled(!hasPending)
+        .setCustomId(bsId(tableId, "play"))
+        .setLabel("Play Cards")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(!table.currentPlayerId || currentIsBot)
     ),
   ];
 }
+
 
 async function render(table, embed = null, components = null) {
   if (!table.message) return;
@@ -622,10 +616,36 @@ async function resolveBullshit(table, callerId) {
   await maybeAutoBotTurn(table);
 }
 
-async function advanceNoCall(table) {
-  // no call: keep rank, keep pile, advance turn
-  table.pendingPlay = null;
+async function maybeAutoBotTurn(table) {
+  if (table.state !== "playing") return;
+  if (!table.currentPlayerId) return;
+  if (!isBotId(table.currentPlayerId)) return;
 
+  const botId = table.currentPlayerId;
+  const bot = table.players.get(botId);
+  if (!bot?.alive) return;
+
+  // tiny delay so it feels human-ish
+  await sleep(900);
+
+  // If there is a pending play from the previous player, the bot must decide:
+  // - Call BULLSHIT (challenge) OR
+  // - Play cards (accept and continue)
+  if (table.pendingPlay && table.pendingPlay.playerId !== botId) {
+    if (Math.random() < 0.35) {
+      await resolveBullshit(table, botId);
+      return;
+    }
+    // accept previous play by simply continuing (playing) — clears the pending window
+    table.pendingPlay = null;
+  }
+
+  // Bot plays 1–4 cards and immediately passes turn to the next player
+  const played = pickBotPlay(bot, table.tableRank);
+  table.pendingPlay = { playerId: botId, cards: played, count: played.length };
+  table.pile.push(...played);
+
+  // advance turn immediately
   const winId = winnerId(table);
   if (winId) {
     await endGame(table, winId);
@@ -639,35 +659,11 @@ async function advanceNoCall(table) {
   }
 
   await render(table);
+
+  // If the next player is also a bot, keep the table moving
   await maybeAutoBotTurn(table);
 }
 
-async function maybeAutoBotTurn(table) {
-  if (table.state !== "playing") return;
-  if (!table.currentPlayerId) return;
-  if (!isBotId(table.currentPlayerId)) return;
-
-  const botId = table.currentPlayerId;
-  const bot = table.players.get(botId);
-  if (!bot?.alive) return;
-
-  // tiny delay so it feels human-ish
-  await sleep(800);
-
-  if (table.pendingPlay) return;
-
-  const played = pickBotPlay(bot, table.tableRank);
-  table.pendingPlay = { playerId: botId, cards: played, count: played.length };
-  table.pile.push(...played);
-
-  // No auto-advance: waits for next player to call BULLSHIT or Let it slide.
-  if (table.challengeTimer) { clearTimeout(table.challengeTimer); table.challengeTimer = null; }
-
-  await render(table);
-
-  // If humans are testing solo, let bots sometimes call on human plays too (handled elsewhere),
-  // but for bot plays: optionally have other bots "nope" sometimes (kept simple)
-}
 
 async function handleButton(interaction, table, action) {
   const userId = interaction.user.id;
@@ -854,10 +850,6 @@ async function handleButton(interaction, table, action) {
         await interaction.reply({ content: "🤖 Bots play automatically.", flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
       }
-      if (table.pendingPlay) {
-        await interaction.reply({ content: "ℹ️ You already played. Waiting for calls…", flags: MessageFlags.Ephemeral }).catch(() => {});
-        return;
-      }
 
       const modal = new ModalBuilder()
         .setCustomId(modalId("play", table.tableId))
@@ -876,6 +868,10 @@ async function handleButton(interaction, table, action) {
     }
 
     if (action === "call") {
+      if (userId !== table.currentPlayerId) {
+        await interaction.reply({ content: "❌ Not your turn.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
+      }
       if (!table.pendingPlay) {
         await interaction.reply({ content: "ℹ️ There’s nothing to call yet.", flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
@@ -891,21 +887,6 @@ async function handleButton(interaction, table, action) {
 
       await interaction.deferUpdate().catch(() => {});
       await resolveBullshit(table, userId);
-      return;
-    }
-
-    if (action === "pass") {
-      if (!table.pendingPlay) {
-        await interaction.reply({ content: "ℹ️ Nothing pending.", flags: MessageFlags.Ephemeral }).catch(() => {});
-        return;
-      }
-
-      await interaction.deferUpdate().catch(() => {});
-      if (table.challengeTimer) {
-        clearTimeout(table.challengeTimer);
-        table.challengeTimer = null;
-      }
-      await advanceNoCall(table);
       return;
     }
   }
@@ -996,11 +977,6 @@ async function handlePlayModal(interaction, table) {
     return;
   }
 
-  if (table.pendingPlay) {
-    await interaction.reply({ content: "ℹ️ You already played. Waiting for calls…", flags: MessageFlags.Ephemeral }).catch(() => {});
-    return;
-  }
-
   const p = table.players.get(userId);
   if (!p?.alive) {
     await interaction.reply({ content: "❌ You’re not alive in this game.", flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -1029,13 +1005,29 @@ async function handlePlayModal(interaction, table) {
   }
   played.reverse();
 
+  // If there is a pending play from the previous player, choosing to play now implicitly accepts it.
+  if (table.pendingPlay && table.pendingPlay.playerId !== userId) {
+    table.pendingPlay = null;
+  }
+
+  // Record this player's play and immediately advance turn to the next player.
   table.pendingPlay = { playerId: userId, cards: played, count: played.length };
   table.pile.push(...played);
 
-  // No auto-advance: waits for next player to call BULLSHIT or Let it slide.
-  if (table.challengeTimer) { clearTimeout(table.challengeTimer); table.challengeTimer = null; }
+  const winId = winnerId(table);
+  if (winId) {
+    await endGame(table, winId);
+    return;
+  }
+
+  const next = nextAlive(table);
+  if (!next) {
+    await endGame(table, null);
+    return;
+  }
 
   await render(table);
+  await maybeAutoBotTurn(table);
 
 
   await interaction.reply({
