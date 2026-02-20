@@ -35,6 +35,10 @@ const MIN_BUYIN = 500;
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
 
+const REVEAL_STAGE_DELAY_MS = 2200;
+const REVOLVER_STAGE_DELAY_MS = 2800;
+
+
 const BOT_PREFIX = "bsbot_";
 
 // tableId -> table
@@ -229,6 +233,17 @@ function buildGameEmbed(table, stage = "turn") {
       { name: "Pile", value: `${pileSize} card(s)`, inline: true },
       { name: "Round", value: `${table.round || 1}`, inline: true }
     );
+
+  if (table.pendingPlay) {
+    const pp = table.pendingPlay;
+    const pl = table.players.get(pp.playerId);
+    const who = pl?.user || `<@${pp.playerId}>`;
+    e.addFields({
+      name: "🕵️ Pending Play",
+      value: `${who} claimed **${pp.cards.length}× ${table.tableRank}**. Choose **BULLSHIT!** or **Let it slide**.`,
+      inline: false,
+    });
+  }
 
   if (table.testMode) {
     e.addFields({ name: "🧪 Test Mode", value: "Bots are active (no money added by bots).", inline: false });
@@ -559,7 +574,7 @@ async function resolveBullshit(table, callerId) {
   };
 
   await render(table, buildGameEmbed(table, "reveal"));
-  await sleep(900);
+  await sleep(REVEAL_STAGE_DELAY_MS);
 
   const fp = table.players.get(failedId);
   if (fp && fp.alive) {
@@ -580,7 +595,7 @@ async function resolveBullshit(table, callerId) {
   }
 
   await render(table, buildGameEmbed(table, "revolver"));
-  await sleep(1100);
+  await sleep(REVOLVER_STAGE_DELAY_MS);
 
   // After a call: discard pile, reroll rank, advance turn
   table.pile = [];
@@ -645,12 +660,8 @@ async function maybeAutoBotTurn(table) {
   table.pendingPlay = { playerId: botId, cards: played, count: played.length };
   table.pile.push(...played);
 
-  // Start a shorter challenge window in bot turns
-  if (table.challengeTimer) clearTimeout(table.challengeTimer);
-  table.challengeTimer = setTimeout(() => {
-    const t = tablesById.get(table.tableId);
-    if (t && t.pendingPlay) advanceNoCall(t).catch(() => {});
-  }, 10_000);
+  // No auto-advance: waits for next player to call BULLSHIT or Let it slide.
+  if (table.challengeTimer) { clearTimeout(table.challengeTimer); table.challengeTimer = null; }
 
   await render(table);
 
@@ -1021,22 +1032,11 @@ async function handlePlayModal(interaction, table) {
   table.pendingPlay = { playerId: userId, cards: played, count: played.length };
   table.pile.push(...played);
 
-  // challenge window auto-advance
-  if (table.challengeTimer) clearTimeout(table.challengeTimer);
-  table.challengeTimer = setTimeout(() => {
-    const t = tablesById.get(table.tableId);
-    if (t && t.pendingPlay) advanceNoCall(t).catch(() => {});
-  }, 18_000);
+  // No auto-advance: waits for next player to call BULLSHIT or Let it slide.
+  if (table.challengeTimer) { clearTimeout(table.challengeTimer); table.challengeTimer = null; }
 
   await render(table);
 
-  // In test mode, bots may call sometimes
-  if (table.testMode) {
-    setTimeout(() => {
-      const t = tablesById.get(table.tableId);
-      if (t && t.pendingPlay) botMaybeCall(t).catch(() => {});
-    }, 2500);
-  }
 
   await interaction.reply({
     content: `✅ Played **${played.length}** card(s), claiming **${played.length}× ${table.tableRank}**.`,
