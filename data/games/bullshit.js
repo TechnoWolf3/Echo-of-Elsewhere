@@ -1,14 +1,12 @@
 // data/games/bullshit.js
 // Bullshit (Liar's Bar style) — Multiplayer casino game for /games hub.
-// - 3–10 players
-// - Random Table Rank (A–K) chosen per round-cycle
+// - 3–10 players (normal)
+// - Host-only TEST MODE: add bot players so you can start solo for testing
+// - Random Table Rank (A–K) changes after each BULLSHIT resolution
 // - Players play 1–4 cards face-down, always CLAIMING they match the Table Rank
-// - Anyone can call BULLSHIT:
-//    - If liar: liar takes the shot
-//    - If truthful: caller takes the shot
-// - Revolver persists per player (bullet position 1–6; shotsTaken increments on each fail)
-// - After a BULLSHIT resolution (shot fired), the Table Rank changes
-// - Last alive wins the pot (sum of buy-ins) minus table fee (withheld from pot)
+// - Call BULLSHIT: liar fails (or caller fails if truthful) -> revolver shot
+// - Revolver persists per player: bullet position 1–6, shotsTaken increments each fail
+// - Last alive wins pot (REAL buy-ins only) minus table fee (if applicable)
 
 const crypto = require("crypto");
 const {
@@ -36,6 +34,8 @@ const {
 const MIN_BUYIN = 500;
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
+
+const BOT_PREFIX = "bsbot_";
 
 // tableId -> table
 const tablesById = new Map();
@@ -67,31 +67,21 @@ function chancePercent(shotsTakenBefore) {
   return Math.round((1 / remaining) * 100);
 }
 
-function formatHand(hand, tableRank) {
-  const counts = hand.reduce((acc, r) => {
-    acc[r] = (acc[r] || 0) + 1;
-    return acc;
-  }, {});
-  const tr = String(tableRank || "");
-  const trCount = counts[tr] || 0;
-
-  const lines = hand.map((r, idx) => `**${idx + 1}.** ${r}`).join("\n") || "(empty)";
-  return {
-    summary: `You have **${hand.length}** cards. Table Rank: **${tr}** (you hold **${trCount}**).`,
-    lines,
-  };
+function isBotId(userId) {
+  return String(userId || "").startsWith(BOT_PREFIX);
 }
 
-function potTotal(table) {
-  return [...table.players.values()].reduce((s, p) => s + (Number(p.buyIn) || 0), 0);
+function potTotalReal(table) {
+  // Only real paid buy-ins contribute to pot
+  let sum = 0;
+  for (const p of table.players.values()) {
+    if (p.paid && !isBotId(p.userId)) sum += Number(p.buyIn) || 0;
+  }
+  return sum;
 }
 
 function aliveIds(table) {
   return table.turnOrder.filter((id) => table.players.get(id)?.alive);
-}
-
-function aliveCount(table) {
-  return [...table.players.values()].filter((p) => p.alive).length;
 }
 
 function winnerId(table) {
@@ -126,33 +116,50 @@ function modalId(kind, tableId) {
   return `bs${kind}:${tableId}`;
 }
 
+function formatHand(hand, tableRank) {
+  const counts = hand.reduce((acc, r) => {
+    acc[r] = (acc[r] || 0) + 1;
+    return acc;
+  }, {});
+  const tr = String(tableRank || "");
+  const trCount = counts[tr] || 0;
+
+  const lines = hand.map((r, idx) => `**${idx + 1}.** ${r}`).join("\n") || "(empty)";
+  return {
+    summary: `You have **${hand.length}** cards. Table Rank: **${tr}** (you hold **${trCount}**).`,
+    lines,
+  };
+}
+
 function buildLobbyEmbed(table) {
   const players = [...table.players.values()].map((p) => {
     const paid = p.paid ? "✅" : "❌";
     const buyIn = p.buyIn ? `$${Number(p.buyIn).toLocaleString()}` : "—";
-    return `${paid} ${p.user} • Buy-in: **${buyIn}**`;
+    const tag = isBotId(p.userId) ? " 🤖" : "";
+    return `${paid} ${p.user}${tag} • Buy-in: **${buyIn}**`;
   }).join("\n") || "(none)";
 
-  const pot = potTotal(table);
+  const pot = potTotalReal(table);
 
   const e = new EmbedBuilder()
     .setTitle("🧢 Bullshit — Liar’s Bar Edition")
     .setDescription(
       `**${MIN_PLAYERS}–${MAX_PLAYERS} players** • Last standing wins\n\n` +
       `Each player chooses their own buy-in (**min $${MIN_BUYIN.toLocaleString()}**) and pays **before** the game starts.\n` +
-      `Winner takes the pot (minus table fee if applicable).`
+      `Winner takes the pot (minus table fee if applicable).\n\n` +
+      (table.testMode ? "🧪 **TEST MODE**: bots are allowed and do **not** add money to the pot.\n" : "")
     )
     .addFields(
       { name: "Host", value: `<@${table.hostId}>`, inline: true },
       { name: "Players", value: `${table.players.size}/${table.maxPlayers}`, inline: true },
-      { name: "Pot", value: `$${pot.toLocaleString()}`, inline: true },
+      { name: "Real Pot", value: `$${pot.toLocaleString()}`, inline: true },
       { name: "Joined", value: players }
     );
 
   const feePct = Math.round(Number(table.hostSecurity?.feePct || 0) * 100);
   e.addFields({ name: "Table Fee", value: feePct > 0 ? `**${feePct}%** (withheld from pot)` : "None", inline: true });
 
-  e.setFooter({ text: "Use ‘View Hand’ on your turn (ephemeral, on-demand)." });
+  e.setFooter({ text: "Hands are private via ‘View Hand’ (ephemeral, on-demand)." });
   return e;
 }
 
@@ -165,35 +172,67 @@ function buildLobbyComponents(table) {
     new ButtonBuilder().setCustomId(bsId(tableId, "buyin")).setLabel("Set Buy-in").setStyle(ButtonStyle.Primary)
   );
 
-  const allPaid = table.players.size >= MIN_PLAYERS && [...table.players.values()].every((p) => p.paid);
+  const allPaidRealPlayers =
+    table.players.size >= 1 &&
+    [...table.players.values()].every((p) => isBotId(p.userId) || p.paid);
+
+  const enoughPlayersNormal = table.players.size >= MIN_PLAYERS;
+  const enoughPlayersTest = table.players.size >= 1; // host + bots allowed
+
+  const canStart =
+    allPaidRealPlayers &&
+    (table.testMode ? enoughPlayersTest : enoughPlayersNormal);
 
   const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(bsId(tableId, "start")).setLabel("Start").setStyle(ButtonStyle.Success).setDisabled(!allPaid),
+    new ButtonBuilder().setCustomId(bsId(tableId, "start")).setLabel("Start").setStyle(ButtonStyle.Success).setDisabled(!canStart),
     new ButtonBuilder().setCustomId(bsId(tableId, "cancel")).setLabel("Cancel").setStyle(ButtonStyle.Danger)
   );
 
-  return [row1, row2];
+  // Host-only test controls (subtle)
+  const botCount = [...table.players.keys()].filter(isBotId).length;
+  const canAddBots = table.players.size < table.maxPlayers;
+
+  const row3 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(bsId(tableId, "addbots"))
+      .setLabel(botCount > 0 ? `Test: Add Bot (${botCount})` : "Test: Add Bots")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!canAddBots),
+    new ButtonBuilder()
+      .setCustomId(bsId(tableId, "clearbots"))
+      .setLabel("Test: Clear Bots")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(botCount === 0)
+  );
+
+  return [row1, row2, row3];
 }
 
 function buildGameEmbed(table, stage = "turn") {
   const alive = aliveIds(table);
-  const aliveMentions = alive.map((id) => `<@${id}>`).join(" • ") || "(none)";
+  const aliveMentions = alive
+    .map((id) => table.players.get(id)?.user || `<@${id}>`)
+    .join(" • ") || "(none)";
 
-  const pot = potTotal(table);
+  const pot = potTotalReal(table);
   const pileSize = table.pile.length;
 
   const e = new EmbedBuilder()
     .setTitle("🧢 Bullshit — Liar’s Bar Edition")
     .setDescription(
       `**Table Rank:** **${table.tableRank || "—"}**\n` +
-      `**Current turn:** ${table.currentPlayerId ? `<@${table.currentPlayerId}>` : "—"}\n\n` +
+      `**Current turn:** ${table.currentPlayerId ? (table.players.get(table.currentPlayerId)?.user || `<@${table.currentPlayerId}>`) : "—"}\n\n` +
       `Alive: ${aliveMentions}`
     )
     .addFields(
-      { name: "Pot", value: `$${pot.toLocaleString()}`, inline: true },
+      { name: "Real Pot", value: `$${pot.toLocaleString()}`, inline: true },
       { name: "Pile", value: `${pileSize} card(s)`, inline: true },
       { name: "Round", value: `${table.round || 1}`, inline: true }
     );
+
+  if (table.testMode) {
+    e.addFields({ name: "🧪 Test Mode", value: "Bots are active (no money added by bots).", inline: false });
+  }
 
   if (stage === "reveal" && table.lastReveal) {
     e.addFields(
@@ -217,19 +256,21 @@ function buildGameComponents(table) {
   const tableId = table.tableId;
   const hasPending = Boolean(table.pendingPlay);
 
+  const currentIsBot = table.currentPlayerId && isBotId(table.currentPlayerId);
+
   return [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(bsId(tableId, "hand"))
         .setLabel("View Hand")
         .setStyle(ButtonStyle.Secondary)
-        .setDisabled(!table.currentPlayerId || hasPending),
+        .setDisabled(!table.currentPlayerId || hasPending || currentIsBot),
 
       new ButtonBuilder()
         .setCustomId(bsId(tableId, "play"))
         .setLabel("Play Cards")
         .setStyle(ButtonStyle.Primary)
-        .setDisabled(!table.currentPlayerId || hasPending),
+        .setDisabled(!table.currentPlayerId || hasPending || currentIsBot),
 
       new ButtonBuilder()
         .setCustomId(bsId(tableId, "call"))
@@ -277,10 +318,112 @@ function parseIndices(raw) {
   return [...new Set(idxs)].filter((n) => n >= 1);
 }
 
+function addBotsUpToMin(table) {
+  // Add enough bots to hit MIN_PLAYERS, but never exceed MAX_PLAYERS.
+  const current = table.players.size;
+  const needed = Math.max(0, MIN_PLAYERS - current);
+  const slots = Math.min(needed, table.maxPlayers - current);
+  if (slots <= 0) return 0;
+
+  let added = 0;
+  for (let i = 0; i < slots; i++) {
+    const botId = `${BOT_PREFIX}${crypto.randomBytes(4).toString("hex")}`;
+    const botNum = [...table.players.keys()].filter(isBotId).length + 1;
+
+    table.players.set(botId, {
+      userId: botId,
+      user: `🤖 BS Bot #${botNum}`,
+      buyIn: 0,
+      paid: true,
+      alive: true,
+      hand: [],
+      bulletPos: null,
+      shotsTaken: 0,
+    });
+    added++;
+  }
+  return added;
+}
+
+function clearBots(table) {
+  for (const id of [...table.players.keys()]) {
+    if (isBotId(id)) table.players.delete(id);
+  }
+}
+
+function pickBotPlay(p, tableRank) {
+  // Simple AI:
+  // - Prefer truthful plays using tableRank cards if available (70% if has any)
+  // - Otherwise lie with random cards
+  const hand = p.hand || [];
+  if (hand.length === 0) return [];
+
+  const matchingIdx = [];
+  for (let i = 0; i < hand.length; i++) {
+    if (hand[i] === tableRank) matchingIdx.push(i);
+  }
+
+  const canTruth = matchingIdx.length > 0;
+  const truthBias = canTruth ? 0.7 : 0.0;
+  const willTruth = Math.random() < truthBias;
+
+  const count = Math.min(1 + Math.floor(Math.random() * 4), hand.length);
+
+  const chosenIdx = [];
+  if (willTruth) {
+    // choose up to count from matching
+    shuffle(matchingIdx);
+    for (let i = 0; i < Math.min(count, matchingIdx.length); i++) chosenIdx.push(matchingIdx[i]);
+    // if not enough matching, fill with random (this becomes partially lying, intentionally)
+    while (chosenIdx.length < count) {
+      const r = Math.floor(Math.random() * hand.length);
+      if (!chosenIdx.includes(r)) chosenIdx.push(r);
+    }
+  } else {
+    // choose random indices (likely lying)
+    while (chosenIdx.length < count) {
+      const r = Math.floor(Math.random() * hand.length);
+      if (!chosenIdx.includes(r)) chosenIdx.push(r);
+    }
+  }
+
+  // remove selected cards from hand (highest first)
+  chosenIdx.sort((a, b) => b - a);
+  const played = [];
+  for (const idx0 of chosenIdx) {
+    played.push(hand[idx0]);
+    hand.splice(idx0, 1);
+  }
+  played.reverse();
+  return played;
+}
+
+async function botMaybeCall(table) {
+  // Called after a human play is pending. A bot might call with a probability.
+  // This is intentionally "dumb": it doesn't know the truth, it just adds chaos for testing.
+  if (!table.pendingPlay) return;
+  const pending = table.pendingPlay;
+
+  // Find any alive bot who isn't the pending player
+  const aliveBotIds = table.turnOrder.filter((id) => {
+    const p = table.players.get(id);
+    return p?.alive && isBotId(id) && id !== pending.playerId;
+  });
+  if (aliveBotIds.length === 0) return;
+
+  // 35% chance a bot calls within the window
+  if (Math.random() > 0.35) return;
+
+  // pick a random bot to be the caller
+  const callerId = aliveBotIds[Math.floor(Math.random() * aliveBotIds.length)];
+
+  await resolveBullshit(table, callerId);
+}
+
 async function cancelTable(table, reason) {
-  // Refund paid buy-ins
+  // Refund paid buy-ins (real players only)
   for (const p of table.players.values()) {
-    if (p.paid && Number(p.buyIn) > 0) {
+    if (p.paid && Number(p.buyIn) > 0 && !isBotId(p.userId)) {
       const amt = Number(p.buyIn);
       try {
         await creditUser(table.guildId, p.userId, amt, "bullshit_refund", { tableId: table.tableId });
@@ -306,22 +449,27 @@ async function endGame(table, winId) {
   table.state = "ended";
   updateActiveGame(table.channelId, { state: "ended" });
 
-  const pot = potTotal(table);
+  const pot = potTotalReal(table);
   const feePct = Number(table.hostSecurity?.feePct || 0);
   const fee = feePct > 0 ? computeFeeForBet(pot, feePct) : 0;
   const payout = Math.max(0, pot - fee);
 
+  const winnerLabel = winId
+    ? (isBotId(winId) ? table.players.get(winId)?.user || "🤖 Bot" : `<@${winId}>`)
+    : null;
+
   const embed = new EmbedBuilder()
     .setTitle("🧢 Bullshit — Game Over")
     .setDescription(
-      winId
-        ? `🏆 Winner: <@${winId}>\nPot: **$${pot.toLocaleString()}**${fee > 0 ? `\nTable fee withheld: **$${fee.toLocaleString()}**` : ""}\nPayout: **$${payout.toLocaleString()}**`
+      winnerLabel
+        ? `🏆 Winner: ${winnerLabel}\nReal Pot: **$${pot.toLocaleString()}**${fee > 0 ? `\nTable fee withheld: **$${fee.toLocaleString()}**` : ""}\nPayout: **$${payout.toLocaleString()}**`
         : "Game ended."
     );
 
   await render(table, embed, []);
 
-  if (winId && payout > 0) {
+  // Only pay out to a real player (bots don't get paid)
+  if (winId && payout > 0 && !isBotId(winId)) {
     try {
       await bankToUserIfEnough(table.guildId, winId, payout, "bullshit_payout", {
         tableId: table.tableId,
@@ -380,6 +528,9 @@ async function startGame(table) {
   }
 
   await render(table);
+
+  // If a bot starts, play automatically
+  await maybeAutoBotTurn(table);
 }
 
 async function resolveBullshit(table, callerId) {
@@ -398,14 +549,17 @@ async function resolveBullshit(table, callerId) {
   const liar = played.some((r) => r !== rank);
   const failedId = liar ? playerId : callerId;
 
+  const callerLabel = isBotId(callerId) ? (table.players.get(callerId)?.user || "🤖 Bot") : `<@${callerId}>`;
+  const playerLabel = isBotId(playerId) ? (table.players.get(playerId)?.user || "🤖 Bot") : `<@${playerId}>`;
+
   table.lastReveal = {
-    banner: `Caller: <@${callerId}> • Played by: <@${playerId}>`,
+    banner: `Caller: ${callerLabel} • Played by: ${playerLabel}`,
     claim: `Claimed **${played.length}× ${rank}**`,
     actual: played.map((r) => `\`${r}\``).join(" "),
   };
 
   await render(table, buildGameEmbed(table, "reveal"));
-  await sleep(1100);
+  await sleep(900);
 
   const fp = table.players.get(failedId);
   if (fp && fp.alive) {
@@ -415,16 +569,18 @@ async function resolveBullshit(table, callerId) {
     const deadNow = fp.shotsTaken === fp.bulletPos;
     if (deadNow) fp.alive = false;
 
+    const failedLabel = isBotId(failedId) ? (fp.user || "🤖 Bot") : `<@${failedId}>`;
+
     table.lastRevolver = {
       text:
-        `**<@${failedId}>** pulls the trigger...\n` +
+        `**${failedLabel}** pulls the trigger...\n` +
         `Shots taken: **${Math.min(fp.shotsTaken, 6)}/6** • Chance this shot: **${chance}%**\n\n` +
         (deadNow ? "💥 **BANG!** They’re out." : "*click* ... survived."),
     };
   }
 
   await render(table, buildGameEmbed(table, "revolver"));
-  await sleep(1400);
+  await sleep(1100);
 
   // After a call: discard pile, reroll rank, advance turn
   table.pile = [];
@@ -448,6 +604,7 @@ async function resolveBullshit(table, callerId) {
   }
 
   await render(table);
+  await maybeAutoBotTurn(table);
 }
 
 async function advanceNoCall(table) {
@@ -467,6 +624,38 @@ async function advanceNoCall(table) {
   }
 
   await render(table);
+  await maybeAutoBotTurn(table);
+}
+
+async function maybeAutoBotTurn(table) {
+  if (table.state !== "playing") return;
+  if (!table.currentPlayerId) return;
+  if (!isBotId(table.currentPlayerId)) return;
+
+  const botId = table.currentPlayerId;
+  const bot = table.players.get(botId);
+  if (!bot?.alive) return;
+
+  // tiny delay so it feels human-ish
+  await sleep(800);
+
+  if (table.pendingPlay) return;
+
+  const played = pickBotPlay(bot, table.tableRank);
+  table.pendingPlay = { playerId: botId, cards: played, count: played.length };
+  table.pile.push(...played);
+
+  // Start a shorter challenge window in bot turns
+  if (table.challengeTimer) clearTimeout(table.challengeTimer);
+  table.challengeTimer = setTimeout(() => {
+    const t = tablesById.get(table.tableId);
+    if (t && t.pendingPlay) advanceNoCall(t).catch(() => {});
+  }, 10_000);
+
+  await render(table);
+
+  // If humans are testing solo, let bots sometimes call on human plays too (handled elsewhere),
+  // but for bot plays: optionally have other bots "nope" sometimes (kept simple)
 }
 
 async function handleButton(interaction, table, action) {
@@ -516,8 +705,8 @@ async function handleButton(interaction, table, action) {
         return;
       }
 
-      // Refund if paid
-      if (p.paid && Number(p.buyIn) > 0) {
+      // Refund if paid (real players only)
+      if (p.paid && Number(p.buyIn) > 0 && !isBotId(p.userId)) {
         const amt = Number(p.buyIn);
         try {
           await creditUser(table.guildId, userId, amt, "bullshit_refund", { tableId: table.tableId });
@@ -538,7 +727,7 @@ async function handleButton(interaction, table, action) {
         await interaction.reply({ content: "❌ Join first.", flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
       }
-      // modal will be handled via handleInteraction()
+
       const modal = new ModalBuilder()
         .setCustomId(modalId("buyin", table.tableId))
         .setTitle("Set Buy-in");
@@ -551,8 +740,37 @@ async function handleButton(interaction, table, action) {
         .setRequired(true);
 
       modal.addComponents(new ActionRowBuilder().addComponents(amount));
-
       await interaction.showModal(modal);
+      return;
+    }
+
+    if (action === "addbots") {
+      if (userId !== table.hostId) {
+        await interaction.reply({ content: "❌ Host only.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
+      }
+
+      table.testMode = true;
+      const added = addBotsUpToMin(table);
+      await render(table);
+
+      await interaction.reply({
+        content: added > 0 ? `🧪 Added **${added}** test bot(s).` : "🧪 No bot slots available (table full or already at minimum).",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return;
+    }
+
+    if (action === "clearbots") {
+      if (userId !== table.hostId) {
+        await interaction.reply({ content: "❌ Host only.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
+      }
+      clearBots(table);
+      // Keep testMode true if you want it on; or disable if no bots:
+      table.testMode = [...table.players.keys()].some(isBotId);
+      await render(table);
+      await interaction.reply({ content: "🧪 Cleared test bots.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
     }
 
@@ -562,14 +780,19 @@ async function handleButton(interaction, table, action) {
         return;
       }
 
-      if (table.players.size < MIN_PLAYERS) {
+      if (!table.testMode && table.players.size < MIN_PLAYERS) {
         await interaction.reply({ content: `❌ Need at least **${MIN_PLAYERS}** players.`, flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
       }
 
-      if (![...table.players.values()].every((p) => p.paid)) {
+      if (![...table.players.values()].every((p) => isBotId(p.userId) || p.paid)) {
         await interaction.reply({ content: "❌ Everyone must set & pay a buy-in before starting.", flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
+      }
+
+      // If testMode is enabled but still below MIN_PLAYERS, auto-top-up to MIN_PLAYERS
+      if (table.testMode && table.players.size < MIN_PLAYERS) {
+        addBotsUpToMin(table);
       }
 
       await interaction.deferUpdate().catch(() => {});
@@ -597,6 +820,11 @@ async function handleButton(interaction, table, action) {
         await interaction.reply({ content: "❌ Not your turn.", flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
       }
+      if (isBotId(userId)) {
+        await interaction.reply({ content: "🤖 Bots don’t need hands.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
+      }
+
       const p = table.players.get(userId);
       const { summary, lines } = formatHand(p?.hand || [], table.tableRank);
       await interaction.reply({
@@ -611,12 +839,15 @@ async function handleButton(interaction, table, action) {
         await interaction.reply({ content: "❌ Not your turn.", flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
       }
+      if (isBotId(userId)) {
+        await interaction.reply({ content: "🤖 Bots play automatically.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
+      }
       if (table.pendingPlay) {
         await interaction.reply({ content: "ℹ️ You already played. Waiting for calls…", flags: MessageFlags.Ephemeral }).catch(() => {});
         return;
       }
 
-      // modal handled via handleInteraction()
       const modal = new ModalBuilder()
         .setCustomId(modalId("play", table.tableId))
         .setTitle("Play Cards");
@@ -629,7 +860,6 @@ async function handleButton(interaction, table, action) {
         .setRequired(true);
 
       modal.addComponents(new ActionRowBuilder().addComponents(cards));
-
       await interaction.showModal(modal);
       return;
     }
@@ -689,7 +919,13 @@ async function handleBuyInModal(interaction, table) {
 
   const p = table.players.get(userId);
 
-  // If already paid: only allow increasing (avoids easy exploit/refund cycling)
+  // Bots shouldn't set buy-ins (but they also won't trigger this modal)
+  if (isBotId(userId)) {
+    await interaction.reply({ content: "🤖 Bots can’t set buy-ins.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+
+  // If already paid: only allow increasing
   if (p.paid && Number(p.buyIn) > 0) {
     const prev = Number(p.buyIn);
     if (buyIn <= prev) {
@@ -744,6 +980,11 @@ async function handlePlayModal(interaction, table) {
     return;
   }
 
+  if (isBotId(userId)) {
+    await interaction.reply({ content: "🤖 Bots play automatically.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
+
   if (table.pendingPlay) {
     await interaction.reply({ content: "ℹ️ You already played. Waiting for calls…", flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
@@ -780,13 +1021,22 @@ async function handlePlayModal(interaction, table) {
   table.pendingPlay = { playerId: userId, cards: played, count: played.length };
   table.pile.push(...played);
 
-  // challenge window auto-advance (no spam, no forced ephemerals)
+  // challenge window auto-advance
+  if (table.challengeTimer) clearTimeout(table.challengeTimer);
   table.challengeTimer = setTimeout(() => {
     const t = tablesById.get(table.tableId);
     if (t && t.pendingPlay) advanceNoCall(t).catch(() => {});
   }, 18_000);
 
   await render(table);
+
+  // In test mode, bots may call sometimes
+  if (table.testMode) {
+    setTimeout(() => {
+      const t = tablesById.get(table.tableId);
+      if (t && t.pendingPlay) botMaybeCall(t).catch(() => {});
+    }, 2500);
+  }
 
   await interaction.reply({
     content: `✅ Played **${played.length}** card(s), claiming **${played.length}× ${table.tableRank}**.`,
@@ -825,6 +1075,7 @@ async function startFromHub(interaction, opts = {}) {
     players: new Map(),
     hostSecurity: null,
     message: null,
+    testMode: false,
 
     // game runtime
     tableRank: null,
