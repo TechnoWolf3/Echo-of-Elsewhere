@@ -17,7 +17,6 @@ function loadEvents() {
       console.warn(`[BOTGAMES] Skipped ${file}: missing id or create()`);
       continue;
     }
-
     events.push(mod);
   }
 

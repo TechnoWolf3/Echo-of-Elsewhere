@@ -3,142 +3,243 @@ const {
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
-  PermissionsBitField,
 } = require("discord.js");
 
 const config = require("../data/botgames/config");
 const { loadEvents } = require("../data/botgames");
+const economy = require("./economy"); // expects getBalance/add/remove
 
-let lastSpawnAt = 0;
+// One active event at a time (first in best dressed)
 let activeEvent = null;
 
-function pickWeighted(events) {
-  const total = events.reduce((sum, e) => sum + (Number(e.weight) || 1), 0);
-  let roll = Math.random() * total;
+// Timers so we can clear/rebuild on restart
+const scheduledTimeouts = new Set();
 
+function dbg(...args) {
+  if (config.debug) console.log("[BOTGAMES]", ...args);
+}
+
+function clearTimers() {
+  for (const t of scheduledTimeouts) clearTimeout(t);
+  scheduledTimeouts.clear();
+}
+
+function nowBrisbane() {
+  const offsetMs = (config.tzOffsetHours || 10) * 60 * 60 * 1000;
+  const d = new Date(Date.now() + offsetMs);
+  // treat shifted date as "UTC" getters
+  return {
+    date: d,
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+    second: d.getUTCSeconds(),
+    dow: d.getUTCDay(), // 0 Sun .. 6 Sat
+    ymd: d.toISOString().slice(0, 10),
+  };
+}
+
+function brisbaneToUtcMs(year, month, day, hour, minute, second) {
+  const offset = config.tzOffsetHours || 10;
+  return Date.UTC(year, month - 1, day, hour - offset, minute, second, 0);
+}
+
+function randomTimeInWindow(ymdParts, window) {
+  const { year, month, day } = ymdParts;
+  const start = window.startHour;
+  const end = window.endHour;
+
+  const hour = start + Math.floor(Math.random() * Math.max(1, end - start));
+  const minute = Math.floor(Math.random() * 60);
+  const second = Math.floor(Math.random() * 60);
+
+  const utcMs = brisbaneToUtcMs(year, month, day, hour, minute, second);
+  return { hour, minute, second, utcMs };
+}
+
+function pickWeighted(events) {
+  const total = events.reduce((sum, e) => sum + (e.weight || 1), 0);
+  let roll = Math.random() * total;
   for (const e of events) {
-    roll -= Number(e.weight) || 1;
+    roll -= e.weight || 1;
     if (roll <= 0) return e;
   }
   return events[0];
 }
 
-async function findPostChannel(guild) {
-  // Prefer configured channel
-  if (config.channelId) {
-    const ch = await guild.channels.fetch(config.channelId).catch(() => null);
-    if (ch?.isTextBased?.()) return ch;
-  }
-
-  // System channel next
-  if (guild.systemChannelId) {
-    const sys = await guild.channels.fetch(guild.systemChannelId).catch(() => null);
-    if (sys?.isTextBased?.()) return sys;
-  }
-
-  // Fallback: first channel we can send in
-  for (const ch of guild.channels.cache.values()) {
-    if (!ch?.isTextBased?.()) continue;
-    const me = guild.members.me;
-    if (!me) return ch;
-
-    const perms = ch.permissionsFor(me);
-    if (!perms) continue;
-    if (perms.has(PermissionsBitField.Flags.ViewChannel) && perms.has(PermissionsBitField.Flags.SendMessages)) {
-      return ch;
-    }
-  }
-
-  return null;
-}
-
-// -----------------------------
-// DB helpers (uses existing tables: user_balances)
-// -----------------------------
-async function getBalance(db, guildId, userId) {
-  const res = await db.query(
-    `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
-    [guildId, userId]
-  );
-  return Number(res.rows?.[0]?.balance ?? 0);
-}
-
-async function addBalance(db, guildId, userId, amount) {
-  await db.query(
-    `
-    INSERT INTO user_balances (guild_id, user_id, balance)
-    VALUES ($1, $2, $3)
-    ON CONFLICT (guild_id, user_id)
-    DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance
-    `,
-    [guildId, userId, amount]
-  );
-}
-
-async function removeBalance(db, guildId, userId, amount) {
-  // transaction + row lock so balance can't go negative with concurrent clicks
-  const client = await db.connect();
-  try {
-    await client.query("BEGIN");
-    const res = await client.query(
-      `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2 FOR UPDATE`,
-      [guildId, userId]
+async function ensureTables(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS bot_games_schedule (
+      guild_id TEXT NOT NULL,
+      day TEXT NOT NULL, -- YYYY-MM-DD (Brisbane)
+      slot INTEGER NOT NULL, -- 1 or 2
+      scheduled_at TIMESTAMPTZ NOT NULL,
+      fired BOOLEAN NOT NULL DEFAULT FALSE,
+      fired_at TIMESTAMPTZ,
+      PRIMARY KEY (guild_id, day, slot)
     );
-
-    const current = Number(res.rows?.[0]?.balance ?? 0);
-    if (current < amount) {
-      await client.query("ROLLBACK");
-      return { ok: false, balance: current };
-    }
-
-    if (!res.rows?.length) {
-      // ensure row exists (edge case)
-      await client.query(
-        `INSERT INTO user_balances (guild_id, user_id, balance) VALUES ($1,$2,$3)
-         ON CONFLICT (guild_id, user_id) DO NOTHING`,
-        [guildId, userId, 0]
-      );
-    }
-
-    await client.query(
-      `UPDATE user_balances SET balance = balance - $3 WHERE guild_id=$1 AND user_id=$2`,
-      [guildId, userId, amount]
-    );
-
-    await client.query("COMMIT");
-    return { ok: true, balance: current - amount };
-  } catch (e) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw e;
-  } finally {
-    client.release();
-  }
+  `);
 }
 
-// -----------------------------
-// Spawning
-// -----------------------------
-async function maybeSpawn(client) {
+async function getOrCreateTodayPlan(db, guildId) {
+  const bn = nowBrisbane();
+  const day = bn.ymd;
+
+  const existing = await db.query(
+    `SELECT day, slot, scheduled_at, fired FROM bot_games_schedule
+     WHERE guild_id=$1 AND day=$2
+     ORDER BY slot ASC`,
+    [guildId, day]
+  );
+
+  if (existing.rows.length) {
+    return { day, rows: existing.rows };
+  }
+
+  // Roll the day
+  const weekend = bn.dow === 0 || bn.dow === 6;
+  const chances = weekend ? config.chancesWeekend : config.chancesWeekday;
+
+  const r = Math.random();
+  let count = 0;
+  if (r < chances.none) count = 0;
+  else if (r < chances.none + chances.one) count = 1;
+  else count = 2;
+
+  dbg(`Daily roll for ${day} (${weekend ? "weekend" : "weekday"}):`, count);
+
+  const ymdParts = { year: bn.year, month: bn.month, day: bn.day };
+
+  const inserts = [];
+  if (count === 1) {
+    const t = randomTimeInWindow(ymdParts, config.windows.oneEvent);
+    inserts.push({ slot: 1, scheduled_at: new Date(t.utcMs) });
+    dbg(`Planned 1 event at ${t.hour.toString().padStart(2,"0")}:${t.minute.toString().padStart(2,"0")}`);
+  } else if (count === 2) {
+    const t1 = randomTimeInWindow(ymdParts, config.windows.twoEventMorning);
+    const t2 = randomTimeInWindow(ymdParts, config.windows.twoEventAfternoon);
+    inserts.push({ slot: 1, scheduled_at: new Date(t1.utcMs) });
+    inserts.push({ slot: 2, scheduled_at: new Date(t2.utcMs) });
+    dbg(`Planned 2 events at ${t1.hour.toString().padStart(2,"0")}:${t1.minute.toString().padStart(2,"0")} and ${t2.hour.toString().padStart(2,"0")}:${t2.minute.toString().padStart(2,"0")}`);
+  }
+
+  for (const row of inserts) {
+    await db.query(
+      `INSERT INTO bot_games_schedule (guild_id, day, slot, scheduled_at)
+       VALUES ($1,$2,$3,$4)`,
+      [guildId, day, row.slot, row.scheduled_at]
+    );
+  }
+
+  const rows = inserts.map((r) => ({
+    day,
+    slot: r.slot,
+    scheduled_at: r.scheduled_at,
+    fired: false,
+  }));
+
+  return { day, rows };
+}
+
+async function scheduleUpcoming(client) {
   if (!config.enabled) return;
-  if (activeEvent) {
-    // expire unclaimed
-    if (Date.now() > activeEvent.expiresAt && !activeEvent.claimedUserId) {
-      try {
-        const guild = await client.guilds.fetch(activeEvent.guildId).catch(() => null);
-        const ch = guild ? await guild.channels.fetch(activeEvent.channelId).catch(() => null) : null;
-        const msg = ch?.isTextBased?.() ? await ch.messages.fetch(activeEvent.messageId).catch(() => null) : null;
-        if (msg) {
-          await msg.edit({ components: [] }).catch(() => {});
-        }
-      } catch (_) {}
-      activeEvent = null;
-    }
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+
+  const db = client.db;
+  if (!db?.query) {
+    console.warn("[BOTGAMES] client.db not found; bot games scheduler disabled.");
     return;
   }
 
+  await ensureTables(db);
+
+  // Always ensure today's plan exists (or load it)
+  const plan = await getOrCreateTodayPlan(db, guild.id);
+
+  // Load any unfired rows for today whose scheduled time is still in the future
+  const res = await db.query(
+    `SELECT day, slot, scheduled_at
+     FROM bot_games_schedule
+     WHERE guild_id=$1 AND day=$2 AND fired=FALSE
+     ORDER BY slot ASC`,
+    [guild.id, plan.day]
+  );
+
   const now = Date.now();
-  if (now - lastSpawnAt < config.minIntervalMs) return;
-  if (Math.random() > config.spawnChance) return;
+  for (const row of res.rows) {
+    const when = new Date(row.scheduled_at).getTime();
+    if (when <= now) {
+      // If bot was offline and missed it, don't fire late (especially past 10PM).
+      dbg(`Missed slot ${row.slot} for ${row.day}, marking fired without spawning.`);
+      await db.query(
+        `UPDATE bot_games_schedule SET fired=TRUE, fired_at=NOW()
+         WHERE guild_id=$1 AND day=$2 AND slot=$3`,
+        [guild.id, row.day, row.slot]
+      );
+      continue;
+    }
+
+    const delay = when - now;
+    const t = setTimeout(() => spawnAtSlot(client, row.day, row.slot), delay);
+    scheduledTimeouts.add(t);
+
+    dbg(`Scheduled slot ${row.slot} for ${row.day} in ${(delay/1000/60).toFixed(1)} min`);
+  }
+
+  // Also schedule a rebuild just after next midnight Brisbane
+  scheduleNextMidnightRebuild(client);
+}
+
+function scheduleNextMidnightRebuild(client) {
+  const bn = nowBrisbane();
+  // next midnight in Brisbane = tomorrow 00:00:05
+  const nextDay = new Date(Date.UTC(bn.year, bn.month - 1, bn.day, 0, 0, 0, 0) + 24*60*60*1000);
+  // nextDay is in "shifted UTC"; convert back to real UTC by subtracting offset
+  const offsetMs = (config.tzOffsetHours || 10) * 60 * 60 * 1000;
+  const nextMidnightUtcMs = nextDay.getTime() - offsetMs + 5000; // +5s buffer
+
+  const delay = Math.max(10_000, nextMidnightUtcMs - Date.now());
+  const t = setTimeout(async () => {
+    clearTimers();
+    await scheduleUpcoming(client);
+  }, delay);
+
+  scheduledTimeouts.add(t);
+  dbg(`Next midnight rebuild in ${(delay/1000/60).toFixed(1)} min`);
+}
+
+async function spawnAtSlot(client, day, slot) {
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+
+  const db = client.db;
+  if (!db?.query) return;
+
+  // If an event is currently active, delay a bit (but don't go past 10PM AEST)
+  if (activeEvent) {
+    dbg("Active event exists; delaying spawn 10 minutes.");
+    const delayMs = 10 * 60 * 1000;
+    const t = setTimeout(() => spawnAtSlot(client, day, slot), delayMs);
+    scheduledTimeouts.add(t);
+    return;
+  }
+
+  // Mark fired first to prevent double firing on restarts
+  await db.query(
+    `UPDATE bot_games_schedule
+     SET fired=TRUE, fired_at=NOW()
+     WHERE guild_id=$1 AND day=$2 AND slot=$3 AND fired=FALSE`,
+    [guild.id, day, slot]
+  );
+
+  const channel = await guild.channels.fetch(config.channelId).catch(() => null);
+  if (!channel || !channel.isTextBased()) {
+    console.warn("[BOTGAMES] channelId is missing/invalid or not text-based:", config.channelId);
+    return;
+  }
 
   const events = loadEvents();
   if (!events.length) return;
@@ -146,17 +247,10 @@ async function maybeSpawn(client) {
   const chosen = pickWeighted(events);
   const instance = chosen.create();
 
-  // First available guild (your bot is single-guild anyway)
-  const guild = client.guilds.cache.first();
-  if (!guild) return;
-
-  const channel = await findPostChannel(guild);
-  if (!channel) return;
-
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`botgames:claim:${chosen.id}`)
-      .setLabel("Claim & Play")
+      .setCustomId("botgames_play")
+      .setLabel("Play")
       .setStyle(ButtonStyle.Success)
   );
 
@@ -166,143 +260,110 @@ async function maybeSpawn(client) {
       {
         title: instance.title,
         description: instance.description,
-        color: 0x5865F2,
-        footer: { text: `Expires in ${config.expireMinutes} minutes` },
+        color: 0x5865f2,
       },
     ],
     components: [row],
   });
 
   activeEvent = {
-    guildId: guild.id,
-    channelId: channel.id,
-    messageId: msg.id,
     eventId: chosen.id,
-    state: instance,
-    claimedUserId: null,
-    createdAt: now,
-    expiresAt: now + config.expireMinutes * 60_000,
+    bet: instance.bet ?? 0,
+    messageId: msg.id,
+    channelId: msg.channel.id,
+    expiresAt: Date.now() + (config.expireMinutes || 10) * 60 * 1000,
   };
 
-  lastSpawnAt = now;
+  // Auto-expire if nobody claims
+  const expireTimer = setTimeout(async () => {
+    if (!activeEvent) return;
+    if (activeEvent.messageId !== msg.id) return;
+
+    activeEvent = null;
+    await msg.edit({
+      embeds: [
+        {
+          title: "⌛ Bot Game expired",
+          description: "No one claimed it in time. Next one will pop up later 👀",
+          color: 0x2b2d31,
+        },
+      ],
+      components: [],
+    }).catch(() => {});
+  }, (config.expireMinutes || 10) * 60 * 1000);
+
+  scheduledTimeouts.add(expireTimer);
 }
 
-function startScheduler(client) {
-  setInterval(() => {
-    maybeSpawn(client).catch((e) => console.error("[BOTGAMES] spawn tick failed:", e));
-  }, config.tickMs);
-}
-
-// -----------------------------
-// Interaction handling
-// Returns true if handled
-// -----------------------------
 async function handleInteraction(interaction) {
-  if (!interaction.isButton?.()) return false;
-  if (typeof interaction.customId !== "string") return false;
-  if (!interaction.customId.startsWith("botgames:claim:")) return false;
-
-  if (!interaction.inGuild?.() || !interaction.guildId) {
-    await interaction.reply({ content: "❌ This only works in a server.", flags: MessageFlags.Ephemeral });
-    return true;
-  }
+  if (!interaction.isButton()) return;
+  if (interaction.customId !== "botgames_play") return;
 
   if (!activeEvent) {
-    await interaction.reply({ content: "Too slow — there isn't an active Bot Game right now.", flags: MessageFlags.Ephemeral });
-    return true;
-  }
-
-  // Wrong message or wrong event -> ignore but ephemeral feedback
-  if (interaction.message?.id !== activeEvent.messageId) {
-    await interaction.reply({ content: "That Bot Game is no longer active.", flags: MessageFlags.Ephemeral });
-    return true;
+    return interaction.reply({
+      content: "Too slow — that Bot Game is no longer available.",
+      flags: MessageFlags.Ephemeral,
+    });
   }
 
   if (Date.now() > activeEvent.expiresAt) {
     activeEvent = null;
-    await interaction.update({ components: [] }).catch(() => {});
-    return true;
-  }
-
-  if (activeEvent.claimedUserId) {
-    await interaction.reply({
-      content: `Already claimed by <@${activeEvent.claimedUserId}>. First in best dressed 😈`,
+    return interaction.reply({
+      content: "Too slow — that Bot Game expired.",
       flags: MessageFlags.Ephemeral,
     });
-    return true;
   }
 
-  // Claim it
-  activeEvent.claimedUserId = interaction.user.id;
+  const bet = Number(activeEvent.bet || 0);
+  const userId = interaction.user.id;
 
-  // Disable button immediately so others stop clicking
-  const disabledRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("botgames:claimed")
-      .setLabel("Claimed")
-      .setStyle(ButtonStyle.Secondary)
-      .setDisabled(true)
-  );
-
-  const db = interaction.client?.db;
-  if (!db?.query) {
-    activeEvent = null;
-    await interaction.update({
-      embeds: [{ title: "⚠️ Bot Game Error", description: "Database not available.", color: 0xED4245 }],
-      components: [],
-    });
-    return true;
+  if (bet > 0) {
+    const bal = await economy.getBalance(userId);
+    if (bal < bet) {
+      return interaction.reply({
+        content: `You need **$${bet.toLocaleString()}** to play this one.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    await economy.remove(userId, bet);
   }
 
-  const bet = Number(activeEvent.state?.bet || 0);
-  if (bet <= 0) {
-    activeEvent = null;
-    await interaction.update({
-      embeds: [{ title: "⚠️ Bot Game Error", description: "Invalid bet configuration.", color: 0xED4245 }],
-      components: [],
-    });
-    return true;
-  }
-
-  // Take bet
-  const taken = await removeBalance(db, interaction.guildId, interaction.user.id, bet);
-  if (!taken.ok) {
-    activeEvent.claimedUserId = null; // allow someone else
-    await interaction.reply({
-      content: `You need **$${bet.toLocaleString()}** to play. You currently have **$${Number(taken.balance).toLocaleString()}**.`,
-      flags: MessageFlags.Ephemeral,
-    });
-    return true;
-  }
-
+  // Double or Nothing (50/50)
   const win = Math.random() < 0.5;
 
-  if (win) {
-    await addBalance(db, interaction.guildId, interaction.user.id, bet * 2);
+  if (win && bet > 0) {
+    await economy.add(userId, bet * 2);
   }
 
   const resultEmbed = {
-    title: win ? "💰 Double or Nothing — WIN!" : "💀 Double or Nothing — LOSE!",
-    description: win
-      ? `**${interaction.user}** doubled it!\n\nWager: **$${bet.toLocaleString()}**\nPayout: **$${(bet * 2).toLocaleString()}**`
-      : `**${interaction.user}** got smoked.\n\nLost: **$${bet.toLocaleString()}**`,
-    color: win ? 0x57F287 : 0xED4245,
+    title: win ? "💰 You Won!" : "💀 You Lost!",
+    description:
+      bet > 0
+        ? win
+          ? `${interaction.user} doubled **$${bet.toLocaleString()}**!`
+          : `${interaction.user} lost **$${bet.toLocaleString()}**.`
+        : win
+          ? `${interaction.user} won!`
+          : `${interaction.user} lost!`,
+    color: win ? 0x57f287 : 0xed4245,
   };
 
   activeEvent = null;
 
-  await interaction.update({
+  return interaction.update({
     embeds: [resultEmbed],
-    components: [disabledRow],
-    content: " ",
+    components: [],
   });
-
-  // Clean up components after a moment
-  setTimeout(() => {
-    interaction.message?.edit({ components: [] }).catch(() => {});
-  }, 15_000);
-
-  return true;
 }
 
-module.exports = { startScheduler, handleInteraction };
+// Backwards compatible name (your index.js likely calls startScheduler)
+async function init(client) {
+  clearTimers();
+  await scheduleUpcoming(client);
+}
+
+async function startScheduler(client) {
+  return init(client);
+}
+
+module.exports = { init, startScheduler, handleInteraction };
