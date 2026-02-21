@@ -6,6 +6,7 @@
   "roles": [
     { "roleId": "1469552893588934789", "buttonName": "Events", "emoji": "📅", "style": "PRIMARY" },
     { "roleId": "1469552952204329122", "buttonName": "Bot Updates", "emoji": "🧪", "style": "SECONDARY" },
-    { "roleId": "1469553005358747831", "buttonName": "Feedback", "emoji": "💬", "style": "SECONDARY" }
+    { "roleId": "1469553005358747831", "buttonName": "Feedback", "emoji": "💬", "style": "SECONDARY" },
+    { "roleId": "1474683699344838809", "buttonName": "Bot Games", "emoji": "🎲", "style": "SECONDARY" }
   ]
 }
