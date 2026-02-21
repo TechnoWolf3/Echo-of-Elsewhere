@@ -4,6 +4,7 @@ const blackjackGame = require("./data/games/blackjack");
 const rouletteGame = require("./data/games/roulette");
 const higherLowerGame = require("./data/games/higherLower");
 const bullshitGame = require("./data/games/bullshit");
+const botGames = require("./utils/botGames");
 
 const fs = require("fs");
 const path = require("path");
@@ -526,7 +527,9 @@ function loadCommands() {
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
-  loadCommands();
+  \1
+  // 🎮 Ambient Bot Games (random, first-claim mini games)
+  botGames.startScheduler(client);
 
   if (client.db) {
     try {
@@ -565,6 +568,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
+
+  // 🎮 Bot Games (random events)
+  try {
+    const handled = await botGames.handleInteraction(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[BOTGAMES] interaction failed:", e);
+  }
 
 
   // ✅ Self-assign role boards (JSON-driven button roles)
