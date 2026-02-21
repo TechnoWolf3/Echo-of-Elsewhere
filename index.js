@@ -527,7 +527,6 @@ function loadCommands() {
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
-  \1
   // 🎮 Ambient Bot Games (random, first-claim mini games)
   botGames.startScheduler(client);
 
