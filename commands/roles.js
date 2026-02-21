@@ -1,12 +1,16 @@
 // commands/roles.js
-const { SlashCommandBuilder, PermissionFlagsBits } = require("discord.js");
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  MessageFlags,
+} = require("discord.js");
 const { listBoardIds, loadBoard, buildBoardMessage } = require("../utils/roleBoards");
 
-
+// ✅ This command is for JSON button boards, so it should use self_role_boards
 async function upsertBoardMessage(db, { guildId, boardId, channelId, messageId }) {
   await db.query(
     `
-    INSERT INTO role_boards (guild_id, board_id, channel_id, message_id, updated_at)
+    INSERT INTO self_role_boards (guild_id, board_id, channel_id, message_id, updated_at)
     VALUES ($1, $2, $3, $4, NOW())
     ON CONFLICT (guild_id, board_id)
     DO UPDATE SET channel_id = EXCLUDED.channel_id, message_id = EXCLUDED.message_id, updated_at = NOW()
@@ -17,7 +21,9 @@ async function upsertBoardMessage(db, { guildId, boardId, channelId, messageId }
 
 async function getBoardMessageRow(db, { guildId, boardId }) {
   const res = await db.query(
-    `SELECT guild_id, board_id, channel_id, message_id FROM role_boards WHERE guild_id=$1 AND board_id=$2`,
+    `SELECT guild_id, board_id, channel_id, message_id
+     FROM self_role_boards
+     WHERE guild_id=$1 AND board_id=$2`,
     [guildId, boardId]
   );
   return res.rows[0] || null;
@@ -29,9 +35,7 @@ module.exports = {
     .setDescription("Manage self-assign role boards")
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     .addSubcommand((s) =>
-      s
-        .setName("list")
-        .setDescription("List available role boards from /data/roleboards")
+      s.setName("list").setDescription("List available role boards from /data/roleboards")
     )
     .addSubcommand((s) =>
       s
@@ -56,7 +60,10 @@ module.exports = {
   async execute(interaction) {
     const db = interaction.client?.db;
     if (!db?.query) {
-      return interaction.reply({ content: "Database is not initialised on the client.", ephemeral: true });
+      return interaction.reply({
+        content: "Database is not initialised on the client.",
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
     const sub = interaction.options.getSubcommand();
@@ -64,9 +71,15 @@ module.exports = {
     if (sub === "list") {
       const ids = listBoardIds();
       if (!ids.length) {
-        return interaction.reply({ content: "No boards found in `data/roleboards/*.json`.", ephemeral: true });
+        return interaction.reply({
+          content: "No boards found in `data/roleboards/*.json`.",
+          flags: MessageFlags.Ephemeral,
+        });
       }
-      return interaction.reply({ content: `Boards:\n- ${ids.join("\n- ")}`, ephemeral: true });
+      return interaction.reply({
+        content: `Boards:\n- ${ids.join("\n- ")}`,
+        flags: MessageFlags.Ephemeral,
+      });
     }
 
     if (sub === "post") {
@@ -78,7 +91,10 @@ module.exports = {
 
       const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
       if (!channel || !channel.isTextBased()) {
-        return interaction.reply({ content: "That channel isn't a text channel I can post in.", ephemeral: true });
+        return interaction.reply({
+          content: "That channel isn't a text channel I can post in.",
+          flags: MessageFlags.Ephemeral,
+        });
       }
 
       const payload = buildBoardMessage(board);
@@ -96,7 +112,7 @@ module.exports = {
 
       return interaction.reply({
         content: `Posted **${boardId}** in ${channel}. (Saved for persistence)`,
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     }
 
@@ -108,27 +124,33 @@ module.exports = {
       if (!row) {
         return interaction.reply({
           content: `I don't have a posted message saved for **${boardId}** yet. Use \`/roles post board:${boardId}\` first.`,
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
       const channel = await interaction.guild.channels.fetch(row.channel_id).catch(() => null);
       if (!channel || !channel.isTextBased()) {
-        return interaction.reply({ content: "Saved channel no longer exists or isn't text-based.", ephemeral: true });
+        return interaction.reply({
+          content: "Saved channel no longer exists or isn't text-based.",
+          flags: MessageFlags.Ephemeral,
+        });
       }
 
       const msg = await channel.messages.fetch(row.message_id).catch(() => null);
       if (!msg) {
         return interaction.reply({
           content: "I couldn't find the saved message (it may have been deleted). Re-post it with `/roles post`.",
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
       }
 
       const payload = buildBoardMessage(board);
       await msg.edit(payload);
 
-      return interaction.reply({ content: `Synced **${boardId}**.`, ephemeral: true });
+      return interaction.reply({
+        content: `Synced **${boardId}**.`,
+        flags: MessageFlags.Ephemeral,
+      });
     }
   },
 };
