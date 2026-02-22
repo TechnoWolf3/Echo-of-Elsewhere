@@ -6,6 +6,9 @@ const higherLowerGame = require("./data/games/higherLower");
 const bullshitGame = require("./data/games/bullshit");
 const botGames = require("./utils/botGames");
 
+// 📌 Persistent "Bot Features" hub (stays working after restarts)
+const featuresHub = require("./data/features");
+
 const fs = require("fs");
 const path = require("path");
 const {
@@ -530,6 +533,13 @@ client.once(Events.ClientReady, async () => {
   // 🎮 Ambient Bot Games (random, first-claim mini games)
   botGames.startScheduler(client);
 
+  // 📌 Ensure the persistent Bot Features hub message exists + is refreshed
+  try {
+    await featuresHub.ensure(client);
+  } catch (e) {
+    console.error('[featuresHub] ensure failed:', e);
+  }
+
   if (client.db) {
     try {
       await ensureAchievementTables(client.db);
@@ -565,6 +575,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
     interaction.customId?.startsWith("help:")
   ) {
     return;
+  }
+
+  // 📌 Persistent Bot Features hub interactions (works across restarts)
+  if (
+    (interaction.isButton?.() || interaction.isAnySelectMenu?.()) &&
+    typeof interaction.customId === "string" &&
+    interaction.customId.startsWith("features:")
+  ) {
+    try {
+      const handled = await featuresHub.handleInteraction(interaction);
+      if (handled) return;
+    } catch (e) {
+      console.error("[featuresHub] interaction failed:", e);
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.followUp({ content: "❌ Something went wrong handling that menu.", flags: MessageFlags.Ephemeral });
+        } else {
+          await interaction.reply({ content: "❌ Something went wrong handling that menu.", flags: MessageFlags.Ephemeral });
+        }
+      } catch (_) {}
+      return;
+    }
   }
 
 
