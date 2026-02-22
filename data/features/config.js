@@ -11,5 +11,5 @@ module.exports = {
   title: "✨ The Place — Bot Features",
   description: `Pick a category below to see what Echo can do.\n\nYou’ll get a clean panel you can scroll through — without this channel turning into a novel.\n\n⚙️ This hub auto-refreshes on bot restart so new features show up automatically.`,
 
-  color: 0x9b59b6, // purple-ish; change if you want
+  color: 0x0875AF, // Server blue.
 };
