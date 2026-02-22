@@ -120,17 +120,17 @@ function buildEntryPanel(userId, category, entry) {
  * - Upserts the message reference
  * - Edits the existing message on restart so new features appear automatically
  */
-async function ensure(client) {
-  const channelId = cfg.FEATURES_CHANNEL_ID;
+async function ensure(client, opts = {}) {
+  const channelId = opts.channelId || cfg.FEATURES_CHANNEL_ID;
   if (!channelId) {
-    console.warn("[FEATURES] FEATURES_CHANNEL_ID not set — skipping persistent features hub.");
+    console.warn("[FEATURES] No channelId provided for persistent features hub — skipping.");
     return false;
   }
 
   await store.ensureTable(client.db);
 
   // Which guild is the hub in?
-  const guildId = cfg.FEATURES_GUILD_ID || (client.guilds.cache.first()?.id ?? "");
+  const guildId = opts.guildId || cfg.FEATURES_GUILD_ID || (client.guilds.cache.first()?.id ?? "");
   if (!guildId) {
     console.warn("[FEATURES] No guild available — skipping.");
     return false;

@@ -535,7 +535,7 @@ client.once(Events.ClientReady, async () => {
 
   // 📌 Ensure the persistent Bot Features hub message exists + is refreshed
   try {
-    await featuresHub.ensure(client);
+    await featuresHub.ensure(client, { channelId: "1467848400555999264" });
   } catch (e) {
     console.error('[featuresHub] ensure failed:', e);
   }
