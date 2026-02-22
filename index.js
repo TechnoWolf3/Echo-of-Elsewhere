@@ -524,6 +524,11 @@ function loadCommands() {
   }
 }
 
+
+// 🔌 Load slash command handlers into memory (required for registered commands to work)
+loadCommands();
+console.log(`[CMD] Loaded ${client.commands.size} command file(s).`);
+
 /* -----------------------------
    ✅ Ready
 -------------------------------- */
@@ -535,7 +540,7 @@ client.once(Events.ClientReady, async () => {
 
   // 📌 Ensure the persistent Bot Features hub message exists + is refreshed
   try {
-    await featuresHub.ensure(client, { channelId: "1467848400555999264" });
+    await featuresHub.ensure(client);
   } catch (e) {
     console.error('[featuresHub] ensure failed:', e);
   }
