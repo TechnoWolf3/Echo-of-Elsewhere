@@ -549,9 +549,6 @@ console.log(`[CMD] Loaded ${client.commands.size} command file(s).`);
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 
-  // 🎮 Ambient Bot Games (random, first-claim mini games)
-  botGames.startScheduler(client);
-
   // 📌 Ensure the persistent Bot Features hub message exists + is refreshed
   try {
     await featuresHub.ensure(client);
@@ -563,6 +560,9 @@ client.once(Events.ClientReady, async () => {
     try {
       await ensureAchievementTables(client.db);
       await ensureEconomyTables(client.db);
+
+      // Start Bot Games AFTER DB tables exist
+      botGames.startScheduler(client);
 
       const count = await syncAchievements(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements/*`);
