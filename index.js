@@ -434,12 +434,26 @@ CREATE TABLE IF NOT EXISTS bot_games_schedule (
   day_key TEXT NOT NULL,
   events_planned INT NOT NULL DEFAULT 0,
   events_spawned INT NOT NULL DEFAULT 0,
+  planned_times JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (guild_id, day_key)
 );
 
--- Migration safety (in case an older table exists without day_key)
+-- Migration safety (in case an older table exists with missing columns)
 ALTER TABLE IF EXISTS bot_games_schedule
 ADD COLUMN IF NOT EXISTS day_key TEXT;
+
+ALTER TABLE IF EXISTS bot_games_schedule
+ADD COLUMN IF NOT EXISTS events_planned INT NOT NULL DEFAULT 0;
+
+ALTER TABLE IF EXISTS bot_games_schedule
+ADD COLUMN IF NOT EXISTS events_spawned INT NOT NULL DEFAULT 0;
+
+ALTER TABLE IF EXISTS bot_games_schedule
+ADD COLUMN IF NOT EXISTS planned_times JSONB NOT NULL DEFAULT '[]'::jsonb;
+
+ALTER TABLE IF EXISTS bot_games_schedule
+ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
   `;
 
