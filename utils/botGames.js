@@ -384,25 +384,29 @@ function startScheduler(client) {
 // Interaction handler
 // ----------------------------
 async function handleInteraction(interaction) {
-  if (!interaction.isButton()) return;
-  if (!interaction.customId?.startsWith("botgames:")) return;
+  if (!interaction.isButton()) return false;
+  if (!interaction.customId?.startsWith("botgames:")) return false;
 
   if (!active) {
-    return interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    return true;
   }
 
   if (interaction.message?.id !== active.messageId) {
-    return interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    return true;
   }
 
   if (Date.now() > active.expiresAt) {
     active = null;
-    return interaction.reply({ content: "Too slow — event expired.", flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: "Too slow — event expired.", flags: MessageFlags.Ephemeral });
+    return true;
   }
 
   const [, eventId, action] = interaction.customId.split(":");
   if (eventId !== active.eventId) {
-    return interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    return true;
   }
 
   try {
@@ -410,7 +414,8 @@ async function handleInteraction(interaction) {
     if (!active.claimedBy) {
       // Only allow claim on play action
       if (action !== "play") {
-        return interaction.reply({ content: "You need to claim the event first.", flags: MessageFlags.Ephemeral });
+        await interaction.reply({ content: "You need to claim the event first.", flags: MessageFlags.Ephemeral });
+    return true;
       }
       active.claimedBy = interaction.user.id;
 
@@ -423,19 +428,16 @@ async function handleInteraction(interaction) {
       // Legacy one-shot: run immediately
       if (typeof active.eventMod.run === "function") {
         const ctx = makeCtx(interaction);
-        const state = active.state;
-
-        // Legacy one-shot: run immediately
         const eventMod = active.eventMod;
         const state = active.state;
         active = null; // prevent double-claims
         return eventMod.run(ctx, state);
-      }
-    }
+      }}
 
     // From here, event is claimed. Only claimer can act.
     if (interaction.user.id !== active.claimedBy) {
-      return interaction.reply({ content: "This event has already been claimed.", flags: MessageFlags.Ephemeral });
+      await interaction.reply({ content: "This event has already been claimed.", flags: MessageFlags.Ephemeral });
+    return true;
     }
 
     const ctx = makeCtx(interaction);
@@ -468,7 +470,8 @@ async function handleInteraction(interaction) {
       return eventMod.run(ctx, state);
     }
 
-    return interaction.reply({ content: "This event is not configured correctly.", flags: MessageFlags.Ephemeral });
+    await interaction.reply({ content: "This event is not configured correctly.", flags: MessageFlags.Ephemeral });
+    return true;
   } catch (e) {
     console.warn(`[BOTGAMES] interaction failed: ${e?.message || e}`);
     try {
@@ -479,6 +482,7 @@ async function handleInteraction(interaction) {
       }
     } catch {}
   }
+  return true;
 }
 
 module.exports = { init, startScheduler, handleInteraction };
