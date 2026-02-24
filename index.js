@@ -5,6 +5,7 @@ const rouletteGame = require("./data/games/roulette");
 const higherLowerGame = require("./data/games/higherLower");
 const bullshitGame = require("./data/games/bullshit");
 const botGames = require("./utils/botGames");
+const lottery = require("./utils/lottery");
 
 // 📌 Persistent "Bot Features" hub (stays working after restarts)
 const featuresHub = require("./data/features");
@@ -569,6 +570,9 @@ client.once(Events.ClientReady, async () => {
       // Start Bot Games AFTER DB tables exist
       botGames.startScheduler(client);
 
+      // 🎟 Weekly Powerball Lottery
+      lottery.startScheduler(client);
+
       const count = await syncAchievements(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements/*`);
 
@@ -630,6 +634,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[BOTGAMES] interaction failed:", e);
+  }
+
+  // 🎟 Weekly Powerball Lottery interactions
+  try {
+    const handled = await lottery.handleInteraction(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[LOTTERY] interaction failed:", e);
   }
 
 
