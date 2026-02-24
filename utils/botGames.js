@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const {
   ActionRowBuilder,
   ButtonBuilder,
@@ -7,363 +9,453 @@ const {
 
 const config = require("../data/botgames/config");
 const { loadEvents } = require("../data/botgames");
-const economy = require("./economy"); // expects getBalance/add/remove
+const economy = require("./economy");
 
-// One active event at a time (first in best dressed)
-let activeEvent = null;
-
-// Timers so we can clear/rebuild on restart
-const scheduledTimeouts = new Set();
-
-function dbg(...args) {
-  if (config.debug) console.log("[BOTGAMES]", ...args);
+// ----------------------------
+// Economy wrappers (guild-safe)
+// ----------------------------
+async function econGetBalance(guildId, userId) {
+  if (typeof economy.getBalance !== "function") throw new Error("economy.getBalance missing");
+  if (economy.getBalance.length >= 2) return economy.getBalance(guildId, userId);
+  return economy.getBalance(userId);
 }
 
-function clearTimers() {
-  for (const t of scheduledTimeouts) clearTimeout(t);
-  scheduledTimeouts.clear();
+async function econAdd(guildId, userId, amount) {
+  if (typeof economy.add !== "function") throw new Error("economy.add missing");
+  if (economy.add.length >= 3) return economy.add(guildId, userId, amount);
+  return economy.add(userId, amount);
 }
 
-function nowBrisbane() {
-  const offsetMs = (config.tzOffsetHours || 10) * 60 * 60 * 1000;
-  const d = new Date(Date.now() + offsetMs);
-  // treat shifted date as "UTC" getters
+async function econRemove(guildId, userId, amount) {
+  if (typeof economy.remove !== "function") throw new Error("economy.remove missing");
+  if (economy.remove.length >= 3) return economy.remove(guildId, userId, amount);
+  return economy.remove(userId, amount);
+}
+
+// ----------------------------
+// Timezone helpers (Brisbane)
+// ----------------------------
+function brisbaneParts(date = new Date()) {
+  const fmt = new Intl.DateTimeFormat("en-AU", {
+    timeZone: config.timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    weekday: "short"
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));
   return {
-    date: d,
-    year: d.getUTCFullYear(),
-    month: d.getUTCMonth() + 1,
-    day: d.getUTCDate(),
-    hour: d.getUTCHours(),
-    minute: d.getUTCMinutes(),
-    second: d.getUTCSeconds(),
-    dow: d.getUTCDay(), // 0 Sun .. 6 Sat
-    ymd: d.toISOString().slice(0, 10),
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    second: Number(parts.second),
+    weekday: parts.weekday // Mon, Tue...
   };
 }
 
-function brisbaneToUtcMs(year, month, day, hour, minute, second) {
-  const offset = config.tzOffsetHours || 10;
-  return Date.UTC(year, month - 1, day, hour - offset, minute, second, 0);
+function dateKeyBrisbane(d = new Date()) {
+  const p = brisbaneParts(d);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }
 
-function randomTimeInWindow(ymdParts, window) {
-  const { year, month, day } = ymdParts;
-  const start = window.startHour;
-  const end = window.endHour;
-
-  const hour = start + Math.floor(Math.random() * Math.max(1, end - start));
-  const minute = Math.floor(Math.random() * 60);
-  const second = Math.floor(Math.random() * 60);
-
-  const utcMs = brisbaneToUtcMs(year, month, day, hour, minute, second);
-  return { hour, minute, second, utcMs };
+function isWeekendBrisbane(d = new Date()) {
+  const wd = brisbaneParts(d).weekday;
+  return wd === "Sat" || wd === "Sun";
 }
 
+function parseHHMM(hhmm) {
+  const [h, m] = hhmm.split(":").map(n => parseInt(n, 10));
+  return { h, m };
+}
+
+// Convert Brisbane local date/time -> UTC timestamp (ms)
+// Avoids external libs; robust enough for Brisbane (no DST).
+function brisbaneToUtcMs(year, month, day, hour, minute) {
+  // Brisbane is always UTC+10.
+  const utcMs = Date.UTC(year, month - 1, day, hour - 10, minute, 0, 0);
+  return utcMs;
+}
+
+function randomTimeInWindow(dateParts, startHHMM, endHHMM) {
+  const s = parseHHMM(startHHMM);
+  const e = parseHHMM(endHHMM);
+
+  const startMin = s.h * 60 + s.m;
+  const endMin = e.h * 60 + e.m;
+
+  const pick = startMin + Math.floor(Math.random() * Math.max(1, (endMin - startMin + 1)));
+  const h = Math.floor(pick / 60);
+  const m = pick % 60;
+
+  return brisbaneToUtcMs(dateParts.year, dateParts.month, dateParts.day, h, m);
+}
+
+// ----------------------------
+// DB persistence (schedule)
+// ----------------------------
+async function ensureScheduleTable(db) {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS bot_games_schedule (
+      guild_id TEXT PRIMARY KEY,
+      day_key TEXT NOT NULL,
+      planned_times JSONB NOT NULL,
+      spawned_count INT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+async function readSchedule(db, guildId) {
+  const res = await db.query(
+    `SELECT guild_id, day_key, planned_times, spawned_count FROM bot_games_schedule WHERE guild_id=$1`,
+    [guildId]
+  );
+  return res.rows[0] || null;
+}
+
+async function upsertSchedule(db, { guildId, dayKey, plannedTimes, spawnedCount }) {
+  await db.query(
+    `
+    INSERT INTO bot_games_schedule (guild_id, day_key, planned_times, spawned_count, updated_at)
+    VALUES ($1, $2, $3::jsonb, $4, NOW())
+    ON CONFLICT (guild_id)
+    DO UPDATE SET day_key=EXCLUDED.day_key, planned_times=EXCLUDED.planned_times, spawned_count=EXCLUDED.spawned_count, updated_at=NOW()
+    `,
+    [guildId, dayKey, JSON.stringify(plannedTimes), spawnedCount]
+  );
+}
+
+// ----------------------------
+// Event loading + selection
+// ----------------------------
 function pickWeighted(events) {
   const total = events.reduce((sum, e) => sum + (e.weight || 1), 0);
   let roll = Math.random() * total;
   for (const e of events) {
-    roll -= e.weight || 1;
+    roll -= (e.weight || 1);
     if (roll <= 0) return e;
   }
   return events[0];
 }
 
-async function ensureTables(db) {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS bot_games_schedule (
-      guild_id TEXT NOT NULL,
-      day TEXT NOT NULL, -- YYYY-MM-DD (Brisbane)
-      slot INTEGER NOT NULL, -- 1 or 2
-      scheduled_at TIMESTAMPTZ NOT NULL,
-      fired BOOLEAN NOT NULL DEFAULT FALSE,
-      fired_at TIMESTAMPTZ,
-      PRIMARY KEY (guild_id, day, slot)
-    );
-  `);
-}
+// ----------------------------
+// Active in-memory event state
+// ----------------------------
+let active = null; 
+// active = { messageId, channelId, guildId, eventId, claimedBy, expiresAt, state, eventMod }
 
-async function getOrCreateTodayPlan(db, guildId) {
-  const bn = nowBrisbane();
-  const day = bn.ymd;
-
-  const existing = await db.query(
-    `SELECT day, slot, scheduled_at, fired FROM bot_games_schedule
-     WHERE guild_id=$1 AND day=$2
-     ORDER BY slot ASC`,
-    [guildId, day]
+function buildOneClickPayload(eventMod, state) {
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`botgames:${eventMod.id}:play`)
+      .setLabel("Play")
+      .setStyle(ButtonStyle.Success)
   );
 
-  if (existing.rows.length) {
-    return { day, rows: existing.rows };
-  }
-
-  // Roll the day
-  const weekend = bn.dow === 0 || bn.dow === 6;
-  const chances = weekend ? config.chancesWeekend : config.chancesWeekday;
-
-  const r = Math.random();
-  let count = 0;
-  if (r < chances.none) count = 0;
-  else if (r < chances.none + chances.one) count = 1;
-  else count = 2;
-
-  dbg(`Daily roll for ${day} (${weekend ? "weekend" : "weekday"}):`, count);
-
-  const ymdParts = { year: bn.year, month: bn.month, day: bn.day };
-
-  const inserts = [];
-  if (count === 1) {
-    const t = randomTimeInWindow(ymdParts, config.windows.oneEvent);
-    inserts.push({ slot: 1, scheduled_at: new Date(t.utcMs) });
-    dbg(`Planned 1 event at ${t.hour.toString().padStart(2,"0")}:${t.minute.toString().padStart(2,"0")}`);
-  } else if (count === 2) {
-    const t1 = randomTimeInWindow(ymdParts, config.windows.twoEventMorning);
-    const t2 = randomTimeInWindow(ymdParts, config.windows.twoEventAfternoon);
-    inserts.push({ slot: 1, scheduled_at: new Date(t1.utcMs) });
-    inserts.push({ slot: 2, scheduled_at: new Date(t2.utcMs) });
-    dbg(`Planned 2 events at ${t1.hour.toString().padStart(2,"0")}:${t1.minute.toString().padStart(2,"0")} and ${t2.hour.toString().padStart(2,"0")}:${t2.minute.toString().padStart(2,"0")}`);
-  }
-
-  for (const row of inserts) {
-    await db.query(
-      `INSERT INTO bot_games_schedule (guild_id, day, slot, scheduled_at)
-       VALUES ($1,$2,$3,$4)`,
-      [guildId, day, row.slot, row.scheduled_at]
-    );
-  }
-
-  const rows = inserts.map((r) => ({
-    day,
-    slot: r.slot,
-    scheduled_at: r.scheduled_at,
-    fired: false,
-  }));
-
-  return { day, rows };
+  return {
+    embeds: [{
+      title: state.title || eventMod.name || "Bot Game",
+      description: state.description || "First to click Play claims it.",
+    }],
+    components: [row]
+  };
 }
 
-async function scheduleUpcoming(client) {
+// Unified renderer: supports render() or legacy create/run
+function renderEvent(eventMod, state, claimed) {
+  if (typeof eventMod.render === "function") {
+    return eventMod.render(state, { isClaimed: !!claimed });
+  }
+  // Legacy
+  return buildOneClickPayload(eventMod, state);
+}
+
+async function spawnEvent(client, guild) {
   if (!config.enabled) return;
-  const guild = client.guilds.cache.first();
-  if (!guild) return;
-
-  const db = client.db;
-  if (!db?.query) {
-    console.warn("[BOTGAMES] client.db not found; bot games scheduler disabled.");
-    return;
-  }
-
-  await ensureTables(db);
-
-  // Always ensure today's plan exists (or load it)
-  const plan = await getOrCreateTodayPlan(db, guild.id);
-
-  // Load any unfired rows for today whose scheduled time is still in the future
-  const res = await db.query(
-    `SELECT day, slot, scheduled_at
-     FROM bot_games_schedule
-     WHERE guild_id=$1 AND day=$2 AND fired=FALSE
-     ORDER BY slot ASC`,
-    [guild.id, plan.day]
-  );
-
-  const now = Date.now();
-  for (const row of res.rows) {
-    const when = new Date(row.scheduled_at).getTime();
-    if (when <= now) {
-      // If bot was offline and missed it, don't fire late (especially past 10PM).
-      dbg(`Missed slot ${row.slot} for ${row.day}, marking fired without spawning.`);
-      await db.query(
-        `UPDATE bot_games_schedule SET fired=TRUE, fired_at=NOW()
-         WHERE guild_id=$1 AND day=$2 AND slot=$3`,
-        [guild.id, row.day, row.slot]
-      );
-      continue;
-    }
-
-    const delay = when - now;
-    const t = setTimeout(() => spawnAtSlot(client, row.day, row.slot), delay);
-    scheduledTimeouts.add(t);
-
-    dbg(`Scheduled slot ${row.slot} for ${row.day} in ${(delay/1000/60).toFixed(1)} min`);
-  }
-
-  // Also schedule a rebuild just after next midnight Brisbane
-  scheduleNextMidnightRebuild(client);
-}
-
-function scheduleNextMidnightRebuild(client) {
-  const bn = nowBrisbane();
-  // next midnight in Brisbane = tomorrow 00:00:05
-  const nextDay = new Date(Date.UTC(bn.year, bn.month - 1, bn.day, 0, 0, 0, 0) + 24*60*60*1000);
-  // nextDay is in "shifted UTC"; convert back to real UTC by subtracting offset
-  const offsetMs = (config.tzOffsetHours || 10) * 60 * 60 * 1000;
-  const nextMidnightUtcMs = nextDay.getTime() - offsetMs + 5000; // +5s buffer
-
-  const delay = Math.max(10_000, nextMidnightUtcMs - Date.now());
-  const t = setTimeout(async () => {
-    clearTimers();
-    await scheduleUpcoming(client);
-  }, delay);
-
-  scheduledTimeouts.add(t);
-  dbg(`Next midnight rebuild in ${(delay/1000/60).toFixed(1)} min`);
-}
-
-async function spawnAtSlot(client, day, slot) {
-  const guild = client.guilds.cache.first();
-  if (!guild) return;
-
-  const db = client.db;
-  if (!db?.query) return;
-
-  // If an event is currently active, delay a bit (but don't go past 10PM AEST)
-  if (activeEvent) {
-    dbg("Active event exists; delaying spawn 10 minutes.");
-    const delayMs = 10 * 60 * 1000;
-    const t = setTimeout(() => spawnAtSlot(client, day, slot), delayMs);
-    scheduledTimeouts.add(t);
-    return;
-  }
-
-  // Mark fired first to prevent double firing on restarts
-  await db.query(
-    `UPDATE bot_games_schedule
-     SET fired=TRUE, fired_at=NOW()
-     WHERE guild_id=$1 AND day=$2 AND slot=$3 AND fired=FALSE`,
-    [guild.id, day, slot]
-  );
+  if (active) return; // only one active at a time
 
   const channel = await guild.channels.fetch(config.channelId).catch(() => null);
   if (!channel || !channel.isTextBased()) {
-    console.warn("[BOTGAMES] channelId is missing/invalid or not text-based:", config.channelId);
+    console.warn(`[BOTGAMES] Channel ${config.channelId} not found or not text-based in guild ${guild.id}`);
     return;
   }
 
   const events = loadEvents();
   if (!events.length) return;
 
-  const chosen = pickWeighted(events);
-  const instance = chosen.create();
+  const eventMod = pickWeighted(events);
+  const state = eventMod.create();
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("botgames_play")
-      .setLabel("Play")
-      .setStyle(ButtonStyle.Success)
-  );
+  const payload = renderEvent(eventMod, state, false);
 
   const msg = await channel.send({
     content: `<@&${config.roleId}>`,
-    embeds: [
-      {
-        title: instance.title,
-        description: instance.description,
-        color: 0x5865f2,
-      },
-    ],
-    components: [row],
+    ...payload
   });
 
-  activeEvent = {
-    eventId: chosen.id,
-    bet: instance.bet ?? 0,
+  active = {
+    guildId: guild.id,
+    channelId: channel.id,
     messageId: msg.id,
-    channelId: msg.channel.id,
-    expiresAt: Date.now() + (config.expireMinutes || 10) * 60 * 1000,
+    eventId: eventMod.id,
+    eventMod,
+    state,
+    claimedBy: null,
+    expiresAt: Date.now() + (config.expireMinutes * 60_000),
   };
 
-  // Auto-expire if nobody claims
-  const expireTimer = setTimeout(async () => {
-    if (!activeEvent) return;
-    if (activeEvent.messageId !== msg.id) return;
-
-    activeEvent = null;
-    await msg.edit({
-      embeds: [
-        {
-          title: "⌛ Bot Game expired",
-          description: "No one claimed it in time. Next one will pop up later 👀",
-          color: 0x2b2d31,
-        },
-      ],
-      components: [],
-    }).catch(() => {});
-  }, (config.expireMinutes || 10) * 60 * 1000);
-
-  scheduledTimeouts.add(expireTimer);
+  if (config.debug) {
+    console.log(`[BOTGAMES] Spawned ${eventMod.id} in #${channel.id} (msg ${msg.id})`);
+  }
 }
 
-async function handleInteraction(interaction) {
-  if (!interaction.isButton()) return;
-  if (interaction.customId !== "botgames_play") return;
-
-  if (!activeEvent) {
-    return interaction.reply({
-      content: "Too slow — that Bot Game is no longer available.",
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  if (Date.now() > activeEvent.expiresAt) {
-    activeEvent = null;
-    return interaction.reply({
-      content: "Too slow — that Bot Game expired.",
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
-  const bet = Number(activeEvent.bet || 0);
+function makeCtx(interaction) {
+  const guildId = interaction.guildId;
   const userId = interaction.user.id;
 
-  if (bet > 0) {
-    const bal = await economy.getBalance(userId);
-    if (bal < bet) {
-      return interaction.reply({
-        content: `You need **$${bet.toLocaleString()}** to play this one.`,
-        flags: MessageFlags.Ephemeral,
-      });
-    }
-    await economy.remove(userId, bet);
+  const ctx = {
+    interaction,
+    guildId,
+    userId,
+    economy,
+    econGetBalance,
+    econAdd,
+    econRemove,
+    // Render helper for multi-step events
+    render: () => renderEvent(active.eventMod, active.state, true),
+  };
+  return ctx;
+}
+
+// ----------------------------
+// Daily planning
+// ----------------------------
+function rollEventsToday() {
+  const odds = isWeekendBrisbane() ? config.weekendOdds : config.weekdayOdds;
+  const r = Math.random();
+  if (r < odds.none) return 0;
+  if (r < odds.none + odds.one) return 1;
+  return 2;
+}
+
+async function planToday(db, guildId) {
+  const nowKey = dateKeyBrisbane();
+  const existing = await readSchedule(db, guildId);
+
+  if (existing && existing.day_key === nowKey) {
+    return existing;
   }
 
-  // Double or Nothing (50/50)
-  const win = Math.random() < 0.5;
+  const parts = brisbaneParts();
+  const count = rollEventsToday();
 
-  if (win && bet > 0) {
-    await economy.add(userId, bet * 2);
+  const planned = [];
+  if (count === 1) {
+    planned.push(randomTimeInWindow(parts, config.windows.oneEvent.start, config.windows.oneEvent.end));
+  } else if (count === 2) {
+    planned.push(randomTimeInWindow(parts, config.windows.twoEvent1.start, config.windows.twoEvent1.end));
+    planned.push(randomTimeInWindow(parts, config.windows.twoEvent2.start, config.windows.twoEvent2.end));
+    planned.sort((a, b) => a - b);
   }
 
-  const resultEmbed = {
-    title: win ? "💰 You Won!" : "💀 You Lost!",
-    description:
-      bet > 0
-        ? win
-          ? `${interaction.user} doubled **$${bet.toLocaleString()}**!`
-          : `${interaction.user} lost **$${bet.toLocaleString()}**.`
-        : win
-          ? `${interaction.user} won!`
-          : `${interaction.user} lost!`,
-    color: win ? 0x57f287 : 0xed4245,
+  const row = {
+    guild_id: guildId,
+    day_key: nowKey,
+    planned_times: planned,
+    spawned_count: 0
   };
 
-  activeEvent = null;
+  await upsertSchedule(db, {
+    guildId,
+    dayKey: nowKey,
+    plannedTimes: planned,
+    spawnedCount: 0
+  });
 
-  return interaction.update({
-    embeds: [resultEmbed],
-    components: [],
+  if (config.debug) {
+    console.log(`[BOTGAMES] Planned ${planned.length} event(s) for ${nowKey}: ${planned.map(t => new Date(t).toISOString()).join(", ")}`);
+  }
+
+  return row;
+}
+
+function scheduleTimers(client, guild, plannedTimes, alreadySpawned) {
+  const now = Date.now();
+
+  plannedTimes.forEach((t, idx) => {
+    if (idx < alreadySpawned) return; // already done
+    const delay = t - now;
+    if (delay <= 0) return; // missed window; will be handled next init tick
+
+    setTimeout(async () => {
+      try {
+        // Double-check cutoff (never after 10PM Brisbane)
+        const p = brisbaneParts(new Date());
+        if (p.hour > 22 || (p.hour === 22 && p.minute > 0)) return;
+
+        await spawnEvent(client, guild);
+
+        // increment spawned_count
+        const db = client.db;
+        const cur = await readSchedule(db, guild.id);
+        if (cur && cur.day_key === dateKeyBrisbane()) {
+          await upsertSchedule(db, {
+            guildId: guild.id,
+            dayKey: cur.day_key,
+            plannedTimes: cur.planned_times,
+            spawnedCount: (cur.spawned_count || 0) + 1
+          });
+        }
+      } catch (e) {
+        console.warn(`[BOTGAMES] spawn timer failed: ${e?.message || e}`);
+      }
+    }, delay);
   });
 }
 
-// Backwards compatible name (your index.js likely calls startScheduler)
-async function init(client) {
-  clearTimers();
-  await scheduleUpcoming(client);
+// Ensure we re-plan after midnight Brisbane.
+// We'll set a timer to the next midnight.
+function msUntilNextMidnightBrisbane() {
+  const p = brisbaneParts();
+  // next midnight local
+  const nextDay = new Date(brisbaneToUtcMs(p.year, p.month, p.day, 0, 0) + 24 * 60 * 60_000);
+  // nextDay is at 00:00 Brisbane tomorrow (in UTC ms)
+  return nextDay.getTime() - Date.now();
 }
 
-async function startScheduler(client) {
+async function init(client) {
+  if (!config.enabled) return;
+  if (!client?.db?.query) {
+    console.warn("[BOTGAMES] client.db not found - bot games disabled");
+    return;
+  }
+
+  const guild = client.guilds.cache.first();
+  if (!guild) return;
+
+  const db = client.db;
+  await ensureScheduleTable(db);
+
+  // Plan + schedule for today
+  const row = await planToday(db, guild.id);
+  const plannedTimes = Array.isArray(row.planned_times) ? row.planned_times : (row.planned_times || []);
+  scheduleTimers(client, guild, plannedTimes, row.spawned_count || 0);
+
+  // Re-init at next midnight Brisbane
+  const delay = msUntilNextMidnightBrisbane();
+  setTimeout(() => {
+    init(client).catch(e => console.warn(`[BOTGAMES] midnight re-init failed: ${e?.message || e}`));
+  }, Math.max(60_000, delay)); // at least 60s
+}
+
+// Back-compat alias
+function startScheduler(client) {
   return init(client);
+}
+
+// ----------------------------
+// Interaction handler
+// ----------------------------
+async function handleInteraction(interaction) {
+  if (!interaction.isButton()) return;
+  if (!interaction.customId?.startsWith("botgames:")) return;
+
+  if (!active) {
+    return interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+  }
+
+  if (interaction.message?.id !== active.messageId) {
+    return interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+  }
+
+  if (Date.now() > active.expiresAt) {
+    active = null;
+    return interaction.reply({ content: "Too slow — event expired.", flags: MessageFlags.Ephemeral });
+  }
+
+  const [, eventId, action] = interaction.customId.split(":");
+  if (eventId !== active.eventId) {
+    return interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+  }
+
+  try {
+    // Claim logic
+    if (!active.claimedBy) {
+      // Only allow claim on play action
+      if (action !== "play") {
+        return interaction.reply({ content: "You need to claim the event first.", flags: MessageFlags.Ephemeral });
+      }
+      active.claimedBy = interaction.user.id;
+
+      // If the event supports multi-step, re-render claimed state
+      if (typeof active.eventMod.render === "function") {
+        const payload = renderEvent(active.eventMod, active.state, true);
+        return interaction.update(payload);
+      }
+
+      // Legacy one-shot: run immediately
+      if (typeof active.eventMod.run === "function") {
+        const ctx = makeCtx(interaction);
+        const state = active.state;
+
+        // Clear active immediately to prevent double-claims
+        active = null;
+        return activeEventRun(active, ctx, state); // won't run; kept for safety
+      }
+    }
+
+    // From here, event is claimed. Only claimer can act.
+    if (interaction.user.id !== active.claimedBy) {
+      return interaction.reply({ content: "This event has already been claimed.", flags: MessageFlags.Ephemeral });
+    }
+
+    const ctx = makeCtx(interaction);
+
+    // Multi-step events
+    if (typeof active.eventMod.onAction === "function") {
+      await active.eventMod.onAction(ctx, active.state, action);
+
+      // If the event ended (we removed buttons), clear active
+      // We can detect by checking if message components are empty in the update, but we don't get that back here.
+      // Simple rule: clear on cashout or bust (handled by event) by setting ctx.end().
+      // For now, event will end by updating components: [] — we’ll clear on those actions.
+      if (action === "cashout" || action === "continue") {
+        // continue might not end; keep active unless it busts.
+        // We'll keep active unless the message got cleared; best-effort: if bust it likely cleared.
+      }
+      // If action was cashout, end it.
+      if (action === "cashout") active = null;
+      return;
+    }
+
+    // Legacy one-shot events
+    if (typeof active.eventMod.run === "function") {
+      const state = active.state;
+
+      // Clear active to prevent further interaction
+      const eventMod = active.eventMod;
+      active = null;
+
+      return eventMod.run(ctx, state);
+    }
+
+    return interaction.reply({ content: "This event is not configured correctly.", flags: MessageFlags.Ephemeral });
+  } catch (e) {
+    console.warn(`[BOTGAMES] interaction failed: ${e?.message || e}`);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "Something went wrong running that game.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "Something went wrong running that game.", flags: MessageFlags.Ephemeral });
+      }
+    } catch {}
+  }
 }
 
 module.exports = { init, startScheduler, handleInteraction };

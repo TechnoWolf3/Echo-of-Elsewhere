@@ -1,31 +1,31 @@
 module.exports = {
   enabled: true,
 
-  // 🔔 Role to ping when a new Bot Game spawns
+  // 🔔 Role to ping
   roleId: "1474683699344838809",
 
-  // 📢 Where to post Bot Games (set this once and forget it)
+  // 📍 Channel to post in
   channelId: "1449217901306581074",
 
-  // 🇦🇺 AEST settings (Brisbane is UTC+10 year-round)
-  tzOffsetHours: 10,
-
-  // 🎲 Daily roll chances (weekdays)
-  chancesWeekday: { none: 0.65, one: 0.30, two: 0.05 },
-
-  // 🎉 Weekend boost (Sat/Sun) — slightly more likely to get events
-  chancesWeekend: { none: 0.55, one: 0.37, two: 0.08 },
-
-  // ⏰ Spawn windows (AEST, inclusive start, exclusive end)
-  windows: {
-    oneEvent: { startHour: 15, endHour: 22 }, // 3PM–10PM
-    twoEventMorning: { startHour: 8, endHour: 11 }, // 8AM–11AM
-    twoEventAfternoon: { startHour: 15, endHour: 22 } // 3PM–10PM
-  },
-
-  // ⌛ Expire an unclaimed event after X minutes
+  // ⏳ Expiry for unclaimed events
   expireMinutes: 10,
 
-  // 🧪 Logging (set true if you want to see schedule decisions in logs)
-  debug: false,
+  // 🎲 Daily roll odds (weekdays)
+  weekdayOdds: { none: 0.65, one: 0.30, two: 0.05 },
+
+  // 🎉 Daily roll odds (weekends - boosted)
+  weekendOdds: { none: 0.55, one: 0.37, two: 0.08 },
+
+  // 🕒 Time windows (AEST / Australia/Brisbane)
+  windows: {
+    oneEvent: { start: "15:00", end: "22:00" },      // 3PM–10PM
+    twoEvent1: { start: "08:00", end: "11:00" },     // 8AM–11AM
+    twoEvent2: { start: "15:00", end: "22:00" }      // 3PM–10PM
+  },
+
+  // 🧭 Timezone for scheduling
+  timeZone: "Australia/Brisbane",
+
+  // 🧪 Debug mode (logs planning + enables /botgames test if you add it later)
+  debug: false
 };
