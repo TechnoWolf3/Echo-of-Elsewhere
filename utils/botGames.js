@@ -100,15 +100,36 @@ function randomTimeInWindow(dateParts, startHHMM, endHHMM) {
 // DB persistence (schedule)
 // ----------------------------
 async function ensureScheduleTable(db) {
+  // This table is only scheduler metadata. If its shape drifts between versions,
+  // it’s safest to rebuild it automatically rather than crash the whole bot.
+  try {
+    await db.query(`SELECT day_key, planned_times, spawned_count FROM bot_games_schedule LIMIT 1`);
+  } catch (e) {
+    // 42P01 = undefined_table, 42703 = undefined_column
+    const code = e?.code;
+    if (code === "42P01" || code === "42703") {
+      try { await db.query(`DROP TABLE IF EXISTS bot_games_schedule`); } catch {}
+    } else {
+      // Unknown failure: rethrow so we can see it in logs
+      throw e;
+    }
+  }
+
   await db.query(`
     CREATE TABLE IF NOT EXISTS bot_games_schedule (
       guild_id TEXT PRIMARY KEY,
       day_key TEXT NOT NULL,
-      planned_times JSONB NOT NULL,
+      planned_times JSONB NOT NULL DEFAULT '[]'::jsonb,
       spawned_count INT NOT NULL DEFAULT 0,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  // Migration safety for older variants that might exist
+  await db.query(`ALTER TABLE bot_games_schedule ADD COLUMN IF NOT EXISTS day_key TEXT`);
+  await db.query(`ALTER TABLE bot_games_schedule ADD COLUMN IF NOT EXISTS planned_times JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await db.query(`ALTER TABLE bot_games_schedule ADD COLUMN IF NOT EXISTS spawned_count INT NOT NULL DEFAULT 0`);
+  await db.query(`ALTER TABLE bot_games_schedule ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`);
 }
 
 async function readSchedule(db, guildId) {
@@ -404,9 +425,11 @@ async function handleInteraction(interaction) {
         const ctx = makeCtx(interaction);
         const state = active.state;
 
-        // Clear active immediately to prevent double-claims
-        active = null;
-        return activeEventRun(active, ctx, state); // won't run; kept for safety
+        // Legacy one-shot: run immediately
+        const eventMod = active.eventMod;
+        const state = active.state;
+        active = null; // prevent double-claims
+        return eventMod.run(ctx, state);
       }
     }
 
