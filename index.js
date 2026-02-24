@@ -427,6 +427,20 @@ async function ensureEconomyTables(db) {
 
     -- ✅ Inventory uses (safe upgrade)
     ALTER TABLE user_inventory ADD COLUMN IF NOT EXISTS uses_remaining INT NOT NULL DEFAULT 0;
+
+-- 🎮 Bot Games Daily Scheduler (daily planning + restart-safe)
+CREATE TABLE IF NOT EXISTS bot_games_schedule (
+  guild_id TEXT NOT NULL,
+  day_key TEXT NOT NULL,
+  events_planned INT NOT NULL DEFAULT 0,
+  events_spawned INT NOT NULL DEFAULT 0,
+  PRIMARY KEY (guild_id, day_key)
+);
+
+-- Migration safety (in case an older table exists without day_key)
+ALTER TABLE IF EXISTS bot_games_schedule
+ADD COLUMN IF NOT EXISTS day_key TEXT;
+
   `;
 
   const clientConn = await db.connect();
