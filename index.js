@@ -6,6 +6,7 @@ const higherLowerGame = require("./data/games/higherLower");
 const bullshitGame = require("./data/games/bullshit");
 const botGames = require("./utils/botGames");
 const lottery = require("./utils/lottery");
+const echoCurses = require("./utils/echoCurses");
 
 // 📌 Persistent "Bot Features" hub (stays working after restarts)
 const featuresHub = require("./data/features");
@@ -191,6 +192,19 @@ async function ensureAchievementTables(db) {
       jailed_until TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS echo_curses (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      type     TEXT NOT NULL,
+      amount   BIGINT NOT NULL DEFAULT 0,
+      expires_at TIMESTAMPTZ NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (guild_id, user_id, type)
+    );
+    CREATE INDEX IF NOT EXISTS echo_curses_user_idx ON echo_curses (guild_id, user_id);
+
 
     CREATE INDEX IF NOT EXISTS idx_jail_jailed_until
     ON jail (jailed_until);
@@ -605,7 +619,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  // 📌 Persistent Bot Features hub interactions (works across restarts)
+  
+  // 🩸 Blood Tax (Pay Tribute / Serve Time) buttons
+  try {
+    const handled = await echoCurses.handleBloodTaxButtons(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[BLOODTAX] handler failed:", e);
+  }
+
+// 📌 Persistent Bot Features hub interactions (works across restarts)
   if (
     (interaction.isButton?.() || interaction.isAnySelectMenu?.()) &&
     typeof interaction.customId === "string" &&

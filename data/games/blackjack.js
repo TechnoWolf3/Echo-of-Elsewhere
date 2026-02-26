@@ -28,6 +28,7 @@ const {
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
+const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 
 const {
   getUserCasinoSecurity,
@@ -505,7 +506,8 @@ async function startLobbyFromHub(interaction) {
     return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 
-  // Jail gate for component actions
+  // 🩸 Echo Rift fee gate + jail gate for component actions
+  if (await guardGamesComponent(interaction)) return;
   if (await guardNotJailedComponent(interaction)) return;
 
   // IMPORTANT: don't double-defer if hub already deferred
@@ -664,6 +666,7 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
     // Quick-bet buttons are ephemeral replies, but still route here if clicked on panel? We'll handle both prefixes.
     if (String(i.customId || "").startsWith("bjq:")) {
       await i.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      if (await guardGamesComponent(i)) return;
       if (await guardNotJailedComponent(i)) return;
       const parts = i.customId.split(":"); // bjq:gameId:amount
       const gameId = parts[1];
@@ -687,6 +690,7 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
 
     if (action !== "setbet") {
       // Non-modal interactions: enforce jail guard.
+      if (await guardGamesComponent(i)) return;
       if (await guardNotJailedComponent(i)) return;
     }
 

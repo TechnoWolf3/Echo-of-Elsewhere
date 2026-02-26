@@ -20,6 +20,7 @@ const { tryDebitUser, bankToUserIfEnough } = require("../../utils/economy");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
+const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 
 const {
   getUserCasinoSecurity,
@@ -455,6 +456,7 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
   const collector = msg.createMessageComponentCollector({ idle: 30 * 60 * 1000 });
 
   collector.on("collect", async (i) => {
+    if (await guardGamesComponent(i)) return;
     if (await guardNotJailedComponent(i)) return;
 
     const cid = String(i.customId || "");
@@ -572,6 +574,7 @@ async function handleInteraction(interaction) {
       return true;
     }
 
+    if (await guardGamesComponent(interaction)) return true;
     if (await guardNotJailedComponent(interaction)) return true;
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});

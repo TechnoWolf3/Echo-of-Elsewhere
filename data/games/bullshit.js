@@ -25,6 +25,7 @@ const { setActiveGame, updateActiveGame, clearActiveGame } = require("../../util
 
 const { tryDebitUser, creditUser, addServerBank, bankToUserIfEnough } = require("../../utils/economy");
 const { guardNotJailedComponent } = require("../../utils/jail");
+const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 
 const {
   getHostBaseSecurity,
@@ -668,6 +669,7 @@ async function maybeAutoBotTurn(table) {
 async function handleButton(interaction, table, action) {
   const userId = interaction.user.id;
 
+  if (await guardGamesComponent(interaction)) return;
   if (await guardNotJailedComponent(interaction)) return;
 
   // Lobby
@@ -1041,6 +1043,7 @@ async function startFromHub(interaction, opts = {}) {
     return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 
+  if (await guardGamesComponent(interaction)) return;
   if (await guardNotJailedComponent(interaction)) return;
 
   if (!interaction.deferred && !interaction.replied) {

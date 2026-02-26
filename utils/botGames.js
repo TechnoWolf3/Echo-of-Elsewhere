@@ -458,6 +458,9 @@ async function handleInteraction(interaction) {
   if (!interaction.isButton()) return false;
   if (!interaction.customId?.startsWith("botgames:")) return false;
 
+  // Blood Tax blocks participating in random events until paid
+  if (await echoCurses.guardBloodTaxComponent(interaction, { contextLabel: "this event" })) return true;
+
   // Ack immediately to avoid Discord 3s interaction timeout
   try { await interaction.deferUpdate(); } catch {}
 

@@ -28,6 +28,7 @@ const {
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
+const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 
 const {
   getUserCasinoSecurity,
@@ -663,6 +664,7 @@ async function startFromHub(interaction, opts = {}) {
     return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
   }
 
+  if (await guardGamesComponent(interaction)) return;
   if (await guardNotJailedComponent(interaction)) return;
 
   if (!interaction.deferred && !interaction.replied) {
@@ -741,6 +743,7 @@ async function startFromHub(interaction, opts = {}) {
       return submitted.editReply("✅ Done.");
     }
 
+    if (await guardGamesComponent(i)) return;
     if (await guardNotJailedComponent(i)) return;
 
     // roulette buttons

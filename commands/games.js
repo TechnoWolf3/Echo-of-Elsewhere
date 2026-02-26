@@ -12,6 +12,8 @@ const {
 } = require("discord.js");
 
 const { getActiveGame } = require("../utils/gamesHubState");
+const echoCurses = require("../utils/echoCurses");
+const jail = require("../utils/jail");
 const { loadCategories, getCategory, getGame } = require("../data/games");
 const gamesConfig = require("../data/games/config");
 
@@ -363,6 +365,12 @@ module.exports = {
     .setDescription("Open the Games Hub panel for this channel."),
 
   async execute(interaction) {
+    // Jail blocks everything already
+    if (await jail.guardNotJailed(interaction)) return;
+
+    // Blood Tax blocks /games until paid (offers pay/jail buttons)
+    if (await echoCurses.guardBloodTaxCommand(interaction, { contextLabel: "games" })) return;
+
     if (!interaction.inGuild()) {
       return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
     }

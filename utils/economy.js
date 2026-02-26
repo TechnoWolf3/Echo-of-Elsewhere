@@ -6,6 +6,46 @@ const { pool } = require("./db");
 const achievementEngine = require("./achievementEngine");
 const achievementProgress = require("./achievementProgress");
 
+// 🕳️ Echo's Chosen perk checks (kept lightweight + cached)
+let _chosenCache = new Map(); // key: guildId:userId -> { perk, expiresAtMs, cachedAtMs }
+async function getActiveEchoChosenPerk(guildId, userId) {
+  try {
+    const key = `${guildId}:${userId}`;
+    const now = Date.now();
+    const cached = _chosenCache.get(key);
+    if (cached && (now - cached.cachedAtMs) < 30_000) {
+      if (cached.expiresAtMs && cached.expiresAtMs <= now) return null;
+      return cached.perk || null;
+    }
+
+    const res = await pool.query(
+      `SELECT perk, expires_at
+       FROM echo_chosen
+       WHERE guild_id=$1 AND user_id=$2 AND expires_at > NOW()
+       LIMIT 1`,
+      [String(guildId), String(userId)]
+    );
+
+    const row = res.rows?.[0];
+    const perk = row?.perk ? String(row.perk) : null;
+    const exp = row?.expires_at ? new Date(row.expires_at).getTime() : null;
+    _chosenCache.set(key, { perk, expiresAtMs: exp, cachedAtMs: now });
+    return perk;
+  } catch {
+    return null;
+  }
+}
+
+function shouldDoubleCasinoPayout(type) {
+  const t = String(type || "");
+  return (
+    t === "blackjack_payout" ||
+    t === "roulette_payout" ||
+    t === "higherlower_payout" ||
+    t === "bullshit_payout"
+  );
+}
+
 // --- Internal: ensure counter tables once per process ---
 let _countersReady = false;
 async function ensureCountersReady() {
@@ -236,6 +276,16 @@ async function addServerBank(guildId, amount, type, meta = {}) {
  */
 async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
   if (amount <= 0) throw new Error("Amount must be positive");
+
+  // 🌟 Echo's Chosen: double casino payouts (perk-based)
+  // NOTE: Only applies to specific payout transaction types.
+  if (!meta?.echoChosenApplied && shouldDoubleCasinoPayout(type)) {
+    const perk = await getActiveEchoChosenPerk(guildId, userId);
+    if (perk === "double_casino") {
+      amount = Math.floor(Number(amount) * 2);
+      meta = { ...meta, echoChosenApplied: true, echoChosenPerk: perk };
+    }
+  }
 
   const client = await pool.connect();
   try {
