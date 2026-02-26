@@ -112,8 +112,7 @@
       embed.addFields({
         name: "Alternative",
         value:
-          "If you’re broke, you can choose to **serve time** instead.
-" +
+          "If you’re broke, you can choose to **serve time** instead.\n" +
           "_Echo does not accept IOUs._",
         inline: false,
       });
