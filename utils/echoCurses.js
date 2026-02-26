@@ -111,9 +111,10 @@
     if (!canAfford) {
       embed.addFields({
         name: "Alternative",
-        value:
-          "If you’re broke, you can choose to **serve time** instead.\n" +
+        value: [
+          "If you’re broke, you can choose to **serve time** instead.",
           "_Echo does not accept IOUs._",
+        ].join("\n"),
         inline: false,
       });
     }

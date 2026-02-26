@@ -6,6 +6,9 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   MessageFlags
 } = require("discord.js");
 
@@ -211,13 +214,18 @@ function buildButtons(disabled = false) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("lotto:buy:1")
-      .setLabel("Buy 1 Ticket")
+      .setLabel("Buy 1 (Quick Pick)")
       .setStyle(ButtonStyle.Primary)
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId(`lotto:buy:${config.maxTicketsPerUser}`)
-      .setLabel(`Buy ${config.maxTicketsPerUser} Tickets`)
+      .setLabel(`Buy Max (${config.maxTicketsPerUser})`)
       .setStyle(ButtonStyle.Success)
+      .setDisabled(disabled),
+    new ButtonBuilder()
+      .setCustomId("lotto:pick")
+      .setLabel("Pick Numbers")
+      .setStyle(ButtonStyle.Secondary)
       .setDisabled(disabled),
     new ButtonBuilder()
       .setCustomId("lotto:my")
@@ -225,6 +233,102 @@ function buildButtons(disabled = false) {
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(disabled)
   );
+}
+
+function buildNumberTable35() {
+  const nums = Array.from({ length: 35 }, (_, i) => i + 1);
+  const rows = [];
+  for (let i = 0; i < nums.length; i += 7) {
+    rows.push(nums.slice(i, i + 7).map(n => String(n).padStart(2, '0')).join(' '));
+  }
+  return rows.join('\n');
+}
+
+function buildPickIntroEmbed() {
+  return new EmbedBuilder()
+    .setTitle('🎟 Powerball - Pick Your Numbers')
+    .setDescription([
+      'Want to choose your own numbers instead of Quick Pick? Do it here.',
+      '',
+      '**Pick:** 7 main numbers (1-35) + 1 Powerball (1-20)',
+      '',
+      '**Main numbers (1-35):**',
+      '```',
+      buildNumberTable35(),
+      '```',
+      '**Powerball (1-20):** 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20',
+    ].join('\n'));
+}
+
+function buildPickActionRow() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('lotto:pick:open')
+      .setLabel('Enter Numbers')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('lotto:buy:1')
+      .setLabel('Quick Pick Instead')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function parseMainNumbers(input) {
+  const parts = String(input || '')
+    .replace(/[^0-9,\s]+/g, ' ')
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .map(x => Number(x));
+  return [...new Set(parts)];
+}
+
+async function buyTicketsSelected(interaction, main, power, count) {
+  const guildId = interaction.guildId;
+  const userId = interaction.user.id;
+  const nowMs = Date.now();
+
+  if (nowMs >= salesCloseUtcMs()) {
+    await interaction.reply({ content: 'Sales are closed for the current draw. Come back after the draw.', flags: MessageFlags.Ephemeral });
+    return true;
+  }
+
+  count = Math.max(1, Math.min(config.maxTicketsPerUser, Number(count || 1)));
+  const current = await countUserTickets(guildId, userId);
+  const canBuy = Math.max(0, config.maxTicketsPerUser - current);
+  if (canBuy <= 0) {
+    await interaction.reply({ content: `You already have the maximum (${config.maxTicketsPerUser}) tickets for this draw.`, flags: MessageFlags.Ephemeral });
+    return true;
+  }
+  if (count > canBuy) count = canBuy;
+
+  const totalCost = count * config.ticketPrice;
+  const ok = await economy.tryDebitUser(guildId, userId, totalCost, 'lottery_ticket', { count, mode: 'pick' });
+  if (!ok) {
+    await interaction.reply({ content: `Not enough funds. You need ${formatMoney(totalCost)}.`, flags: MessageFlags.Ephemeral });
+    return true;
+  }
+
+  const drawUtc = nextDrawUtcMs();
+  const drawKey = drawKeyFromDrawUtc(drawUtc);
+  await ensureDraw(guildId, drawKey, drawUtc);
+
+  const payload = { main: [...main].sort((a, b) => a - b), power };
+  const inserts = [];
+  for (let i = 0; i < count; i++) {
+    inserts.push(pool.query(
+      `INSERT INTO lottery_tickets (guild_id, user_id, draw_key, numbers)
+       VALUES ($1,$2,$3,$4)`,
+      [guildId, userId, drawKey, payload]
+    ));
+  }
+  await Promise.all(inserts);
+
+  const drawUnix = Math.floor(drawUtc / 1000);
+  await interaction.reply({
+    content: `✅ Bought **${count}** ticket(s) with **your numbers** for the draw <t:${drawUnix}:F>.\nMain: **${payload.main.join(', ')}** | PB **${String(power).padStart(2, '0')}**`,
+    flags: MessageFlags.Ephemeral,
+  });
+  return true;
 }
 
 async function getDrawRow(guildId, drawKey, drawUtc, closeUtc) {
@@ -647,7 +751,6 @@ async function runDraw(client, guildId) {
 }
 
 async function handleInteraction(interaction) {
-  if (!interaction.isButton?.()) return false;
   if (typeof interaction.customId !== "string") return false;
   if (!interaction.customId.startsWith("lotto:")) return false;
   if (!interaction.inGuild?.() || !interaction.guildId) return false;
@@ -656,15 +759,82 @@ async function handleInteraction(interaction) {
   const action = parts[1];
 
   try {
-    if (action === "buy") {
-      const count = Math.max(1, Math.min(config.maxTicketsPerUser, Number(parts[2] || 1)));
-      return await buyTickets(interaction, count);
+    if (interaction.isButton?.()) {
+      if (interaction.customId === 'lotto:pick:open') {
+        const modal = new ModalBuilder()
+          .setCustomId('lotto:pick:submit')
+          .setTitle('Powerball - Pick Numbers');
+
+        const mainInput = new TextInputBuilder()
+          .setCustomId('main')
+          .setLabel('7 main numbers (1-35)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder('1,5,7,12,18,22,35');
+
+        const pbInput = new TextInputBuilder()
+          .setCustomId('power')
+          .setLabel('Powerball number (1-20)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder('14');
+
+        const countInput = new TextInputBuilder()
+          .setCustomId('count')
+          .setLabel(`Tickets (1-${config.maxTicketsPerUser})`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false)
+          .setPlaceholder('1');
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(mainInput),
+          new ActionRowBuilder().addComponents(pbInput),
+          new ActionRowBuilder().addComponents(countInput)
+        );
+
+        await interaction.showModal(modal);
+        return true;
+      }
+
+      if (action === "buy") {
+        const count = Math.max(1, Math.min(config.maxTicketsPerUser, Number(parts[2] || 1)));
+        return await buyTickets(interaction, count);
+      }
+      if (action === "my") {
+        return await showMyTickets(interaction);
+      }
+      if (action === "pick") {
+        // Show the number table + entry button
+        await interaction.reply({ embeds: [buildPickIntroEmbed()], components: [buildPickActionRow()], flags: MessageFlags.Ephemeral });
+        return true;
+      }
+
+      await interaction.reply({ content: "Unknown lottery action.", flags: MessageFlags.Ephemeral });
+      return true;
     }
-    if (action === "my") {
-      return await showMyTickets(interaction);
+
+    if (interaction.isModalSubmit?.()) {
+      if (interaction.customId !== 'lotto:pick:submit') return false;
+      const mainRaw = interaction.fields.getTextInputValue('main');
+      const pbRaw = interaction.fields.getTextInputValue('power');
+      const countRaw = interaction.fields.getTextInputValue('count');
+
+      const main = parseMainNumbers(mainRaw);
+      const power = Number(String(pbRaw).trim());
+      const count = Number(String(countRaw || '1').trim() || '1');
+
+      if (main.length !== 7 || main.some(n => !Number.isInteger(n) || n < 1 || n > 35)) {
+        await interaction.reply({ content: '❌ Main numbers must be **7 unique** integers from **1-35**.', flags: MessageFlags.Ephemeral });
+        return true;
+      }
+      if (!Number.isInteger(power) || power < 1 || power > 20) {
+        await interaction.reply({ content: '❌ Powerball must be an integer from **1-20**.', flags: MessageFlags.Ephemeral });
+        return true;
+      }
+      return await buyTicketsSelected(interaction, main, power, count);
     }
-    await interaction.reply({ content: "Unknown lottery action.", flags: MessageFlags.Ephemeral });
-    return true;
+
+    return false;
   } catch (e) {
     console.error("[LOTTERY] interaction failed:", e);
     try {

@@ -7,6 +7,7 @@ const bullshitGame = require("./data/games/bullshit");
 const botGames = require("./utils/botGames");
 const lottery = require("./utils/lottery");
 const echoCurses = require("./utils/echoCurses");
+const echoRift = require("./utils/echoRift");
 
 // 📌 Persistent "Bot Features" hub (stays working after restarts)
 const featuresHub = require("./data/features");
@@ -587,6 +588,9 @@ client.once(Events.ClientReady, async () => {
       // 🎟 Weekly Powerball Lottery
       lottery.startScheduler(client);
 
+      // 🕳️ Echo Rift (daily random event)
+      echoRift.startScheduler(client);
+
       const count = await syncAchievements(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements/*`);
 
@@ -665,6 +669,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[LOTTERY] interaction failed:", e);
+  }
+
+  // 🕳️ Echo Rift interactions
+  try {
+    const handled = await echoRift.handleInteraction(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[RIFT] interaction failed:", e);
   }
 
 
