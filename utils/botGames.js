@@ -169,6 +169,25 @@ function pickWeighted(events) {
 // Active in-memory event state
 // ----------------------------
 let active = null; 
+
+
+function unixFromMs(ms) {
+  return Math.floor(ms / 1000);
+}
+
+function disableComponentsFromMessage(message) {
+  const rows = message.components ?? [];
+  return rows.map((row) => {
+    const r = ActionRowBuilder.from(row);
+    r.components = r.components.map((c) => {
+      const b = ButtonBuilder.from(c);
+      b.setDisabled(true);
+      return b;
+    });
+    return r;
+  });
+}
+
 // active = { messageId, channelId, guildId, eventId, claimedBy, expiresAt, state, eventMod }
 
 function buildOneClickPayload(eventMod, state) {
@@ -186,6 +205,14 @@ function buildOneClickPayload(eventMod, state) {
     }],
     components: [row]
   };
+
+
+// schedule expiry (unclaimed)
+if (active.expiryTimer) clearTimeout(active.expiryTimer);
+active.expiryTimer = setTimeout(() => {
+  expireActiveEvent(client, "unclaimed");
+}, Math.max(0, active.expiresAt - Date.now()));
+
 }
 
 // Unified renderer: supports render() or legacy create/run
@@ -228,13 +255,57 @@ async function spawnEvent(client, guild) {
     eventMod,
     state,
     claimedBy: null,
-    expiresAt: Date.now() + (config.expireMinutes * 60_000),
+    expiresAt: Date.now() + UNCLAIMED_EXPIRE_MS,
+    claimedExpiresAt: null,
+    expiryTimer: null,
   };
 
   if (config.debug) {
     console.log(`[BOTGAMES] Spawned ${eventMod.id} in #${channel.id} (msg ${msg.id})`);
   }
 }
+
+
+async function expireActiveEvent(client, mode) {
+  if (!active) return;
+  try {
+    const channel = await client.channels.fetch(active.channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+
+    const msg = await channel.messages.fetch(active.messageId).catch(() => null);
+    if (!msg) return;
+
+    const eventName = active.eventMod?.name || "Bot Game";
+    const expiresAtMs = mode === "claimed" ? (active.claimedExpiresAt || Date.now()) : active.expiresAt;
+    const expiresUnix = unixFromMs(expiresAtMs);
+
+    let description;
+    if (mode === "unclaimed") {
+      description = `**${eventName}** expired — react faster next time.
+
+Expired: <t:${expiresUnix}:R>`;
+    } else {
+      const who = active.claimedBy ? `<@${active.claimedBy}>` : "Someone";
+      description = `**${eventName}** was claimed by ${who} but expired before it was finished.
+
+Expired: <t:${expiresUnix}:R>`;
+    }
+
+    await msg.edit({
+      embeds: [{
+        title: "⏱️ Game Expired",
+        description,
+      }],
+      components: disableComponentsFromMessage(msg),
+    });
+  } catch (e) {
+    console.error("[BOTGAMES] expireActiveEvent failed:", e);
+  } finally {
+    try { if (active?.expiryTimer) clearTimeout(active.expiryTimer); } catch {}
+    active = null;
+  }
+}
+
 
 function makeCtx(interaction) {
   const guildId = interaction.guildId;
@@ -387,6 +458,9 @@ async function handleInteraction(interaction) {
   if (!interaction.isButton()) return false;
   if (!interaction.customId?.startsWith("botgames:")) return false;
 
+  // Ack immediately to avoid Discord 3s interaction timeout
+  try { await interaction.deferUpdate(); } catch {}
+
   if (!active) {
     await interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
     return true;
@@ -417,12 +491,21 @@ async function handleInteraction(interaction) {
         await interaction.reply({ content: "You need to claim the event first.", flags: MessageFlags.Ephemeral });
     return true;
       }
-      active.claimedBy = interaction.user.id;
+      
+active.claimedBy = interaction.user.id;
+active.claimedExpiresAt = Date.now() + CLAIMED_EXPIRE_MS;
+
+// reschedule expiry (claimed)
+if (active.expiryTimer) clearTimeout(active.expiryTimer);
+active.expiryTimer = setTimeout(() => {
+  expireActiveEvent(interaction.client, "claimed");
+}, Math.max(0, active.claimedExpiresAt - Date.now()));
+
 
       // If the event supports multi-step, re-render claimed state
       if (typeof active.eventMod.render === "function") {
         const payload = renderEvent(active.eventMod, active.state, true);
-        return interaction.update(payload);
+        return interaction.editReply(payload);
       }
 
       // Legacy one-shot: run immediately
