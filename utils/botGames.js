@@ -10,6 +10,10 @@ const {
 const config = require("../data/botgames/config");
 const { loadEvents } = require("../data/botgames");
 const economy = require("./economy");
+const echoCurses = require("./echoCurses");
+
+// ⏳ How long an event can sit unclaimed before it expires (from data/botgames/config.js)
+const UNCLAIMED_EXPIRE_MS = (Number(config.expireMinutes ?? 180) || 180) * 60_000;
 
 // ----------------------------
 // Economy wrappers (guild-safe)

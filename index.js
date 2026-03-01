@@ -661,9 +661,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[BOTGAMES] interaction failed:", e);
+    // Avoid Discord "Interaction failed" red banner
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ Echo fumbled that interaction. Try again.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ Echo fumbled that interaction. Try again.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
   }
 
-  // 🎟 Weekly Powerball Lottery interactions
+// 🎟 Weekly Powerball Lottery interactions
   try {
     const handled = await lottery.handleInteraction(interaction);
     if (handled) return;
@@ -677,10 +686,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[RIFT] interaction failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ The Rift snarls and rejects your touch. Try again.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ The Rift snarls and rejects your touch. Try again.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
   }
 
-
-  // ✅ Self-assign role boards (JSON-driven button roles)
+// ✅ Self-assign role boards (JSON-driven button roles)
   // Buttons use customId format: rr:<boardId>:<roleId>
   // Works across restarts (no collectors) — handled globally here.
   if (interaction.isButton?.() && typeof interaction.customId === "string" && interaction.customId.startsWith("rr:")) {
