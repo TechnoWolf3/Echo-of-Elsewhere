@@ -229,6 +229,12 @@ async function ensureEconomyTables(db) {
       bank_balance BIGINT NOT NULL DEFAULT 0
     );
 
+    -- ✅ System state (singleton key/value) for deploy tracking
+    CREATE TABLE IF NOT EXISTS system_state (
+      key TEXT PRIMARY KEY,
+      value TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS user_balances (
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
@@ -569,6 +575,61 @@ console.log(`[CMD] Loaded ${client.commands.size} command file(s).`);
 -------------------------------- */
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
+
+  /* =========================================================
+     🚀 ECHO DEPLOY UPDATE ANNOUNCEMENT (Railway Deployment ID)
+     ---------------------------------------------------------
+     - Posts a message ONLY when RAILWAY_DEPLOYMENT_ID changes
+     - Does NOT delete the message
+     - Safe to disable by setting ENABLE_DEPLOY_ANNOUNCEMENT = false
+     ========================================================= */
+
+  const ENABLE_DEPLOY_ANNOUNCEMENT = true; // 👈 Set to false to disable
+
+  if (ENABLE_DEPLOY_ANNOUNCEMENT && client.db) {
+    try {
+      const currentDeployment = process.env.RAILWAY_DEPLOYMENT_ID;
+
+      if (currentDeployment) {
+        const res = await client.db.query(
+          "SELECT value FROM system_state WHERE key = $1",
+          ["last_deployment_id"]
+        );
+
+        const lastDeployment = res.rows?.[0]?.value ?? null;
+
+        if (lastDeployment !== currentDeployment) {
+          const channel = await client.channels
+            .fetch("1449217901306581074")
+            .catch(() => null);
+
+          if (channel) {
+            const now = Math.floor(Date.now() / 1000);
+
+            const embed = new EmbedBuilder()
+              .setColor(0x0875AF)
+              .setTitle("✅ Echo received an update!")
+              .setDescription(`Deployed <t:${now}:F> (<t:${now}:R>)`);
+
+            await channel.send({ embeds: [embed] }).catch(() => {});
+          }
+
+          await client.db.query(
+            `INSERT INTO system_state (key, value)
+             VALUES ($1, $2)
+             ON CONFLICT (key)
+             DO UPDATE SET value = EXCLUDED.value`,
+            ["last_deployment_id", currentDeployment]
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[DEPLOY ANNOUNCEMENT] Failed:", err);
+    }
+  }
+
+  /* ========================================================= */
+
 
   // 📌 Ensure the persistent Bot Features hub message exists + is refreshed
   try {
