@@ -7,9 +7,10 @@ const economy = require("../economy");
 
 async function getCurse(guildId, userId) {
   const res = await pool.query(
-    `SELECT kind, value, expires_at
-     FROM echo_user_curses
-     WHERE guild_id=$1 AND user_id=$2
+    `SELECT type, amount, expires_at
+     FROM echo_curses
+     WHERE guild_id=$1 AND user_id=$2 AND type IN ('blood_tax','games_fee')
+     ORDER BY updated_at DESC
      LIMIT 1`,
     [String(guildId), String(userId)]
   );
@@ -18,15 +19,15 @@ async function getCurse(guildId, userId) {
 
   const exp = row.expires_at ? new Date(row.expires_at).getTime() : null;
   if (exp && exp <= Date.now()) {
-    await pool.query(`DELETE FROM echo_user_curses WHERE guild_id=$1 AND user_id=$2`, [String(guildId), String(userId)]);
+    await pool.query(`DELETE FROM echo_curses WHERE guild_id=$1 AND user_id=$2 AND type IN ('blood_tax','games_fee')`, [String(guildId), String(userId)]);
     return null;
   }
 
-  return { kind: String(row.kind), value: Number(row.value || 0), expiresAt: exp };
+  return { kind: String(row.type), value: Number(row.amount || 0), expiresAt: exp };
 }
 
 async function clearCurse(guildId, userId) {
-  await pool.query(`DELETE FROM echo_user_curses WHERE guild_id=$1 AND user_id=$2`, [String(guildId), String(userId)]);
+  await pool.query(`DELETE FROM echo_curses WHERE guild_id=$1 AND user_id=$2 AND type IN ('blood_tax','games_fee')`, [String(guildId), String(userId)]);
 }
 
 function label(kind) {
