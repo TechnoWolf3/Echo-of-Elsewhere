@@ -8,7 +8,7 @@ module.exports = {
   channelId: "1449217901306581074",
 
   // ⏳ Expiry for unclaimed events
-  expireMinutes: 10,
+  expireMinutes: 180,
 
   // 🎲 Daily roll odds (weekdays)
   weekdayOdds: { none: 0.65, one: 0.30, two: 0.05 },
