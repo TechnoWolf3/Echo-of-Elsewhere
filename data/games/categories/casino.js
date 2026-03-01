@@ -42,7 +42,7 @@ module.exports = {
 
     {
       id: "bullshit",
-      name: "Bullshit - The card game",
+      name: "Bullshit",
       emoji: "💩",
       description: "Match the rank... or not. Someones lying? **BULLSHIT!**",
       run: async (interaction, ctx = {}) => {
