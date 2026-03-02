@@ -10,6 +10,9 @@ module.exports = {
   // ⏳ Expiry for unclaimed events
   expireMinutes: 180,
 
+  // ⏳ Expiry AFTER an event is claimed (prevents stuck games)
+  claimedExpireMinutes: 10,
+
   // 🎲 Daily roll odds (weekdays)
   weekdayOdds: { none: 0.65, one: 0.30, two: 0.05 },
 

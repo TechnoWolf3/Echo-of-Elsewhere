@@ -15,6 +15,9 @@ const echoCurses = require("./echoCurses");
 // ⏳ How long an event can sit unclaimed before it expires (from data/botgames/config.js)
 const UNCLAIMED_EXPIRE_MS = (Number(config.expireMinutes ?? 180) || 180) * 60_000;
 
+// ⏳ How long a *claimed* event can sit without being finished before it expires
+const CLAIMED_EXPIRE_MS = (Number(config.claimedExpireMinutes ?? 10) || 10) * 60_000;
+
 // ----------------------------
 // Economy wrappers (guild-safe)
 // ----------------------------
@@ -34,6 +37,20 @@ async function econRemove(guildId, userId, amount) {
   if (typeof economy.remove !== "function") throw new Error("economy.remove missing");
   if (economy.remove.length >= 3) return economy.remove(guildId, userId, amount);
   return economy.remove(userId, amount);
+}
+
+
+// ----------------------------
+// Interaction reply helper
+// ----------------------------
+async function safeEphemeral(interaction, content) {
+  const payload = { content, flags: MessageFlags.Ephemeral };
+  try {
+    if (interaction.deferred || interaction.replied) return await interaction.followUp(payload);
+    return await interaction.reply(payload);
+  } catch (_) {
+    try { return await interaction.followUp(payload); } catch (_) {}
+  }
 }
 
 // ----------------------------
@@ -469,24 +486,24 @@ async function handleInteraction(interaction) {
   try { await interaction.deferUpdate(); } catch {}
 
   if (!active) {
-    await interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    await safeEphemeral(interaction, "That event is no longer active.");
     return true;
   }
 
   if (interaction.message?.id !== active.messageId) {
-    await interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    await safeEphemeral(interaction, "That event is no longer active.");
     return true;
   }
 
   if (Date.now() > active.expiresAt) {
     active = null;
-    await interaction.reply({ content: "Too slow — event expired.", flags: MessageFlags.Ephemeral });
+    await safeEphemeral(interaction, "Too slow — event expired.");
     return true;
   }
 
   const [, eventId, action] = interaction.customId.split(":");
   if (eventId !== active.eventId) {
-    await interaction.reply({ content: "That event is no longer active.", flags: MessageFlags.Ephemeral });
+    await safeEphemeral(interaction, "That event is no longer active.");
     return true;
   }
 
@@ -495,7 +512,7 @@ async function handleInteraction(interaction) {
     if (!active.claimedBy) {
       // Only allow claim on play action
       if (action !== "play") {
-        await interaction.reply({ content: "You need to claim the event first.", flags: MessageFlags.Ephemeral });
+        await safeEphemeral(interaction, "You need to claim the event first.");
     return true;
       }
       
@@ -526,7 +543,7 @@ active.expiryTimer = setTimeout(() => {
 
     // From here, event is claimed. Only claimer can act.
     if (interaction.user.id !== active.claimedBy) {
-      await interaction.reply({ content: "This event has already been claimed.", flags: MessageFlags.Ephemeral });
+      await safeEphemeral(interaction, "This event has already been claimed.");
     return true;
     }
 
@@ -560,7 +577,7 @@ active.expiryTimer = setTimeout(() => {
       return eventMod.run(ctx, state);
     }
 
-    await interaction.reply({ content: "This event is not configured correctly.", flags: MessageFlags.Ephemeral });
+    await safeEphemeral(interaction, "This event is not configured correctly.");
     return true;
   } catch (e) {
     console.warn(`[BOTGAMES] interaction failed: ${e?.message || e}`);
@@ -568,7 +585,7 @@ active.expiryTimer = setTimeout(() => {
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({ content: "Something went wrong running that game.", flags: MessageFlags.Ephemeral });
       } else {
-        await interaction.reply({ content: "Something went wrong running that game.", flags: MessageFlags.Ephemeral });
+        await safeEphemeral(interaction, "Something went wrong running that game.");
       }
     } catch {}
   }

@@ -1,7 +1,7 @@
 // commands/setjail.js
 const { SlashCommandBuilder } = require("discord.js");
-const { setJail, getJailRelease } = require("../utils/jail");
-const { pool } = require("../utils/db");
+const { setJail, getJailRelease } = require(../../utils/jail");
+const { pool } = require(../../utils/db");
 
 const JAIL_ADMIN_ROLE_ID = "741251069002121236";
 

@@ -1,6 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
-const echoRift = require('../utils/echoRift');
-const echoCurses = require('../utils/echoCurses');
+const echoRift = require(../../utils/echoRift');
+const echoCurses = require(../../utils/echoCurses');
 
 function fmtDate(d) {
   if (!d) return '-';

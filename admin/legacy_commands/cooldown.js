@@ -1,6 +1,6 @@
 // commands/cooldown.js
 const { SlashCommandBuilder } = require("discord.js");
-const { pool } = require("../utils/db");
+const { pool } = require("../../utils/db");
 
 // Role allowed to manage cooldowns
 const COOLDOWN_ADMIN_ROLE_ID = "741251069002121236";

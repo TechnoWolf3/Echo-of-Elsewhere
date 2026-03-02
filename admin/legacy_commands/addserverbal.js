@@ -1,6 +1,6 @@
 // commands/addserverbal.js
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
-const { addServerBank } = require("../utils/economy");
+const { addServerBank } = require("../../utils/economy");
 
 const REQUIRED_ROLE_ID = "741251069002121236";
 

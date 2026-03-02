@@ -8,7 +8,7 @@ const REQUIRED_ROLE_ID = "741251069002121236";
 
 function getDbQuery() {
   // Tries to support whichever style your utils/db.js exports
-  const db = require("../utils/db");
+  const db = require(../../utils/db");
   if (typeof db.query === "function") return db.query.bind(db);
   if (db.pool && typeof db.pool.query === "function") return db.pool.query.bind(db.pool);
   throw new Error("utils/db.js must export either { query } or { pool }");

@@ -1,6 +1,6 @@
 // commands/invadmin.js
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
-const { pool } = require("../utils/db");
+const { pool } = require("../../utils/db");
 
 const SHOP_ADMIN_ROLE_ID = "741251069002121236";
 
