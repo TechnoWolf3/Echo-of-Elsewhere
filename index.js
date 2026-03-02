@@ -895,6 +895,52 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   }
 
+  // ✅ Safety ACK: prevent "The application did not respond" timeouts
+  // If a command forgets to reply/defer quickly (or hangs), we auto-defer after ~2.5s.
+  // We also wrap reply/defer methods to track acknowledgement without changing command code.
+  let __ackTimer = null;
+  try {
+    let __acked = false;
+
+    const __origReply = interaction.reply?.bind(interaction);
+    const __origDeferReply = interaction.deferReply?.bind(interaction);
+    const __origDeferUpdate = interaction.deferUpdate?.bind(interaction);
+    const __origUpdate = interaction.update?.bind(interaction);
+
+    if (typeof __origReply === "function") {
+      interaction.reply = async (...args) => {
+        __acked = true;
+        return __origReply(...args);
+      };
+    }
+    if (typeof __origDeferReply === "function") {
+      interaction.deferReply = async (...args) => {
+        __acked = true;
+        return __origDeferReply(...args);
+      };
+    }
+    if (typeof __origDeferUpdate === "function") {
+      interaction.deferUpdate = async (...args) => {
+        __acked = true;
+        return __origDeferUpdate(...args);
+      };
+    }
+    if (typeof __origUpdate === "function") {
+      interaction.update = async (...args) => {
+        __acked = true;
+        return __origUpdate(...args);
+      };
+    }
+
+    __ackTimer = setTimeout(async () => {
+      try {
+        if (!__acked && !interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        }
+      } catch (_) {}
+    }, 2500);
+  } catch (_) {}
+
   try {
     await command.execute(interaction);
   } catch (e) {
@@ -910,6 +956,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
       }
     } catch {}
+  } finally {
+    if (__ackTimer) clearTimeout(__ackTimer);
   }
 });
 
