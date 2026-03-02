@@ -4,6 +4,7 @@ const {
   ActionRowBuilder,
   StringSelectMenuBuilder,
   ComponentType,
+  MessageFlags,
 } = require('discord.js');
 const { pool } = require('../utils/db');
 const economy = require('../utils/economy');
@@ -51,7 +52,7 @@ module.exports = {
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
-      return interaction.reply({ content: 'This command can only be used in a server.', ephemeral: true });
+      return interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
     }
 
     const user = interaction.options.getUser('user') || interaction.user;
@@ -144,7 +145,7 @@ module.exports = {
           {
             name: 'Jobs',
             value: `Completed: **${fmtInt(totalJobs)}**\nLevel: **${fmtInt(jobLevel)}** (XP: ${fmtInt(jobXP)})`,
-            inline: false,
+            inline: true,
           },
           { name: 'Casino (Quick)', value: `Roulette wins: **${fmtInt(rouletteWins)}**`, inline: true },
           {
@@ -265,20 +266,29 @@ module.exports = {
     collector.on('collect', async (i) => {
       // Only the command invoker can drive the UI (others can still *view* the embed).
       if (i.user.id !== interaction.user.id) {
-        return i.reply({ content: `Only **${interaction.user.username}** can use this profile menu.`, ephemeral: true });
+        return i.reply({ content: `Only **${interaction.user.username}** can use this profile menu.`, flags: MessageFlags.Ephemeral });
       }
 
       const v = i.values?.[0] ?? 'overview';
       try {
-        if (v === 'overview') return i.update({ embeds: [buildOverview()], components: [row] });
-        if (v === 'casino') return i.update({ embeds: [await buildCasino()], components: [row] });
-        if (v === 'jobs') return i.update({ embeds: [await buildJobs()], components: [row] });
-        if (v === 'economy') return i.update({ embeds: [await buildEconomy()], components: [row] });
-        if (v === 'achievements') return i.update({ embeds: [await buildAchievements()], components: [row] });
-        if (v === 'statement') return i.update({ embeds: [await buildStatement()], components: [row] });
-        return i.update({ embeds: [buildOverview()], components: [row] });
+        // ACK immediately to avoid "Unknown interaction" if DB queries take >3s.
+        await i.deferUpdate();
+
+        let next;
+        if (v === 'overview') next = buildOverview();
+        else if (v === 'casino') next = await buildCasino();
+        else if (v === 'jobs') next = await buildJobs();
+        else if (v === 'economy') next = await buildEconomy();
+        else if (v === 'achievements') next = await buildAchievements();
+        else if (v === 'statement') next = await buildStatement();
+        else next = buildOverview();
+
+        // Edit the original reply message (safe after deferUpdate)
+        await i.editReply({ embeds: [next], components: [row] });
+        return;
       } catch (_) {
-        return i.reply({ content: 'Something went wrong updating that tab.', ephemeral: true }).catch(() => {});
+        // If something goes wrong after deferUpdate, fall back to an ephemeral notice.
+        return i.followUp({ content: 'Something went wrong updating that tab.', flags: MessageFlags.Ephemeral }).catch(() => {});
       }
     });
 
