@@ -1,5 +1,5 @@
 const { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } = require("discord.js");
-const { getServerBank } = require(../../utils/economy");
+const { getServerBank } = require("../../utils/economy");
 
 module.exports = {
   data: new SlashCommandBuilder()

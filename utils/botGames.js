@@ -28,15 +28,17 @@ async function econGetBalance(guildId, userId) {
 }
 
 async function econAdd(guildId, userId, amount) {
-  if (typeof economy.add !== "function") throw new Error("economy.add missing");
-  if (economy.add.length >= 3) return economy.add(guildId, userId, amount);
-  return economy.add(userId, amount);
+  // economy.js uses creditUser(guildId, userId, amount, type, meta)
+  if (typeof economy.creditUser !== "function") throw new Error("economy.creditUser missing");
+  return economy.creditUser(guildId, userId, amount, "botgames_reward", { source: "botgames" });
 }
 
 async function econRemove(guildId, userId, amount) {
-  if (typeof economy.remove !== "function") throw new Error("economy.remove missing");
-  if (economy.remove.length >= 3) return economy.remove(guildId, userId, amount);
-  return economy.remove(userId, amount);
+  // economy.js uses tryDebitUser(guildId, userId, amount, type, meta)
+  if (typeof economy.tryDebitUser !== "function") throw new Error("economy.tryDebitUser missing");
+  const res = await economy.tryDebitUser(guildId, userId, amount, "botgames_entry", { source: "botgames" });
+  if (!res?.ok) throw new Error("Not enough balance");
+  return res;
 }
 
 
@@ -567,8 +569,10 @@ async function handleInteraction(interaction) {
   // Blood Tax blocks participating in random events until paid
   if (await echoCurses.guardBloodTaxComponent(interaction, { contextLabel: "this event" })) return true;
 
-  // Ack immediately to avoid Discord 3s interaction timeout
-  try { await interaction.deferUpdate(); } catch {}
+  // NOTE:
+  // Do NOT deferUpdate() here.
+  // Event modules use interaction.update() for message updates; deferring first
+  // would cause "The reply to this interaction has already been sent or deferred".
 
   if (!active) {
     await safeEphemeral(interaction, "That event is no longer active.");
@@ -614,7 +618,7 @@ active.expiryTimer = setTimeout(() => {
       // If the event supports multi-step, re-render claimed state
       if (typeof active.eventMod.render === "function") {
         const payload = renderEvent(active.eventMod, active.state, true);
-        return interaction.editReply(payload);
+        return interaction.update(payload);
       }
 
       // Legacy one-shot: run immediately
