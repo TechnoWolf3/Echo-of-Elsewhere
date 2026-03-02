@@ -252,7 +252,31 @@ module.exports = {
 
     const row = new ActionRowBuilder().addComponents(menu);
 
-    await interaction.reply({ embeds: [buildOverview()], components: [row], ephemeral: false });
+    // Reply safely: ACK quickly, then edit with full payload.
+    // Also avoids deprecated `ephemeral` option warnings (we simply omit it when public).
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    const safe = async (fn, retries = 2) => {
+      let lastErr;
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          return await fn();
+        } catch (e) {
+          lastErr = e;
+          const status = e?.status;
+          // Discord occasionally returns 5xx during brief outages; retry once or twice.
+          if (attempt < retries && (status === 503 || status === 502 || status === 504)) {
+            await sleep(900 + attempt * 600);
+            continue;
+          }
+          throw e;
+        }
+      }
+      throw lastErr;
+    };
+
+    await safe(() => interaction.deferReply());
+    await safe(() => interaction.editReply({ embeds: [buildOverview()], components: [row] }));
 
     const msg = await interaction.fetchReply().catch(() => null);
     if (!msg) return;
