@@ -685,23 +685,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  // 🛠️ Admin Panel (Bot Master)
+  // 🛠️ Admin Panel interactions
   try {
     const handled = await adminPanel.handleInteraction(interaction);
     if (handled) return;
   } catch (e) {
-    console.error("[ADMINPANEL] interaction failed:", e);
-    try {
-      if (interaction.deferred || interaction.replied) {
-        await interaction.followUp({ content: "❌ Admin panel interaction failed.", flags: MessageFlags.Ephemeral });
-      } else {
-        await interaction.reply({ content: "❌ Admin panel interaction failed.", flags: MessageFlags.Ephemeral });
-      }
-    } catch (_) {}
-    return;
+    console.error("[ADMINPANEL] handler failed:", e);
   }
 
-  
   // 🩸 Blood Tax (Pay Tribute / Serve Time) buttons
   try {
     const handled = await echoCurses.handleBloodTaxButtons(interaction);

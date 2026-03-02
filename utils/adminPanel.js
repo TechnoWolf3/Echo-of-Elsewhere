@@ -1,861 +1,808 @@
-// utils/adminPanel.js
-// Bot Master Admin Panel (role-gated) — replaces a bunch of individual /admin commands
-
 const {
-  EmbedBuilder,
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  EmbedBuilder,
   ModalBuilder,
   TextInputBuilder,
   TextInputStyle,
-  ChannelType,
   MessageFlags,
-} = require("discord.js");
+  PermissionFlagsBits,
+} = require('discord.js');
 
-const BOT_MASTER_ROLE_ID = "741251069002121236";
+const BOT_MASTER_ROLE_ID = '741251069002121236';
 
-// Legacy command modules (moved out of /commands so they are NOT deployed as slash commands)
-const legacy = {
-  addbalance: () => require("../admin/legacy_commands/addbalance"),
-  addserverbal: () => require("../admin/legacy_commands/addserverbal"),
-  board: () => require("../admin/legacy_commands/board"),
-  cooldown: () => require("../admin/legacy_commands/cooldown"),
-  invadmin: () => require("../admin/legacy_commands/invadmin"),
-  patchboard: () => require("../admin/legacy_commands/patchboard"),
-  ping: () => require("../admin/legacy_commands/ping"),
-  purge: () => require("../admin/legacy_commands/purge"),
-  resetachievements: () => require("../admin/legacy_commands/resetachievements"),
-  riftdebug: () => require("../admin/legacy_commands/riftdebug"),
-  serverbal: () => require("../admin/legacy_commands/serverbal"),
-  setheat: () => require("../admin/legacy_commands/setheat"),
-  setjail: () => require("../admin/legacy_commands/setjail"),
-  shopadmin: () => require("../admin/legacy_commands/shopadmin"),
+function hasBotMaster(member) {
+  return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
+}
+
+function nowUnix() {
+  return Math.floor(Date.now() / 1000);
+}
+
+const CATEGORIES = [
+  { value: 'economy', label: 'Economy' },
+  { value: 'moderation', label: 'Moderation' },
+  { value: 'boards', label: 'Boards' },
+  { value: 'patchboard', label: 'Patchboard' },
+  { value: 'shop', label: 'Shop / Inventory' },
+  { value: 'rift', label: 'Echo Rift' },
+  { value: 'misc', label: 'Misc' },
+];
+
+const ACTIONS_BY_CATEGORY = {
+  economy: [
+    { id: 'economy:addbalance', label: 'Add Balance', style: ButtonStyle.Primary, modal: true },
+    { id: 'economy:addserverbal', label: 'Add Server Bank', style: ButtonStyle.Primary, modal: true },
+    { id: 'economy:serverbal', label: 'View Server Bank', style: ButtonStyle.Secondary, modal: false },
+  ],
+  moderation: [
+    { id: 'moderation:purge', label: 'Purge Messages', style: ButtonStyle.Danger, modal: true },
+    { id: 'moderation:setheat', label: 'Set Heat', style: ButtonStyle.Secondary, modal: true },
+    { id: 'moderation:setjail', label: 'Set Jail', style: ButtonStyle.Secondary, modal: true },
+    { id: 'moderation:cooldown_clear', label: 'Clear Cooldowns', style: ButtonStyle.Secondary, modal: true },
+    { id: 'moderation:resetach', label: 'Reset Achievements', style: ButtonStyle.Danger, modal: true },
+  ],
+  boards: [
+    { id: 'boards:create', label: 'Board Create', style: ButtonStyle.Primary, modal: true },
+    { id: 'boards:update', label: 'Board Update', style: ButtonStyle.Secondary, modal: true },
+    { id: 'boards:bump', label: 'Board Bump', style: ButtonStyle.Secondary, modal: true },
+    { id: 'boards:list', label: 'Board List', style: ButtonStyle.Secondary, modal: false },
+    { id: 'boards:delete', label: 'Board Delete', style: ButtonStyle.Danger, modal: true },
+  ],
+  patchboard: [
+    { id: 'patchboard:set', label: 'Set', style: ButtonStyle.Primary, modal: true },
+    { id: 'patchboard:append', label: 'Append', style: ButtonStyle.Secondary, modal: true },
+    { id: 'patchboard:overwrite', label: 'Overwrite', style: ButtonStyle.Secondary, modal: true },
+    { id: 'patchboard:pause', label: 'Pause', style: ButtonStyle.Secondary, modal: true },
+    { id: 'patchboard:resume', label: 'Resume', style: ButtonStyle.Secondary, modal: true },
+    { id: 'patchboard:show', label: 'Show', style: ButtonStyle.Secondary, modal: true },
+    { id: 'patchboard:repost', label: 'Repost', style: ButtonStyle.Secondary, modal: true },
+  ],
+  shop: [
+    { id: 'shop:add', label: 'Shop Add', style: ButtonStyle.Primary, modal: true },
+    { id: 'shop:edit', label: 'Shop Edit', style: ButtonStyle.Secondary, modal: true },
+    { id: 'shop:setcategory', label: 'Set Category', style: ButtonStyle.Secondary, modal: true },
+    { id: 'shop:enable', label: 'Enable', style: ButtonStyle.Secondary, modal: true },
+    { id: 'shop:disable', label: 'Disable', style: ButtonStyle.Secondary, modal: true },
+    { id: 'shop:delete', label: 'Delete', style: ButtonStyle.Danger, modal: true },
+    { id: 'shop:inv_remove', label: 'Inv Remove', style: ButtonStyle.Danger, modal: true },
+  ],
+  rift: [
+    { id: 'rift:status', label: 'Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'rift:spawn', label: 'Spawn', style: ButtonStyle.Primary, modal: false },
+    { id: 'rift:clear', label: 'Clear', style: ButtonStyle.Danger, modal: false },
+    { id: 'rift:schedule', label: 'Schedule', style: ButtonStyle.Secondary, modal: true },
+    { id: 'rift:chance', label: 'Chance', style: ButtonStyle.Secondary, modal: true },
+    { id: 'rift:tax', label: 'Blood Tax', style: ButtonStyle.Secondary, modal: true },
+  ],
+  misc: [
+    { id: 'misc:ping', label: 'Ping', style: ButtonStyle.Secondary, modal: false },
+  ],
 };
 
-function isBotMaster(member) {
-  return !!member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID);
+function buildPanelEmbed(category) {
+  const cat = CATEGORIES.find(c => c.value === category)?.label ?? 'Economy';
+  return new EmbedBuilder()
+    .setColor(0x0875AF)
+    .setTitle('🛠️ Admin Panel')
+    .setDescription('Bot Master controls')
+    .addFields({ name: 'Category', value: `**${cat}**`, inline: true })
+    .setFooter({ text: `Bot Master Panel • ${cat}` })
+    .setTimestamp();
 }
 
-function naughtyMessage() {
-  return "🚫 Oi. Hands off. This panel is for **Bot Masters** only.\n\nBe good, or Echo will notice.";
-}
-
-function buildBaseEmbed(page) {
-  const e = new EmbedBuilder()
-    .setColor(0x0875af)
-    .setTitle("🛠️ Admin Panel")
-    .setFooter({ text: "Bot Master controls" });
-
-  const desc =
-    page === "home"
-      ? "Pick a category below. Buttons are locked to the **Bot Master** role."
-      : `Category: **${pageLabel(page)}**`;
-  e.setDescription(desc);
-  return e;
-}
-
-function pageLabel(page) {
-  switch (page) {
-    case "economy":
-      return "Economy";
-    case "moderation":
-      return "Moderation";
-    case "boards":
-      return "Boards";
-    case "shop":
-      return "Shop";
-    case "debug":
-      return "Debug";
-    default:
-      return "Home";
-  }
-}
-
-function navRow(current) {
+function buildCategoryRow(category) {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
-      .setCustomId("adminpanel:nav")
-      .setPlaceholder("Select category…")
+      .setCustomId('adminpanel:category')
+      .setPlaceholder('Select a category')
       .addOptions(
-        {
-          label: "Home",
-          value: "home",
-          default: current === "home",
-        },
-        {
-          label: "Economy",
-          value: "economy",
-          default: current === "economy",
-        },
-        {
-          label: "Moderation",
-          value: "moderation",
-          default: current === "moderation",
-        },
-        {
-          label: "Boards",
-          value: "boards",
-          default: current === "boards",
-        },
-        {
-          label: "Shop",
-          value: "shop",
-          default: current === "shop",
-        },
-        {
-          label: "Debug",
-          value: "debug",
-          default: current === "debug",
-        }
+        CATEGORIES.map(c => ({
+          label: c.label,
+          value: c.value,
+          default: c.value === category,
+        }))
       )
   );
 }
 
-function buttonRow(buttons) {
-  const row = new ActionRowBuilder();
-  for (const b of buttons) row.addComponents(b);
-  return row;
+function chunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
 }
 
-function render(page = "home") {
-  const embed = buildBaseEmbed(page);
-
-  const rows = [navRow(page)];
-
-  if (page === "economy") {
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:addbalance").setLabel("Add Balance").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("adminpanel:action:addserverbal").setLabel("Add Server Bank").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("adminpanel:action:serverbal").setLabel("View Server Bank").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-  }
-
-  if (page === "moderation") {
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:purge").setLabel("Purge Messages").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId("adminpanel:action:cooldown_clear").setLabel("Clear Cooldowns").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:setjail").setLabel("Set Jail").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:setheat").setLabel("Set Heat").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:resetachievements").setLabel("Reset Achievements").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId("adminpanel:action:inv_remove").setLabel("Inv: Remove Item").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-  }
-
-  if (page === "boards") {
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:board_create").setLabel("Role Board: Create").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("adminpanel:action:board_update").setLabel("Role Board: Update").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:board_list").setLabel("Role Board: List").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:board_bump").setLabel("Role Board: Bump").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:board_delete").setLabel("Role Board: Delete").setStyle(ButtonStyle.Danger),
-      ])
-    );
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:patch_set").setLabel("Patch Board: Set").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("adminpanel:action:patch_append").setLabel("Patch Board: Append").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:patch_overwrite").setLabel("Patch Board: Overwrite").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:patch_pause").setLabel("Patch Board: Pause").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:patch_resume").setLabel("Patch Board: Resume").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:patch_clear").setLabel("Patch Board: Clear").setStyle(ButtonStyle.Danger),
-      ])
-    );
-  }
-
-  if (page === "shop") {
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:shop_add").setLabel("Shop: Add Item").setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId("adminpanel:action:shop_edit").setLabel("Shop: Edit Item").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:shop_setcategory").setLabel("Shop: Set Category").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-  }
-
-  if (page === "debug") {
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:rift_status").setLabel("Rift: Status").setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId("adminpanel:action:rift_spawn").setLabel("Rift: Spawn").setStyle(ButtonStyle.Danger),
-        new ButtonBuilder().setCustomId("adminpanel:action:rift_clear").setLabel("Rift: Clear").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-    rows.push(
-      buttonRow([
-        new ButtonBuilder().setCustomId("adminpanel:action:ping").setLabel("Ping").setStyle(ButtonStyle.Secondary),
-      ])
-    );
-  }
-
-  return { embeds: [embed], components: rows };
-}
-
-function proxyInteraction(interaction, fakeOptions) {
-  // Proxy to override .options for legacy command execution.
-  return new Proxy(interaction, {
-    get(target, prop) {
-      if (prop === "options") return fakeOptions;
-      return target[prop];
-    },
-  });
-}
-
-function parseIdFromMention(s) {
-  if (!s) return null;
-  const str = String(s).trim();
-  // <@123>, <@!123>, <#123>, <@&123>
-  const m = str.match(/^(?:<[@#]&?!?)?(\d{15,22})>?$/);
-  return m ? m[1] : null;
-}
-
-async function fetchUserFromInput(interaction, raw) {
-  const id = parseIdFromMention(raw);
-  if (!id) return null;
-  // Prefer guild member fetch (ensures correct guild user)
-  const member = await interaction.guild?.members.fetch(id).catch(() => null);
-  return member?.user ?? (await interaction.client.users.fetch(id).catch(() => null));
-}
-
-async function fetchRoleFromInput(interaction, raw) {
-  const id = parseIdFromMention(raw);
-  if (!id) return null;
-  return await interaction.guild?.roles.fetch(id).catch(() => null);
-}
-
-async function fetchChannelFromInput(interaction, raw) {
-  const id = parseIdFromMention(raw);
-  if (!id) return null;
-  return await interaction.guild?.channels.fetch(id).catch(() => null);
-}
-
-function modal(customId, title, inputs) {
-  const m = new ModalBuilder().setCustomId(customId).setTitle(title);
-  for (const inp of inputs) m.addComponents(new ActionRowBuilder().addComponents(inp));
-  return m;
-}
-
-function textInput(id, label, style = TextInputStyle.Short, required = true, placeholder = "") {
-  return new TextInputBuilder()
-    .setCustomId(id)
-    .setLabel(label)
-    .setStyle(style)
-    .setRequired(required)
-    .setPlaceholder(placeholder);
-}
-
-async function runLegacy(interaction, key, fakeOptions) {
-  const cmd = legacy[key]?.();
-  if (!cmd?.execute) {
-    throw new Error(`Legacy command not found: ${key}`);
-  }
-  const proxied = proxyInteraction(interaction, fakeOptions);
-  return cmd.execute(proxied);
-}
-
-async function handleNav(interaction) {
-  const page = interaction.values?.[0] ?? "home";
-  await interaction.update(render(page));
-  return true;
-}
-
-async function handleAction(interaction, action) {
-  // Actions either run immediately or open a modal.
-  switch (action) {
-    case "serverbal": {
-      return runLegacy(interaction, "serverbal", {
-        getSubcommand() {
-          return null;
-        },
-      }).then(() => true);
-    }
-    case "ping": {
-      return runLegacy(interaction, "ping", {}).then(() => true);
-    }
-    case "board_list": {
-      return runLegacy(interaction, "board", {
-        getSubcommand() {
-          return "list";
-        },
-      }).then(() => true);
-    }
-    case "rift_status": {
-      return runLegacy(interaction, "riftdebug", {
-        getSubcommand() {
-          return "status";
-        },
-      }).then(() => true);
-    }
-    case "rift_spawn": {
-      return runLegacy(interaction, "riftdebug", {
-        getSubcommand() {
-          return "spawn";
-        },
-      }).then(() => true);
-    }
-    case "rift_clear": {
-      return runLegacy(interaction, "riftdebug", {
-        getSubcommand() {
-          return "clear";
-        },
-      }).then(() => true);
-    }
-  }
-
-  // Everything else needs inputs via modal.
-  const modalId = `adminpanel:modal:${action}`;
-
-  if (action === "addbalance") {
-    await interaction.showModal(
-      modal(modalId, "Add Balance", [
-        textInput("user", "User (mention or ID)", TextInputStyle.Short, true, "@user or 123…"),
-        textInput("amount", "Amount", TextInputStyle.Short, true, "5000"),
-      ])
-    );
-    return true;
-  }
-
-  if (action === "addserverbal") {
-    await interaction.showModal(
-      modal(modalId, "Add Server Bank", [textInput("amount", "Amount", TextInputStyle.Short, true, "5000")])
-    );
-    return true;
-  }
-
-  if (action === "purge") {
-    await interaction.showModal(
-      modal(modalId, "Purge Messages", [
-        textInput("amount", "Amount (1–200)", TextInputStyle.Short, true, "25"),
-      ])
-    );
-    return true;
-  }
-
-  if (action === "cooldown_clear") {
-    await interaction.showModal(
-      modal(modalId, "Clear Cooldowns", [
-        textInput("user", "User (mention/ID) (blank = you)", TextInputStyle.Short, false, "@user or 123…"),
-        textInput("key", 'Key (e.g. "job", "crime_heist", or "all")', TextInputStyle.Short, false, "all"),
-      ])
-    );
-    return true;
-  }
-
-  if (action === "setjail") {
-    await interaction.showModal(
-      modal(modalId, "Set Jail", [
-        textInput("user", "User (mention/ID)", TextInputStyle.Short, true, "@user or 123…"),
-        textInput("minutes", "Minutes (0 clears)", TextInputStyle.Short, true, "30"),
-        textInput("reason", "Reason (optional)", TextInputStyle.Short, false, "Because Echo said so"),
-      ])
-    );
-    return true;
-  }
-
-  if (action === "setheat") {
-    await interaction.showModal(
-      modal(modalId, "Set Heat", [
-        textInput("user", "User (mention/ID)", TextInputStyle.Short, true, "@user or 123…"),
-        textInput("heat", "Heat (0–100)", TextInputStyle.Short, true, "50"),
-        textInput("minutes", "Duration minutes (1–1440)", TextInputStyle.Short, true, "60"),
-      ])
-    );
-    return true;
-  }
-
-  if (action === "resetachievements") {
-    await interaction.showModal(
-      modal(modalId, "Reset Achievements", [
-        textInput("user", "User (mention/ID)", TextInputStyle.Short, true, "@user or 123…"),
-      ])
-    );
-    return true;
-  }
-
-  if (action === "inv_remove") {
-    await interaction.showModal(
-      modal(modalId, "Inventory: Remove Item", [
-        textInput("user", "User (mention/ID)", TextInputStyle.Short, true, "@user or 123…"),
-        textInput("item", "Item ID (e.g. Crime_Kit)", TextInputStyle.Short, true, "Crime_Kit"),
-        textInput("qty", "Qty (blank = 1)", TextInputStyle.Short, false, "1"),
-        textInput("all", "Hard delete? (yes/no)", TextInputStyle.Short, false, "no"),
-      ])
-    );
-    return true;
-  }
-
-  if (action.startsWith("board_")) {
-    const common = [textInput("channel", "Channel (mention/ID) (blank = current)", TextInputStyle.Short, false, "#channel or 123…")];
-    if (action === "board_create") {
-      await interaction.showModal(
-        modal(modalId, "Role Board: Create", [
-          ...common,
-          textInput("name", "Board name", TextInputStyle.Short, true, "Bot Games"),
-          textInput("role", "Role (mention/ID)", TextInputStyle.Short, true, "@Role or 123…"),
-          textInput("emoji", "Emoji (unicode or custom)", TextInputStyle.Short, true, "🎮"),
-          textInput("description", "Description (optional)", TextInputStyle.Paragraph, false, ""),
-        ])
+function buildActionRows(category) {
+  const actions = ACTIONS_BY_CATEGORY[category] ?? ACTIONS_BY_CATEGORY.economy;
+  const rows = [];
+  for (const group of chunk(actions, 3)) {
+    const row = new ActionRowBuilder();
+    for (const a of group) {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`adminpanel:btn:${a.id}`)
+          .setLabel(a.label)
+          .setStyle(a.style)
       );
-      return true;
     }
-    if (action === "board_update") {
-      await interaction.showModal(
-        modal(modalId, "Role Board: Update", [
-          ...common,
-          textInput("name", "New name (optional)", TextInputStyle.Short, false, ""),
-          textInput("role", "New role (optional)", TextInputStyle.Short, false, ""),
-          textInput("emoji", "New emoji (optional)", TextInputStyle.Short, false, ""),
-          textInput("description", "New description (optional)", TextInputStyle.Paragraph, false, ""),
-        ])
-      );
-      return true;
-    }
-    if (action === "board_bump" || action === "board_delete") {
-      await interaction.showModal(
-        modal(modalId, action === "board_bump" ? "Role Board: Bump" : "Role Board: Delete", [
-          ...common,
-          ...(action === "board_delete"
-            ? [textInput("delete_message", "Delete message too? (yes/no)", TextInputStyle.Short, false, "no")]
-            : []),
-        ])
-      );
-      return true;
-    }
+    rows.push(row);
   }
-
-  if (action.startsWith("patch_")) {
-    const common = [textInput("channel", "Channel (mention/ID) (blank = current)", TextInputStyle.Short, false, "#channel or 123…")];
-    if (action === "patch_set") {
-      await interaction.showModal(
-        modal(modalId, "Patch Board: Set", [
-          ...common,
-          textInput("title", "Title (optional)", TextInputStyle.Short, false, "Patch Notes"),
-        ])
-      );
-      return true;
-    }
-    if (action === "patch_append" || action === "patch_overwrite") {
-      await interaction.showModal(
-        modal(modalId, action === "patch_append" ? "Patch Board: Append" : "Patch Board: Overwrite", [
-          ...common,
-          textInput("text", "Text (use \\n for new lines)", TextInputStyle.Paragraph, true, "- Added thing\\n- Fixed stuff"),
-          ...(action === "patch_overwrite" ? [textInput("title", "Title (optional)", TextInputStyle.Short, false, "")] : []),
-        ])
-      );
-      return true;
-    }
-    if (action === "patch_pause" || action === "patch_resume" || action === "patch_clear") {
-      await interaction.showModal(
-        modal(modalId, "Patch Board", [
-          ...common,
-        ])
-      );
-      return true;
-    }
-  }
-
-  if (action.startsWith("shop_")) {
-    if (action === "shop_add") {
-      await interaction.showModal(
-        modal(modalId, "Shop: Add (upsert)", [
-          textInput("item_id", "item_id", TextInputStyle.Short, true, "Crime_Kit"),
-          textInput("name", "name", TextInputStyle.Short, true, "Crime Kit"),
-          textInput("price", "price", TextInputStyle.Short, true, "5000"),
-          textInput("kind", "kind (item/consumable/permanent/role/perk)", TextInputStyle.Short, false, "item"),
-          textInput("description", "description (optional)", TextInputStyle.Paragraph, false, ""),
-        ])
-      );
-      return true;
-    }
-    if (action === "shop_edit") {
-      await interaction.showModal(
-        modal(modalId, "Shop: Edit", [
-          textInput("item_id", "item_id", TextInputStyle.Short, true, "Crime_Kit"),
-          textInput("name", "name (optional)", TextInputStyle.Short, false, ""),
-          textInput("price", "price (optional)", TextInputStyle.Short, false, ""),
-          textInput("enabled", "enabled? (true/false) (optional)", TextInputStyle.Short, false, ""),
-          textInput("description", "description (optional)", TextInputStyle.Paragraph, false, ""),
-        ])
-      );
-      return true;
-    }
-    if (action === "shop_setcategory") {
-      await interaction.showModal(
-        modal(modalId, "Shop: Set Category", [
-          textInput("item_id", "item_id", TextInputStyle.Short, true, "Crime_Kit"),
-          textInput("category", "category", TextInputStyle.Short, true, "Tools"),
-        ])
-      );
-      return true;
-    }
-  }
-
-  // Unknown action
-  await interaction.reply({ content: "❌ Unknown admin action.", flags: MessageFlags.Ephemeral }).catch(() => {});
-  return true;
+  return rows;
 }
 
-async function handleModalSubmit(interaction, action) {
-  // Parse modal fields, build fake options, then run the legacy command.
-  const fields = interaction.fields;
-  const get = (k) => {
-    try {
-      return fields.getTextInputValue(k);
-    } catch {
-      return "";
-    }
+function buildPanelMessage({ category = 'economy' } = {}) {
+  return {
+    embeds: [buildPanelEmbed(category)],
+    components: [buildCategoryRow(category), ...buildActionRows(category)],
   };
+}
 
-  // helpers
-  const channelRaw = get("channel");
-  const channelObj = channelRaw ? await fetchChannelFromInput(interaction, channelRaw) : null;
-  const channelFinal = channelObj && channelObj.type === ChannelType.GuildText ? channelObj : null;
+function parseKeyValueLines(text) {
+  const out = {};
+  if (!text) return out;
+  const lines = String(text)
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
 
-  if (action === "addbalance") {
-    const user = await fetchUserFromInput(interaction, get("user"));
-    const amount = Number(get("amount"));
-    const fakeOptions = {
-      getUser() {
-        return user;
-      },
-      getInteger() {
-        return Number.isFinite(amount) ? Math.floor(amount) : null;
-      },
-    };
-    return runLegacy(interaction, "addbalance", fakeOptions).then(() => true);
+  for (const line of lines) {
+    const idx = line.indexOf('=');
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim();
+    const val = line.slice(idx + 1).trim();
+    out[key] = val;
+  }
+  return out;
+}
+
+async function fetchUserSafe(client, userId) {
+  if (!userId) return null;
+  const id = String(userId).replace(/[^0-9]/g, '');
+  if (!id) return null;
+  return client.users.fetch(id).catch(() => null);
+}
+
+async function fetchChannelSafe(guild, channelId) {
+  if (!channelId) return null;
+  const id = String(channelId).replace(/[^0-9]/g, '');
+  if (!id) return null;
+  return guild.channels.fetch(id).catch(() => null);
+}
+
+async function fetchRoleSafe(guild, roleId) {
+  if (!roleId) return null;
+  const id = String(roleId).replace(/[^0-9]/g, '');
+  if (!id) return null;
+  return guild.roles.fetch(id).catch(() => null);
+}
+
+function makePseudoOptions({ subcommand = null, values = {} } = {}) {
+  return {
+    getSubcommand: () => subcommand,
+    getUser: (name, required = false) => {
+      const v = values[name];
+      if (!v && required) throw new Error(`Missing user option: ${name}`);
+      return v ?? null;
+    },
+    getInteger: (name, required = false) => {
+      const v = values[name];
+      if ((v === undefined || v === null) && required) throw new Error(`Missing integer option: ${name}`);
+      const n = v === undefined || v === null ? null : Number(v);
+      return n;
+    },
+    getNumber: (name, required = false) => {
+      const v = values[name];
+      if ((v === undefined || v === null) && required) throw new Error(`Missing number option: ${name}`);
+      const n = v === undefined || v === null ? null : Number(v);
+      return n;
+    },
+    getString: (name, required = false) => {
+      const v = values[name];
+      if ((v === undefined || v === null || v === '') && required) throw new Error(`Missing string option: ${name}`);
+      return v ?? null;
+    },
+    getBoolean: (name, required = false) => {
+      const v = values[name];
+      if ((v === undefined || v === null) && required) throw new Error(`Missing boolean option: ${name}`);
+      if (v === undefined || v === null) return null;
+      if (typeof v === 'boolean') return v;
+      return String(v).toLowerCase() === 'true' || String(v) === '1' || String(v).toLowerCase() === 'yes';
+    },
+    getChannel: (name, required = false) => {
+      const v = values[name];
+      if (!v && required) throw new Error(`Missing channel option: ${name}`);
+      return v ?? null;
+    },
+    getRole: (name, required = false) => {
+      const v = values[name];
+      if (!v && required) throw new Error(`Missing role option: ${name}`);
+      return v ?? null;
+    },
+  };
+}
+
+function elevatePermsForBotMaster(interaction) {
+  // Some legacy commands check Administrator/ManageGuild.
+  // If you're Bot Master, we treat you as having those for the purpose of the action.
+  if (!hasBotMaster(interaction.member)) return interaction.memberPermissions;
+
+  const fake = {
+    has: (perm) => {
+      if (perm === PermissionFlagsBits.Administrator) return true;
+      if (perm === PermissionFlagsBits.ManageGuild) return true;
+      return interaction.memberPermissions?.has?.(perm) ?? false;
+    },
+  };
+  return fake;
+}
+
+async function runLegacyCommand({ interaction, commandFile, subcommand = null, values = {} }) {
+  const cmd = require(commandFile);
+
+  // Prepare pseudo options
+  interaction.options = makePseudoOptions({ subcommand, values });
+
+  // For role/permission checks
+  interaction.memberPermissions = elevatePermsForBotMaster(interaction);
+
+  return cmd.execute(interaction);
+}
+
+function buildModal(actionId) {
+  const modal = new ModalBuilder().setCustomId(`adminpanel:modal:${actionId}`).setTitle('Admin Panel');
+
+  const addInput = (customId, label, style, required = true, placeholder = '') =>
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId(customId)
+        .setLabel(label)
+        .setStyle(style)
+        .setRequired(required)
+        .setPlaceholder(placeholder)
+    );
+
+  // Economy
+  if (actionId === 'economy:addbalance') {
+    modal.setTitle('Add Balance');
+    modal.addComponents(
+      addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'),
+      addInput('amount', 'Amount', TextInputStyle.Short, true, '1000')
+    );
+    return modal;
   }
 
-  if (action === "addserverbal") {
-    const amount = Number(get("amount"));
-    return runLegacy(interaction, "addserverbal", {
-      getInteger() {
-        return Number.isFinite(amount) ? Math.floor(amount) : null;
-      },
-    }).then(() => true);
+  if (actionId === 'economy:addserverbal') {
+    modal.setTitle('Add Server Bank');
+    modal.addComponents(addInput('amount', 'Amount', TextInputStyle.Short, true, '5000'));
+    return modal;
   }
 
-  if (action === "purge") {
-    const amount = Number(get("amount"));
-    return runLegacy(interaction, "purge", {
-      getInteger() {
-        return Number.isFinite(amount) ? Math.floor(amount) : null;
-      },
-    }).then(() => true);
+  // Moderation
+  if (actionId === 'moderation:purge') {
+    modal.setTitle('Purge Messages');
+    modal.addComponents(addInput('amount', 'How many messages (1-200)', TextInputStyle.Short, true, '25'));
+    return modal;
   }
 
-  if (action === "cooldown_clear") {
-    const userRaw = get("user");
-    const keyRaw = get("key");
-    const targetUser = userRaw ? await fetchUserFromInput(interaction, userRaw) : null;
-    const key = keyRaw?.trim() || "all";
-    return runLegacy(interaction, "cooldown", {
-      getSubcommand() {
-        return "clear";
-      },
-      getUser(name) {
-        if (name === "user") return targetUser;
-        return null;
-      },
-      getString(name) {
-        if (name === "key") return key;
-        return null;
-      },
-    }).then(() => true);
+  if (actionId === 'moderation:setheat') {
+    modal.setTitle('Set Heat');
+    modal.addComponents(
+      addInput('value', 'Heat value (0-100)', TextInputStyle.Short, true, '0'),
+      addInput('user_id', 'User ID (blank = you)', TextInputStyle.Short, false, '123...'),
+      addInput('ttl', 'TTL minutes (blank = default)', TextInputStyle.Short, false, '60')
+    );
+    return modal;
   }
 
-  if (action === "setjail") {
-    const user = await fetchUserFromInput(interaction, get("user"));
-    const minutes = Number(get("minutes"));
-    const reason = get("reason");
-    return runLegacy(interaction, "setjail", {
-      getUser() {
-        return user;
-      },
-      getInteger(name) {
-        if (name === "minutes") return Number.isFinite(minutes) ? Math.floor(minutes) : 0;
-        return null;
-      },
-      getString(name) {
-        if (name === "reason") return reason || null;
-        return null;
-      },
-    }).then(() => true);
+  if (actionId === 'moderation:setjail') {
+    modal.setTitle('Set Jail');
+    modal.addComponents(
+      addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'),
+      addInput('minutes', 'Minutes (0 clears)', TextInputStyle.Short, true, '10'),
+      addInput('reason', 'Reason (optional)', TextInputStyle.Paragraph, false, '—')
+    );
+    return modal;
   }
 
-  if (action === "setheat") {
-    const user = await fetchUserFromInput(interaction, get("user"));
-    const heat = Number(get("heat"));
-    const minutes = Number(get("minutes"));
-    return runLegacy(interaction, "setheat", {
-      getUser() {
-        return user;
-      },
-      getInteger(name) {
-        if (name === "heat") return Number.isFinite(heat) ? Math.floor(heat) : 0;
-        if (name === "minutes") return Number.isFinite(minutes) ? Math.floor(minutes) : 60;
-        return null;
-      },
-    }).then(() => true);
+  if (actionId === 'moderation:cooldown_clear') {
+    modal.setTitle('Clear Cooldowns');
+    modal.addComponents(
+      addInput('user_id', 'User ID (blank = you)', TextInputStyle.Short, false, '123...'),
+      addInput('key', 'Cooldown key (blank=all)', TextInputStyle.Short, false, 'job | crime_heist | all')
+    );
+    return modal;
   }
 
-  if (action === "resetachievements") {
-    const user = await fetchUserFromInput(interaction, get("user"));
-    return runLegacy(interaction, "resetachievements", {
-      getUser() {
-        return user;
-      },
-    }).then(() => true);
+  if (actionId === 'moderation:resetach') {
+    modal.setTitle('Reset Achievements');
+    modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'));
+    return modal;
   }
 
-  if (action === "inv_remove") {
-    const user = await fetchUserFromInput(interaction, get("user"));
-    const item = get("item");
-    const qtyRaw = get("qty");
-    const allRaw = get("all");
-    const qty = qtyRaw ? Number(qtyRaw) : 1;
-    const hard = (allRaw || "").trim().toLowerCase();
-    const hardDelete = hard === "yes" || hard === "y" || hard === "true" || hard === "1";
+  // Boards
+  if (actionId.startsWith('boards:')) {
+    modal.setTitle(`Board: ${actionId.split(':')[1]}`);
+    // For list: no modal
+    if (actionId === 'boards:list') return null;
 
-    return runLegacy(interaction, "invadmin", {
-      getSubcommand() {
-        return "remove";
-      },
-      getUser(name) {
-        if (name === "user") return user;
-        return null;
-      },
-      getString(name) {
-        if (name === "item") return item;
-        return null;
-      },
-      getInteger(name) {
-        if (name === "qty") return Number.isFinite(qty) ? Math.floor(qty) : 1;
-        return null;
-      },
-      getBoolean(name) {
-        if (name === "all") return hardDelete;
-        return null;
-      },
-    }).then(() => true);
-  }
+    // Channel required for all but list
+    modal.addComponents(addInput('channel_id', 'Channel ID (or #channel)', TextInputStyle.Short, true, '123...'));
 
-  if (action.startsWith("board_")) {
-    const channel = channelFinal ?? interaction.channel;
-    const channelOpt = channel && channel.type === ChannelType.GuildText ? channel : null;
-
-    const sub = action.replace("board_", ""); // create/update/bump/delete
-
-    if (sub === "create") {
-      const name = get("name");
-      const role = await fetchRoleFromInput(interaction, get("role"));
-      const emoji = get("emoji");
-      const description = get("description");
-      return runLegacy(interaction, "board", {
-        getSubcommand() {
-          return "create";
-        },
-        getChannel() {
-          return channelOpt;
-        },
-        getString(n) {
-          if (n === "name") return name;
-          if (n === "emoji") return emoji;
-          if (n === "description") return description || null;
-          return null;
-        },
-        getRole() {
-          return role;
-        },
-      }).then(() => true);
+    if (actionId === 'boards:create') {
+      modal.addComponents(
+        addInput('name', 'Board name', TextInputStyle.Short, true, 'Rust'),
+        addInput('role_id', 'Role ID (or @role)', TextInputStyle.Short, true, '123...'),
+        addInput('emoji', 'Emoji', TextInputStyle.Short, true, '🔥'),
+        addInput('description', 'Description (optional)', TextInputStyle.Paragraph, false, '—')
+      );
+    } else if (actionId === 'boards:update') {
+      modal.addComponents(
+        addInput('name', 'Board name (optional)', TextInputStyle.Short, false, 'Rust'),
+        addInput('role_id', 'Role ID (optional)', TextInputStyle.Short, false, '123...'),
+        addInput('emoji', 'Emoji (optional)', TextInputStyle.Short, false, '🔥'),
+        addInput('description', 'Description (optional)', TextInputStyle.Paragraph, false, '—')
+      );
+    } else if (actionId === 'boards:bump') {
+      // only channel
+    } else if (actionId === 'boards:delete') {
+      modal.addComponents(addInput('delete_message', 'Delete message too? (true/false)', TextInputStyle.Short, false, 'false'));
     }
 
-    if (sub === "update") {
-      const name = get("name");
-      const roleRaw = get("role");
-      const role = roleRaw ? await fetchRoleFromInput(interaction, roleRaw) : null;
-      const emoji = get("emoji");
-      const description = get("description");
-      return runLegacy(interaction, "board", {
-        getSubcommand() {
-          return "update";
-        },
-        getChannel() {
-          return channelOpt;
-        },
-        getString(n) {
-          if (n === "name") return name || null;
-          if (n === "emoji") return emoji || null;
-          if (n === "description") return description || null;
-          return null;
-        },
-        getRole(n) {
-          if (n === "role") return role;
-          return role;
-        },
-      }).then(() => true);
-    }
-
-    if (sub === "bump") {
-      return runLegacy(interaction, "board", {
-        getSubcommand() {
-          return "bump";
-        },
-        getChannel() {
-          return channelOpt;
-        },
-      }).then(() => true);
-    }
-
-    if (sub === "delete") {
-      const delRaw = get("delete_message");
-      const del = (delRaw || "").trim().toLowerCase();
-      const deleteMsg = del === "yes" || del === "y" || del === "true" || del === "1";
-      return runLegacy(interaction, "board", {
-        getSubcommand() {
-          return "delete";
-        },
-        getChannel() {
-          return channelOpt;
-        },
-        getBoolean() {
-          return deleteMsg;
-        },
-      }).then(() => true);
-    }
+    return modal;
   }
 
-  if (action.startsWith("patch_")) {
-    const channel = channelFinal ?? interaction.channel;
-    const sub = action.replace("patch_", "");
-    const text = get("text");
-    const title = get("title");
+  // Patchboard
+  if (actionId.startsWith('patchboard:')) {
+    modal.setTitle(`Patchboard: ${actionId.split(':')[1]}`);
+    modal.addComponents(addInput('channel_id', 'Channel ID (blank = current channel)', TextInputStyle.Short, false, '123...'));
 
-    return runLegacy(interaction, "patchboard", {
-      getSubcommand() {
-        return sub;
-      },
-      getChannel() {
-        return channel;
-      },
-      getString(name) {
-        if (name === "text") return text;
-        if (name === "title") return title || null;
-        return null;
-      },
-    }).then(() => true);
+    if (actionId === 'patchboard:set') {
+      modal.addComponents(addInput('title', 'Title (optional)', TextInputStyle.Short, false, 'Patch Notes'));
+    } else if (actionId === 'patchboard:append') {
+      modal.addComponents(addInput('text', 'Text to append (use \\n for new lines)', TextInputStyle.Paragraph, true, 'Added: ...\\nFixed: ...'));
+    } else if (actionId === 'patchboard:overwrite') {
+      modal.addComponents(
+        addInput('text', 'Full text (use \\n)', TextInputStyle.Paragraph, true, '...'),
+        addInput('title', 'Title (optional)', TextInputStyle.Short, false, 'Patch Notes')
+      );
+    } else {
+      // pause/resume/show/repost just channel
+    }
+
+    return modal;
   }
 
-  if (action.startsWith("shop_")) {
-    const sub = action.replace("shop_", "");
-    const item_id = get("item_id");
-    const name = get("name");
-    const price = get("price");
-    const kind = get("kind");
-    const description = get("description");
-    const enabledRaw = get("enabled");
-    const category = get("category");
+  // Shop / inv
+  if (actionId.startsWith('shop:')) {
+    modal.setTitle(`Shop: ${actionId.split(':')[1]}`);
 
-    return runLegacy(interaction, "shopadmin", {
-      getSubcommand() {
-        return sub;
-      },
-      getString(n) {
-        if (n === "item_id") return item_id;
-        if (n === "name") return name || null;
-        if (n === "kind") return kind || null;
-        if (n === "description") return description || null;
-        if (n === "category") return category || null;
-        return null;
-      },
-      getInteger(n) {
-        if (n === "price") return price ? Number(price) : null;
-        return null;
-      },
-      getBoolean(n) {
-        if (n === "enabled") {
-          if (!enabledRaw) return null;
-          const v = enabledRaw.trim().toLowerCase();
-          if (["true", "yes", "y", "1"].includes(v)) return true;
-          if (["false", "no", "n", "0"].includes(v)) return false;
-          return null;
-        }
-        return null;
-      },
-    }).then(() => true);
+    if (actionId === 'shop:inv_remove') {
+      modal.addComponents(
+        addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'),
+        addInput('item', 'Item ID', TextInputStyle.Short, true, 'Crime_Kit'),
+        addInput('qty', 'Qty (blank if all=true)', TextInputStyle.Short, false, '1'),
+        addInput('all', 'Hard delete row? (true/false)', TextInputStyle.Short, false, 'false')
+      );
+      return modal;
+    }
+
+    if (actionId === 'shop:setcategory') {
+      modal.addComponents(
+        addInput('item_id', 'Item ID', TextInputStyle.Short, true, 'Item_1'),
+        addInput('category', 'Category', TextInputStyle.Short, true, 'Tools')
+      );
+      return modal;
+    }
+
+    if (actionId === 'shop:enable' || actionId === 'shop:disable') {
+      modal.addComponents(addInput('item_id', 'Item ID', TextInputStyle.Short, true, 'Item_1'));
+      return modal;
+    }
+
+    if (actionId === 'shop:delete') {
+      modal.addComponents(
+        addInput('item_id', 'Item ID', TextInputStyle.Short, true, 'Item_1'),
+        addInput('wipe_inventory', 'Wipe from all inventories? (true/false)', TextInputStyle.Short, false, 'false')
+      );
+      return modal;
+    }
+
+    // add/edit
+    modal.addComponents(
+      addInput('item_id', 'Item ID', TextInputStyle.Short, true, 'Item_1'),
+      addInput('name', 'Name (required for add)', TextInputStyle.Short, actionId === 'shop:add', 'Cool Item'),
+      addInput('price', 'Price (required for add)', TextInputStyle.Short, actionId === 'shop:add', '250'),
+      addInput('extras', 'Optional settings (key=value per line)', TextInputStyle.Paragraph, false, 'kind=item\nstackable=true\nsell_enabled=false')
+    );
+    return modal;
   }
 
-  await interaction.reply({ content: "❌ Unknown modal action.", flags: MessageFlags.Ephemeral }).catch(() => {});
-  return true;
+  // Rift
+  if (actionId.startsWith('rift:')) {
+    modal.setTitle(`Rift: ${actionId.split(':')[1]}`);
+    if (actionId === 'rift:schedule') {
+      modal.addComponents(addInput('unix', 'Next spawn unix (seconds)', TextInputStyle.Short, true, String(nowUnix() + 3600)));
+      return modal;
+    }
+    if (actionId === 'rift:chance') {
+      modal.addComponents(
+        addInput('enabled', 'Enabled? (true/false)', TextInputStyle.Short, true, 'true'),
+        addInput('perday', 'Chance per day (0.0 - 1.0)', TextInputStyle.Short, true, '0.25')
+      );
+      return modal;
+    }
+    if (actionId === 'rift:tax') {
+      modal.addComponents(
+        addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'),
+        addInput('amount', 'Amount (0 clears)', TextInputStyle.Short, true, '1000')
+      );
+      return modal;
+    }
+    return null;
+  }
+
+  return null;
 }
 
 async function handleInteraction(interaction) {
-  const id = interaction.customId;
-  if (typeof id !== "string" || !id.startsWith("adminpanel:")) return false;
+  // Only handle our custom IDs
+  const cid = interaction.customId;
+  if (typeof cid !== 'string' || !cid.startsWith('adminpanel:')) return false;
 
-  // Role gate for ALL panel interactions.
+  // Role gate for any interaction
   if (!interaction.inGuild?.() || !interaction.guild) {
-    try {
-      await interaction.reply({ content: "❌ This only works in a server.", flags: MessageFlags.Ephemeral });
-    } catch {}
+    await interaction.reply({ content: '❌ Server only.', flags: MessageFlags.Ephemeral }).catch(() => {});
     return true;
   }
 
-  if (!isBotMaster(interaction.member)) {
-    try {
-      if (interaction.isMessageComponent?.() || interaction.isModalSubmit?.()) {
-        // Stop people from "pressing" things
-        if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: naughtyMessage(), flags: MessageFlags.Ephemeral });
-        } else {
-          await interaction.reply({ content: naughtyMessage(), flags: MessageFlags.Ephemeral });
-        }
+  const isBotMaster = hasBotMaster(interaction.member);
+  if (!isBotMaster) {
+    await interaction.reply({ content: '😇 Nope. Bot Master toys are off-limits — don’t be naughty.', flags: MessageFlags.Ephemeral }).catch(() => {});
+    return true;
+  }
+
+  try {
+    // Category select
+    if (interaction.isStringSelectMenu?.() && cid === 'adminpanel:category') {
+      const category = interaction.values?.[0] ?? 'economy';
+      const payload = buildPanelMessage({ category });
+      await interaction.update(payload);
+      return true;
+    }
+
+    // Buttons
+    if (interaction.isButton?.() && cid.startsWith('adminpanel:btn:')) {
+      const actionId = cid.slice('adminpanel:btn:'.length);
+      const modal = buildModal(actionId);
+      if (modal) {
+        await interaction.showModal(modal);
+        return true;
       }
-    } catch {}
+
+      // No modal: run action now
+      await runActionFromId({ interaction, actionId, fields: {} });
+      return true;
+    }
+
+    // Modals
+    if (interaction.isModalSubmit?.() && cid.startsWith('adminpanel:modal:')) {
+      const actionId = cid.slice('adminpanel:modal:'.length);
+      const fields = {};
+      for (const [k, v] of interaction.fields.fields) {
+        fields[k] = v?.value;
+      }
+
+      await runActionFromId({ interaction, actionId, fields });
+      return true;
+    }
+
+    return false;
+  } catch (e) {
+    console.error('[ADMINPANEL] interaction failed:', e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: '❌ Admin panel interaction failed. Check Railway logs.', flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: '❌ Admin panel interaction failed. Check Railway logs.', flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
     return true;
   }
+}
 
-  // Navigation (select menu)
-  if (interaction.isStringSelectMenu?.() && id === "adminpanel:nav") {
-    return handleNav(interaction);
+async function runActionFromId({ interaction, actionId, fields }) {
+  const base = __dirname; // /utils
+  const legacyDir = require('path').join(base, '..', 'commands', '_retired', 'admin');
+
+  const getLegacy = (name) => require('path').join(legacyDir, `${name}.js`);
+
+  const guild = interaction.guild;
+
+  // Helper: resolve mention/id to objects
+  const userFromField = async (k) => fetchUserSafe(interaction.client, fields[k]);
+  const channelFromField = async (k) => {
+    const raw = fields[k];
+    if (!raw) return null;
+    return fetchChannelSafe(guild, raw);
+  };
+  const roleFromField = async (k) => {
+    const raw = fields[k];
+    if (!raw) return null;
+    return fetchRoleSafe(guild, raw);
+  };
+
+  // ECONOMY
+  if (actionId === 'economy:serverbal') {
+    return runLegacyCommand({ interaction, commandFile: getLegacy('serverbal') });
   }
 
-  // Button actions
-  if (interaction.isButton?.() && id.startsWith("adminpanel:action:")) {
-    const action = id.split(":").slice(2).join(":");
-    return handleAction(interaction, action);
+  if (actionId === 'economy:addserverbal') {
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('addserverbal'),
+      values: { amount: Number(fields.amount) },
+    });
   }
 
-  // Modal submits
-  if (interaction.isModalSubmit?.() && id.startsWith("adminpanel:modal:")) {
-    const action = id.split(":").slice(2).join(":");
-    return handleModalSubmit(interaction, action);
+  if (actionId === 'economy:addbalance') {
+    const target = await userFromField('user_id');
+    if (!target) return interaction.editReply('❌ Could not resolve that user. Use a User ID or mention.');
+
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('addbalance'),
+      values: { user: target, amount: Number(fields.amount) },
+    });
   }
 
-  return false;
+  // MODERATION
+  if (actionId === 'moderation:purge') {
+    // Patch purge to role gate by elevating perms above.
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('purge'),
+      values: { amount: Number(fields.amount) },
+    });
+  }
+
+  if (actionId === 'moderation:setheat') {
+    const target = (await userFromField('user_id')) ?? interaction.user;
+    const ttl = fields.ttl ? Number(fields.ttl) : null;
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('setheat'),
+      values: { value: Number(fields.value), user: target, ttl },
+    });
+  }
+
+  if (actionId === 'moderation:setjail') {
+    const target = await userFromField('user_id');
+    if (!target) return interaction.editReply('❌ Could not resolve that user.');
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('setjail'),
+      values: { user: target, minutes: Number(fields.minutes), reason: fields.reason || null },
+    });
+  }
+
+  if (actionId === 'moderation:cooldown_clear') {
+    const target = (await userFromField('user_id')) ?? interaction.user;
+    const key = fields.key?.trim() ? fields.key.trim() : null;
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('cooldown'),
+      subcommand: 'clear',
+      values: { user: target, key },
+    });
+  }
+
+  if (actionId === 'moderation:resetach') {
+    const target = await userFromField('user_id');
+    if (!target) return interaction.editReply('❌ Could not resolve that user.');
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('resetachievements'),
+      values: { user: target },
+    });
+  }
+
+  // BOARDS
+  if (actionId.startsWith('boards:')) {
+    const sub = actionId.split(':')[1];
+    if (sub === 'list') {
+      return runLegacyCommand({ interaction, commandFile: getLegacy('board'), subcommand: 'list', values: {} });
+    }
+
+    const channel = await channelFromField('channel_id');
+    if (!channel) return interaction.editReply('❌ Could not resolve that channel. Use Channel ID or #channel mention.');
+
+    if (sub === 'bump') {
+      return runLegacyCommand({ interaction, commandFile: getLegacy('board'), subcommand: 'bump', values: { channel } });
+    }
+
+    if (sub === 'delete') {
+      const delMsg = fields.delete_message ? String(fields.delete_message).toLowerCase() === 'true' : null;
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('board'),
+        subcommand: 'delete',
+        values: { channel, delete_message: delMsg },
+      });
+    }
+
+    if (sub === 'create') {
+      const role = await roleFromField('role_id');
+      if (!role) return interaction.editReply('❌ Could not resolve that role.');
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('board'),
+        subcommand: 'create',
+        values: {
+          channel,
+          name: fields.name,
+          role,
+          emoji: fields.emoji,
+          description: fields.description || null,
+        },
+      });
+    }
+
+    if (sub === 'update') {
+      const role = fields.role_id ? await roleFromField('role_id') : null;
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('board'),
+        subcommand: 'update',
+        values: {
+          channel,
+          name: fields.name || null,
+          role,
+          emoji: fields.emoji || null,
+          description: fields.description || null,
+        },
+      });
+    }
+  }
+
+  // PATCHBOARD
+  if (actionId.startsWith('patchboard:')) {
+    const sub = actionId.split(':')[1];
+    const channel = fields.channel_id ? await channelFromField('channel_id') : null;
+    const values = {};
+    if (channel) values.channel = channel;
+    if (sub === 'set') {
+      if (fields.title) values.title = fields.title;
+    }
+    if (sub === 'append' || sub === 'overwrite') {
+      values.text = fields.text;
+      if (sub === 'overwrite' && fields.title) values.title = fields.title;
+    }
+
+    return runLegacyCommand({
+      interaction,
+      commandFile: getLegacy('patchboard'),
+      subcommand: sub,
+      values,
+    });
+  }
+
+  // SHOP
+  if (actionId.startsWith('shop:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'inv_remove') {
+      const target = await userFromField('user_id');
+      if (!target) return interaction.editReply('❌ Could not resolve that user.');
+      const qty = fields.qty ? Number(fields.qty) : null;
+      const all = fields.all ? String(fields.all).toLowerCase() === 'true' : null;
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('invadmin'),
+        subcommand: 'remove',
+        values: { user: target, item: fields.item, qty, all },
+      });
+    }
+
+    // shopadmin subcommands
+    const extras = parseKeyValueLines(fields.extras);
+
+    if (sub === 'add' || sub === 'edit') {
+      const values = {
+        item_id: fields.item_id,
+      };
+      if (fields.name) values.name = fields.name;
+      if (fields.price) values.price = Number(fields.price);
+
+      // Optional fields from extras
+      for (const [k, v] of Object.entries(extras)) {
+        values[k] = v;
+      }
+
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('shopadmin'),
+        subcommand: sub,
+        values,
+      });
+    }
+
+    if (sub === 'setcategory') {
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('shopadmin'),
+        subcommand: 'setcategory',
+        values: { item_id: fields.item_id, category: fields.category },
+      });
+    }
+
+    if (sub === 'enable' || sub === 'disable') {
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('shopadmin'),
+        subcommand: sub,
+        values: { item_id: fields.item_id },
+      });
+    }
+
+    if (sub === 'delete') {
+      const wipe = fields.wipe_inventory ? String(fields.wipe_inventory).toLowerCase() === 'true' : null;
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('shopadmin'),
+        subcommand: 'delete',
+        values: { item_id: fields.item_id, wipe_inventory: wipe },
+      });
+    }
+  }
+
+  // RIFT
+  if (actionId.startsWith('rift:')) {
+    const sub = actionId.split(':')[1];
+    if (sub === 'status' || sub === 'spawn' || sub === 'clear') {
+      return runLegacyCommand({ interaction, commandFile: getLegacy('riftdebug'), subcommand: sub, values: {} });
+    }
+
+    if (sub === 'schedule') {
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('riftdebug'),
+        subcommand: 'schedule',
+        values: { unix: Number(fields.unix) },
+      });
+    }
+
+    if (sub === 'chance') {
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('riftdebug'),
+        subcommand: 'chance',
+        values: { enabled: String(fields.enabled).toLowerCase() === 'true', perday: Number(fields.perday) },
+      });
+    }
+
+    if (sub === 'tax') {
+      const target = await userFromField('user_id');
+      if (!target) return interaction.editReply('❌ Could not resolve that user.');
+      return runLegacyCommand({
+        interaction,
+        commandFile: getLegacy('riftdebug'),
+        subcommand: 'tax',
+        values: { user: target, amount: Number(fields.amount) },
+      });
+    }
+  }
+
+  // MISC
+  if (actionId === 'misc:ping') {
+    return runLegacyCommand({ interaction, commandFile: getLegacy('ping') });
+  }
+
+  return interaction.editReply('❌ Unknown admin panel action.');
 }
 
 module.exports = {
-  BOT_MASTER_ROLE_ID,
-  isBotMaster,
-  naughtyMessage,
-  render,
+  buildPanelMessage,
   handleInteraction,
 };

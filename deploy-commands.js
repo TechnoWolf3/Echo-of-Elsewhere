@@ -14,7 +14,9 @@ const clientId = process.env.CLIENT_ID;
 const guildId = process.env.GUILD_ID;
 
 // Retired commands: do not deploy these
-const RETIRED = new Set(["blackjack.js", "roulette.js"]);
+const RETIRED = new Set(["blackjack.js", "roulette.js",
+  "addbalance.js","addserverbal.js","board.js","cooldown.js","invadmin.js","patchboard.js","ping.js","purge.js","resetachievements.js","riftdebug.js","serverbal.js","setheat.js","setjail.js","shopadmin.js"
+]);
 
 // Find the commands directory reliably.
 // Prefer "<projectRoot>/commands" using process.cwd().
