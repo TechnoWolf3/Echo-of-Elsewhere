@@ -191,6 +191,91 @@ function pickWeighted(events) {
 // ----------------------------
 let active = null; 
 
+// ----------------------------
+// Debug helpers (Admin Panel)
+// ----------------------------
+function debugGetActive() {
+  if (!active) return null;
+  return {
+    guildId: active.guildId,
+    channelId: active.channelId,
+    messageId: active.messageId,
+    eventId: active.eventId,
+    eventName: active.eventMod?.name || active.eventId,
+    claimedBy: active.claimedBy,
+    expiresAt: active.expiresAt,
+    claimedExpiresAt: active.claimedExpiresAt,
+  };
+}
+
+async function debugExpire(client, mode = "unclaimed") {
+  if (!active) return { ok: false, reason: "no_active" };
+  await expireActiveEvent(client, mode === "claimed" ? "claimed" : "unclaimed");
+  return { ok: true };
+}
+
+async function debugSpawn(client, guild, opts = {}) {
+  const {
+    eventId = null,
+    channelId = null,
+    ping = false,
+    force = false,
+  } = opts;
+
+  if (!config.enabled) return { ok: false, reason: "disabled" };
+
+  if (active) {
+    if (!force) return { ok: false, reason: "already_active", active: debugGetActive() };
+    await debugExpire(client, active.claimedBy ? "claimed" : "unclaimed");
+  }
+
+  const channel = await guild.channels.fetch(channelId || config.channelId).catch(() => null);
+  if (!channel || !channel.isTextBased()) {
+    return { ok: false, reason: "bad_channel" };
+  }
+
+  const events = loadEvents();
+  if (!events.length) return { ok: false, reason: "no_events" };
+
+  const eventMod = eventId ? events.find(e => e.id === eventId) : pickWeighted(events);
+  if (!eventMod) return { ok: false, reason: "unknown_event" };
+
+  const state = eventMod.create();
+  const payload = renderEvent(eventMod, state, false);
+
+  const msg = await channel.send({
+    content: ping ? `<@&${config.roleId}>` : undefined,
+    ...payload,
+  });
+
+  active = {
+    guildId: guild.id,
+    channelId: channel.id,
+    messageId: msg.id,
+    eventId: eventMod.id,
+    eventMod,
+    state,
+    claimedBy: null,
+    expiresAt: Date.now() + UNCLAIMED_EXPIRE_MS,
+    claimedExpiresAt: null,
+    expiryTimer: null,
+  };
+
+  // expiry timer (unclaimed)
+  try { if (active.expiryTimer) clearTimeout(active.expiryTimer); } catch {}
+  active.expiryTimer = setTimeout(() => {
+    expireActiveEvent(client, "unclaimed");
+  }, Math.max(0, active.expiresAt - Date.now()));
+
+  return {
+    ok: true,
+    eventId: eventMod.id,
+    eventName: eventMod.name,
+    channelId: channel.id,
+    messageId: msg.id,
+  };
+}
+
 
 function unixFromMs(ms) {
   return Math.floor(ms / 1000);
@@ -592,4 +677,12 @@ active.expiryTimer = setTimeout(() => {
   return true;
 }
 
-module.exports = { init, startScheduler, handleInteraction };
+module.exports = {
+  init,
+  startScheduler,
+  handleInteraction,
+  // Admin/debug
+  debugSpawn,
+  debugGetActive,
+  debugExpire,
+};

@@ -12,6 +12,7 @@ const {
 } = require('discord.js');
 
 const BOT_MASTER_ROLE_ID = '741251069002121236';
+const botGames = require('./botGames');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -27,6 +28,7 @@ const CATEGORIES = [
   { value: 'boards', label: 'Boards' },
   { value: 'patchboard', label: 'Patchboard' },
   { value: 'shop', label: 'Shop / Inventory' },
+  { value: 'botgames', label: 'Bot Games' },
   { value: 'rift', label: 'Echo Rift' },
   { value: 'misc', label: 'Misc' },
 ];
@@ -68,6 +70,14 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'shop:disable', label: 'Disable', style: ButtonStyle.Secondary, modal: true },
     { id: 'shop:delete', label: 'Delete', style: ButtonStyle.Danger, modal: true },
     { id: 'shop:inv_remove', label: 'Inv Remove', style: ButtonStyle.Danger, modal: true },
+  ],
+  botgames: [
+    { id: 'botgames:status', label: 'Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'botgames:spawn_random', label: 'Spawn Random', style: ButtonStyle.Primary, modal: false },
+    { id: 'botgames:spawn_mystery', label: 'Spawn Mystery Box', style: ButtonStyle.Primary, modal: false },
+    { id: 'botgames:spawn_risk', label: 'Spawn Risk Ladder', style: ButtonStyle.Primary, modal: false },
+    { id: 'botgames:force_spawn', label: 'Force Spawn…', style: ButtonStyle.Secondary, modal: true },
+    { id: 'botgames:expire', label: 'Force Expire', style: ButtonStyle.Danger, modal: false },
   ],
   rift: [
     { id: 'rift:status', label: 'Status', style: ButtonStyle.Secondary, modal: false },
@@ -353,6 +363,18 @@ function buildModal(actionId) {
     return modal;
   }
 
+  // Bot Games
+  if (actionId === 'botgames:force_spawn') {
+    modal.setTitle('Force Spawn Bot Game');
+    modal.addComponents(
+      addInput('event_id', 'Event ID (blank = random)', TextInputStyle.Short, false, 'mystery_box | risk_ladder | ...'),
+      addInput('channel_id', 'Channel ID (blank = configured)', TextInputStyle.Short, false, '123...'),
+      addInput('ping', 'Ping role? (true/false)', TextInputStyle.Short, false, 'false'),
+      addInput('force', 'Force replace active? (true/false)', TextInputStyle.Short, false, 'false')
+    );
+    return modal;
+  }
+
   // Patchboard
   if (actionId.startsWith('patchboard:')) {
     modal.setTitle(`Patchboard: ${actionId.split(':')[1]}`);
@@ -519,6 +541,69 @@ async function runActionFromId({ interaction, actionId, fields }) {
   const getLegacy = (name) => require('path').join(legacyDir, `${name}.js`);
 
   const guild = interaction.guild;
+
+  const safeReply = async (content) => {
+    const payload = { content, flags: MessageFlags.Ephemeral };
+    try {
+      if (interaction.deferred || interaction.replied) return await interaction.followUp(payload);
+      return await interaction.reply(payload);
+    } catch (_) {
+      try { return await interaction.followUp(payload); } catch (_) {}
+    }
+  };
+
+  // BOT GAMES (Random Events)
+  if (actionId.startsWith('botgames:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'status') {
+      const info = botGames.debugGetActive();
+      if (!info) return safeReply('✅ No active bot game right now.');
+
+      const exp = info.claimedBy ? info.claimedExpiresAt : info.expiresAt;
+      const who = info.claimedBy ? `<@${info.claimedBy}>` : '—';
+      return safeReply(
+        `🎮 **Active Bot Game**\n` +
+        `• Event: **${info.eventName}** (\`${info.eventId}\`)\n` +
+        `• Claimed by: ${who}\n` +
+        `• Expires: <t:${Math.floor((exp || Date.now())/1000)}:R>\n` +
+        `• Message: \`${info.messageId}\``
+      );
+    }
+
+    if (sub === 'expire') {
+      const info = botGames.debugGetActive();
+      if (!info) return safeReply('✅ Nothing to expire — no active bot game.');
+      await botGames.debugExpire(interaction.client, info.claimedBy ? 'claimed' : 'unclaimed');
+      return safeReply('🧹 Done. Active bot game expired and buttons disabled.');
+    }
+
+    // Spawns
+    const map = {
+      spawn_random: null,
+      spawn_mystery: 'mystery_box',
+      spawn_risk: 'risk_ladder',
+      force_spawn: fields.event_id?.trim() ? fields.event_id.trim() : null,
+    };
+
+    if (sub === 'spawn_random' || sub === 'spawn_mystery' || sub === 'spawn_risk' || sub === 'force_spawn') {
+      const eventId = map[sub] ?? null;
+      const channelId = fields.channel_id?.trim() ? fields.channel_id.trim() : null;
+      const ping = String(fields.ping || '').toLowerCase() === 'true' || String(fields.ping || '') === '1' || String(fields.ping || '').toLowerCase() === 'yes';
+      const force = String(fields.force || '').toLowerCase() === 'true' || String(fields.force || '') === '1' || String(fields.force || '').toLowerCase() === 'yes';
+
+      const res = await botGames.debugSpawn(interaction.client, guild, { eventId, channelId, ping, force });
+      if (!res.ok) {
+        if (res.reason === 'already_active') {
+          return safeReply('⚠️ A bot game is already active. Use **Force Expire** or **Force Spawn…** with `force=true`.');
+        }
+        return safeReply(`❌ Couldn’t spawn: **${res.reason}**`);
+      }
+      return safeReply(`✅ Spawned **${res.eventName}** (\`${res.eventId}\`) in <#${res.channelId}>.`);
+    }
+
+    return safeReply('❌ Unknown botgames action.');
+  }
 
   // Helper: resolve mention/id to objects
   const userFromField = async (k) => fetchUserSafe(interaction.client, fields[k]);
