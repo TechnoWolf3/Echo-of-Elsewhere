@@ -8,6 +8,7 @@ const botGames = require("./utils/botGames");
 const lottery = require("./utils/lottery");
 const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
+const adminPanel = require("./utils/adminPanel");
 
 // 📌 Persistent "Bot Features" hub (stays working after restarts)
 const featuresHub = require("./data/features");
@@ -681,6 +682,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     (interaction.isButton?.() || interaction.isAnySelectMenu?.()) &&
     interaction.customId?.startsWith("help:")
   ) {
+    return;
+  }
+
+  // 🛠️ Admin Panel (Bot Master)
+  try {
+    const handled = await adminPanel.handleInteraction(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[ADMINPANEL] interaction failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ Admin panel interaction failed.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ Admin panel interaction failed.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
     return;
   }
 
