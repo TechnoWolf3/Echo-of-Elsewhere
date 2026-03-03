@@ -64,7 +64,8 @@ function applyRecovery(fatigueMs, deltaMs) {
   if (d <= 0 || f <= 0) return Math.max(0, f);
 
   const recovered = d * RECOVERY_RATE;
-  return Math.max(0, f - recovered);
+  // Keep as integer milliseconds (DB column is bigint)
+  return Math.max(0, Math.round(f - recovered));
 }
 
 async function canGrind(db, guildId, userId) {
@@ -97,7 +98,7 @@ async function canGrind(db, guildId, userId) {
   if (Math.abs(next - current) >= 1) {
     await db.query(
       `UPDATE grind_fatigue SET fatigue_ms=$3, updated_at=NOW() WHERE guild_id=$1 AND user_id=$2`,
-      [guildId, userId, next]
+      [guildId, userId, Math.round(next)]
     );
   } else {
     await db.query(
@@ -146,6 +147,9 @@ async function tickFatigue(db, guildId, userId) {
   } else {
     fatigue = applyRecovery(fatigue, delta);
   }
+
+  // Keep as integer milliseconds (DB column is bigint)
+  fatigue = Math.round(fatigue);
 
   // NOTE: We do NOT auto-lock at 100% fatigue anymore.
   // Modules should prompt at 100% and call applyGrindLock() when appropriate.

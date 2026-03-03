@@ -194,7 +194,7 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
         hints.length ? `\n🧭 Surface notes:\n${hints.join("\n")}` : "",
       ].filter(Boolean).join("\n");
 
-      return new EmbedBuilder()
+      const emb = new EmbedBuilder()
         .setTitle("🪨 Quarry — Grind")
         .setDescription(desc)
         .addFields(
@@ -202,8 +202,14 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
           { name: "Earned (shift)", value: money(earned), inline: true },
           { name: "Digs", value: String(digs), inline: true },
           { name: "Fatigue", value: `${fb.bar} ${fb.pct}%`, inline: false }
-        )
-        .setFooter({ text: fatiguePct >= 100 ? "One bad move could collapse the wall." : "" });
+        );
+
+      // Discord requires footer text to be a non-empty string.
+      if (fatiguePct >= 100) {
+        emb.setFooter({ text: "One bad move could collapse the wall." });
+      }
+
+      return emb;
     }
 
     async function scheduleTimeout() {

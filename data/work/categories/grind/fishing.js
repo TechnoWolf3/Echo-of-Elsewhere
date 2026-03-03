@@ -139,10 +139,18 @@ module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } 
     }
 
     function controlsRow() {
+      // NOTE: ButtonBuilders are mutable. We must explicitly reset disabled state
+      // when switching states (otherwise the Cast button can stay greyed out).
+      castBtn.setDisabled(false);
+      tugBtn.setDisabled(false);
+      reelBtn.setDisabled(false);
+      easeBtn.setDisabled(false);
+      braceBtn.setDisabled(false);
+
       const row = new ActionRowBuilder();
 
       if (state === "idle") {
-        row.addComponents(castBtn);
+        row.addComponents(castBtn.setDisabled(false));
       } else if (state === "waiting_bite") {
         row.addComponents(castBtn.setDisabled(true));
       } else if (state === "tug_window") {
