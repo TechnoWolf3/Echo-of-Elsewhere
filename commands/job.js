@@ -41,6 +41,9 @@ const startHeist = require("../data/work/categories/crime/heist");
 // ✅ Grind (NEW)
 const grindIndex = require("../data/work/categories/grind/index");
 const startStoreClerk = require("../data/work/categories/grind/storeClerk");
+const startWarehousing = require("../data/work/categories/grind/warehousing");
+const startFishing = require("../data/work/categories/grind/fishing");
+const startQuarry = require("../data/work/categories/grind/quarry");
 
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
@@ -529,7 +532,7 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
       : [
           `🧠 Fatigue: **${fb.pct}** / 100`,
           `${heatBar(fb.pct)}`,
-          `🧃 Recovering: Ready`,
+          `🧃 Recovering: ${fatigueInfo?.exhausted ? "🥵 Exhausted (rest a bit)" : "Ready"}`,
         ].join("\n");
 
   const cdLines = [cdLine("Grind lockout", lockUnix)].join("\n");
@@ -1247,6 +1250,39 @@ function scheduleReturnToCategory(delayMs = 5000) {
             await new Promise((r) => setTimeout(r, 1500));
             collector.resetTimer({ time: BOARD_INACTIVITY_MS });
 
+            session.view = "grind";
+            await redraw();
+            return;
+          }
+
+          if (key === "warehousing") {
+            session.view = "grind_run";
+            await startWarehousing(btn, { pool, boardMsg: msg, guildId, userId });
+
+            await new Promise((r) => setTimeout(r, 1500));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+            session.view = "grind";
+            await redraw();
+            return;
+          }
+
+          if (key === "fishing") {
+            session.view = "grind_run";
+            await startFishing(btn, { pool, boardMsg: msg, guildId, userId });
+
+            await new Promise((r) => setTimeout(r, 1500));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+            session.view = "grind";
+            await redraw();
+            return;
+          }
+
+          if (key === "quarry") {
+            session.view = "grind_run";
+            await startQuarry(btn, { pool, boardMsg: msg, guildId, userId });
+
+            await new Promise((r) => setTimeout(r, 1500));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
             session.view = "grind";
             await redraw();
             return;

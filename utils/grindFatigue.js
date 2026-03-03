@@ -1,9 +1,12 @@
 // utils/grindFatigue.js
 // Shared fatigue across all Grind jobs.
 //
-// Rules:
+// UPDATED RULES (session-based with optional overtime):
 // - You can grind for 5 minutes total (100% fatigue).
-// - If you hit 100% fatigue, ALL grind jobs lock for 10–15 minutes.
+// - At 100% fatigue you should REST. Modules may prompt the user to end the shift
+//   or "push on" (overtime). This util no longer auto-locks at 100%.
+// - A lockout (10–15 minutes by default) is applied explicitly via applyGrindLock().
+//   e.g. when the player ends at/over 100% or suffers an injury/collapse.
 // - While NOT grinding, fatigue recovers linearly: 100% -> 0% in 15 minutes.
 //   (So 50% -> 0% in ~7.5 minutes, etc.)
 //
@@ -103,7 +106,12 @@ async function canGrind(db, guildId, userId) {
     );
   }
 
-  return { ok: true, fatigueMs: next, maxMs: MAX_FATIGUE_MS };
+  // Starting a new Grind shift is blocked if you're at/above 100% fatigue.
+  if (next >= MAX_FATIGUE_MS) {
+    return { ok: false, lockedUntil: null, fatigueMs: next, maxMs: MAX_FATIGUE_MS, exhausted: true };
+  }
+
+  return { ok: true, fatigueMs: next, maxMs: MAX_FATIGUE_MS, exhausted: false };
 }
 
 async function tickFatigue(db, guildId, userId) {
@@ -139,19 +147,8 @@ async function tickFatigue(db, guildId, userId) {
     fatigue = applyRecovery(fatigue, delta);
   }
 
-  if (fatigue >= MAX_FATIGUE_MS) {
-    const lockSec = randInt(10 * 60, 15 * 60);
-    const until = new Date(now + lockSec * 1000);
-
-    await db.query(
-      `UPDATE grind_fatigue
-       SET fatigue_ms=0, locked_until=$3, updated_at=NOW()
-       WHERE guild_id=$1 AND user_id=$2`,
-      [guildId, userId, until.toISOString()]
-    );
-
-    return { locked: true, lockedUntil: until, fatigueMs: MAX_FATIGUE_MS, maxMs: MAX_FATIGUE_MS };
-  }
+  // NOTE: We do NOT auto-lock at 100% fatigue anymore.
+  // Modules should prompt at 100% and call applyGrindLock() when appropriate.
 
   await db.query(
     `UPDATE grind_fatigue
@@ -160,7 +157,29 @@ async function tickFatigue(db, guildId, userId) {
     [guildId, userId, fatigue]
   );
 
-  return { locked: false, fatigueMs: fatigue, maxMs: MAX_FATIGUE_MS };
+  return {
+    locked: false,
+    fatigueMs: fatigue,
+    maxMs: MAX_FATIGUE_MS,
+    exhausted: fatigue >= MAX_FATIGUE_MS,
+  };
+}
+
+async function applyGrindLock(db, guildId, userId, { minSeconds = 10 * 60, maxSeconds = 15 * 60 } = {}) {
+  await ensureRow(db, guildId, userId);
+
+  const now = Date.now();
+  const lockSec = randInt(minSeconds, maxSeconds);
+  const until = new Date(now + lockSec * 1000);
+
+  await db.query(
+    `UPDATE grind_fatigue
+     SET fatigue_ms=0, locked_until=$3, updated_at=NOW()
+     WHERE guild_id=$1 AND user_id=$2`,
+    [guildId, userId, until.toISOString()]
+  );
+
+  return { lockedUntil: until };
 }
 
 function fatigueBar(fatigueMs) {
@@ -176,5 +195,6 @@ module.exports = {
   RECOVERY_MS,
   canGrind,
   tickFatigue,
+  applyGrindLock,
   fatigueBar,
 };

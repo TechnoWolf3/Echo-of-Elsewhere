@@ -10,14 +10,14 @@ const {
   MessageFlags,
 } = require("discord.js");
 
-const { canGrind, tickFatigue, fatigueBar } = require("../../../../utils/grindFatigue");
+const { canGrind, tickFatigue, fatigueBar, MAX_FATIGUE_MS, applyGrindLock } = require("../../../../utils/grindFatigue");
+const { money, mintUser, setJobCooldownSeconds } = require("./_shared");
 
 // ✅ set this to your store item ID that grants +5% and is consumed per shift
 const CLERK_BONUS_ITEM_ID = "Math_Tutour";
 
-function money(n) {
-  return `$${Number(n || 0).toLocaleString()}`;
-}
+const JOB_COOLDOWN_SECONDS = 45;
+const OVERTIME_HARDCAP_MULT = 1.5; // 150%
 
 function centsToString(cents) {
   const a = Math.abs(cents);
@@ -114,24 +114,7 @@ function makeScenario(streak) {
   return { tier, text, changeCents: change, basePayout };
 }
 
-async function creditUser(db, guildId, userId, amount, type, meta = {}) {
-  const amt = Math.max(0, Math.floor(Number(amount || 0)));
-  if (amt <= 0) return;
-
-  await db.query(
-    `INSERT INTO user_balances (guild_id, user_id, balance)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (guild_id, user_id)
-     DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance`,
-    [guildId, userId, amt]
-  );
-
-  await db.query(
-    `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
-     VALUES ($1,$2,$3,$4,$5::jsonb)`,
-    [guildId, userId, amt, type, JSON.stringify(meta)]
-  );
-}
+// (mintUser imported from _shared)
 
 async function consumeBonusItemIfPresent(db, guildId, userId) {
   const res = await db.query(
@@ -206,9 +189,11 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
 
   const gate = await canGrind(db, guildId, userId);
   if (!gate.ok) {
-    const ts = Math.floor(gate.lockedUntil.getTime() / 1000);
+    const ts = gate.lockedUntil ? Math.floor(gate.lockedUntil.getTime() / 1000) : null;
     await btn.followUp({
-      content: `🥵 You’re fatigued. Grind unlocks <t:${ts}:R>.`,
+      content: ts
+        ? `🥵 You’re fatigued. Grind unlocks <t:${ts}:R>.`
+        : `🥵 You’re at **100% fatigue**. Rest a bit before starting another Grind shift.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     resolveOnce();
@@ -222,27 +207,35 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
   let streak = 0;
   let earned = 0;
   let active = true;
+  let overtime = false;
+  let lastTick = { fatigueMs: 0, exhausted: false };
 
   let scenario = makeScenario(streak);
 
   const enterBtn = new ButtonBuilder().setCustomId("grind_clerk:enter").setLabel("Enter change").setStyle(ButtonStyle.Success);
-  const quitBtn = new ButtonBuilder().setCustomId("grind_clerk:quit").setLabel("Quit shift").setStyle(ButtonStyle.Danger);
+  const endBtn = new ButtonBuilder().setCustomId("grind_clerk:end").setLabel("End shift").setStyle(ButtonStyle.Danger);
+  const pushBtn = new ButtonBuilder().setCustomId("grind_clerk:push").setLabel("Push on").setStyle(ButtonStyle.Secondary);
 
-  function actionRow(disabled = false) {
-    return new ActionRowBuilder().addComponents(
-      enterBtn.setDisabled(disabled),
-      quitBtn.setDisabled(disabled)
+  function actionRow({ disabled = false, showPush = false, disableEnter = false } = {}) {
+    const row = new ActionRowBuilder().addComponents(
+      enterBtn.setDisabled(disabled || disableEnter),
+      endBtn.setDisabled(disabled)
     );
+    if (showPush) row.addComponents(pushBtn.setDisabled(disabled));
+    return row;
   }
 
   async function buildEmbed(extraLine = "") {
     const tick = await tickFatigue(db, guildId, userId);
-    if (tick.locked) {
+    lastTick = tick;
+
+    // Hard cap in overtime -> forced rest
+    const hardCapMs = Math.floor(MAX_FATIGUE_MS * OVERTIME_HARDCAP_MULT);
+    if (overtime && (tick.fatigueMs || 0) >= hardCapMs) {
       active = false;
-      const ts = Math.floor(tick.lockedUntil.getTime() / 1000);
       return new EmbedBuilder()
         .setTitle("🏪 Store Clerk — Shift Ended")
-        .setDescription(`🥵 You hit **100% fatigue**.\nGrind unlocks <t:${ts}:R>.\n\n${extraLine}`.trim())
+        .setDescription(`💥 You pushed too far and **collapsed from exhaustion**.\n\n${extraLine}`.trim())
         .addFields(
           { name: "Earned (shift)", value: money(earned), inline: true },
           { name: "Streak", value: String(streak), inline: true },
@@ -253,9 +246,13 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
     const fb = fatigueBar(tick.fatigueMs || 0);
     const streakBonus = streak >= 25 ? 0.10 : streak >= 10 ? 0.05 : 0;
 
+    const exhaustedLine = tick.exhausted && !overtime
+      ? "⚠️ You’ve hit **100% fatigue**. End your shift to recover — or **Push on** at your own risk."
+      : "";
+
     return new EmbedBuilder()
       .setTitle("🏪 Store Clerk — Grind")
-      .setDescription([scenario.text, "", extraLine].filter(Boolean).join("\n").trim())
+      .setDescription([scenario.text, exhaustedLine, "", extraLine].filter(Boolean).join("\n").trim())
       .addFields(
         { name: "Streak", value: String(streak), inline: true },
         { name: "Earned (shift)", value: money(earned), inline: true },
@@ -273,7 +270,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
   // Swap board into “run mode”
   await boardMsg.edit({
     embeds: [await buildEmbed()],
-    components: [actionRow(false)],
+    components: [actionRow({ disabled: false, showPush: false, disableEnter: false })],
   }).catch(() => {});
 
   const collector = boardMsg.createMessageComponentCollector({ time: 5 * 60_000 });
@@ -283,16 +280,24 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
     active = false;
 
     if (earned > 0) {
-      await creditUser(db, guildId, userId, earned, "grind_store_clerk_payout", {
+      await mintUser(db, guildId, userId, earned, "grind_store_clerk_payout", {
         job: "store_clerk",
         streak,
         used_bonus_item: bonus.used,
       });
+      await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
+    }
+
+    // If exhausted or in overtime, force recovery lock.
+    let lockTs = null;
+    if ((lastTick?.fatigueMs || 0) >= MAX_FATIGUE_MS) {
+      const lock = await applyGrindLock(db, guildId, userId);
+      lockTs = Math.floor(lock.lockedUntil.getTime() / 1000);
     }
 
     const embed = new EmbedBuilder()
       .setTitle("🏪 Store Clerk — Shift Complete")
-      .setDescription(reason)
+      .setDescription([reason, lockTs ? `🥵 Recovery: Grind unlocks <t:${lockTs}:R>.` : ""].filter(Boolean).join("\n"))
       .addFields(
         { name: "Earned (shift)", value: money(earned), inline: true },
         { name: "Final streak", value: String(streak), inline: true },
@@ -319,8 +324,13 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
     scenario = makeScenario(streak);
 
     const emb = await buildEmbed(feedbackLine);
-    if (!active) return endShift("🥵 Fatigue capped during your shift.");
-    await boardMsg.edit({ embeds: [emb], components: [actionRow(false)] }).catch(() => {});
+    if (!active) {
+      return endShift("🥵 You hit the wall.");
+    }
+
+    const showPush = !!(lastTick?.exhausted && !overtime);
+    const disableEnter = showPush; // force decision at 100%
+    await boardMsg.edit({ embeds: [emb], components: [actionRow({ disabled: false, showPush, disableEnter })] }).catch(() => {});
   }
 
   collector.on("collect", async (i) => {
@@ -328,9 +338,17 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
       return i.reply({ content: "❌ This job isn’t for you.", flags: MessageFlags.Ephemeral }).catch(() => {});
     }
 
-    if (i.customId === "grind_clerk:quit") {
+    if (i.customId === "grind_clerk:end") {
       await i.deferUpdate().catch(() => {});
       return endShift("You clocked off. Nice work.");
+    }
+
+    if (i.customId === "grind_clerk:push") {
+      await i.deferUpdate().catch(() => {});
+      overtime = true;
+      const emb = await buildEmbed("🔥 Overtime mode: faster mistakes, bigger risks.");
+      await boardMsg.edit({ embeds: [emb], components: [actionRow({ disabled: false, showPush: false, disableEnter: false })] }).catch(() => {});
+      return;
     }
 
     if (i.customId === "grind_clerk:enter") {
