@@ -40,6 +40,18 @@ module.exports = {
       },
     },
 
+
+    {
+      id: "keno",
+      name: "Keno",
+      emoji: "🔢",
+      description: "Classic Keno or Heads/Tails/Draw • 20-ball draw",
+      run: async (interaction, ctx = {}) => {
+        const keno = require("../keno");
+        return keno.startFromHub(interaction, ctx);
+      },
+    },
+
     {
       id: "bullshit",
       name: "Bullshit",
