@@ -25,8 +25,7 @@ function nextSydneyMidnightUTC() {
   // Next day at 00:00 Sydney time
   const next = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0));
 
-  // Convert that “Sydney midnight” into actual UTC instant:
-  // Trick: format that UTC instant back into Sydney time; adjust by offset
+  // Convert that “Sydney midnight” into actual UTC instant
   const sydneyAtUTC = new Date(next.toLocaleString("en-US", { timeZone: "Australia/Sydney" }));
   const utcAtUTC = new Date(next.toLocaleString("en-US", { timeZone: "UTC" }));
   const offsetMs = sydneyAtUTC.getTime() - utcAtUTC.getTime();
@@ -47,10 +46,10 @@ module.exports = {
       }).catch(() => {});
     }
 
-// 🚔 Jail gate: block /daily while jailed
-if (await guardNotJailed(interaction)) return;
+    // 🚔 Jail gate: block /daily while jailed
+    if (await guardNotJailed(interaction)) return;
 
-await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
     // 🚔 Jail gate for /daily
     if (await guardNotJailed(interaction)) return;
@@ -76,7 +75,11 @@ await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
       }
     }
 
-    const amount = Math.floor(100 + Math.random() * 401); // 2500–5000
+    // 🎁 Daily payout range
+    const min = 2500;
+    const max = 5000;
+    const amount = Math.floor(Math.random() * (max - min + 1)) + min;
+
     const nextClaim = nextSydneyMidnightUTC();
 
     await pool.query(
@@ -88,6 +91,8 @@ await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
 
     await creditUser(guildId, userId, amount, "daily", { reset: "midnight_sydney" });
 
-    return interaction.editReply(`🎁 Daily claimed: **$${amount.toLocaleString()}** (resets at midnight AEST/AEDT).`);
+    return interaction.editReply(
+      `🎁 Daily claimed: **$${amount.toLocaleString()}** (resets at midnight AEST/AEDT).`
+    );
   },
 };
