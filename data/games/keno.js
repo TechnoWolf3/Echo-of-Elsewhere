@@ -110,14 +110,20 @@ function formatTime(ms) {
 }
 
 function buildBoxes(headsNums, tailsNums) {
-  // 10 boxes each (2 rows of 5)
+  // Up to 20 boxes each side (4 rows of 5) so a round can be all-heads or all-tails.
+  const SLOTS = 20;
+  const COLS = 5;
+  const ROWS = 4;
   const pad2 = (n) => String(n).padStart(2, "0");
   const toCells = (arr) => arr.map((n) => (n == null ? "  " : pad2(n)));
 
-  const H = toCells(headsNums.concat(Array(10 - headsNums.length).fill(null))).slice(0, 10);
-  const T = toCells(tailsNums.concat(Array(10 - tailsNums.length).fill(null))).slice(0, 10);
+  const Hraw = headsNums.slice(0, SLOTS);
+  const Traw = tailsNums.slice(0, SLOTS);
+  const H = toCells(Hraw.concat(Array(Math.max(0, SLOTS - Hraw.length)).fill(null))).slice(0, SLOTS);
+  const T = toCells(Traw.concat(Array(Math.max(0, SLOTS - Traw.length)).fill(null))).slice(0, SLOTS);
 
-  const row = (cells, start) => `│ ${cells[start]} │ ${cells[start + 1]} │ ${cells[start + 2]} │ ${cells[start + 3]} │ ${cells[start + 4]} │`;
+  const row = (cells, start) =>
+    `│ ${cells[start]} │ ${cells[start + 1]} │ ${cells[start + 2]} │ ${cells[start + 3]} │ ${cells[start + 4]} │`;
   const top = "┌────┬────┬────┬────┬────┐";
   const mid = "├────┼────┼────┼────┼────┤";
   const bot = "└────┴────┴────┴────┴────┘";
@@ -125,10 +131,13 @@ function buildBoxes(headsNums, tailsNums) {
   const lines = [];
   lines.push("HEADS (1–40)                 TAILS (41–80)");
   lines.push(`${top}   ${top}`);
-  lines.push(`${row(H, 0)}   ${row(T, 0)}`);
-  lines.push(`${mid}   ${mid}`);
-  lines.push(`${row(H, 5)}   ${row(T, 5)}`);
+  for (let r = 0; r < ROWS; r++) {
+    const start = r * COLS;
+    lines.push(`${row(H, start)}   ${row(T, start)}`);
+    if (r !== ROWS - 1) lines.push(`${mid}   ${mid}`);
+  }
   lines.push(`${bot}   ${bot}`);
+
   return "```txt\n" + lines.join("\n") + "\n```";
 }
 
