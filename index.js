@@ -610,7 +610,7 @@ client.once(Events.ClientReady, async () => {
             const embed = new EmbedBuilder()
               .setColor(0x0875AF)
               .setTitle("✅ Echo received an update!")
-              .setDescription(`Deployed <t:${now}:F> (<t:${now}:R>)`);
+              .setDescription(`Deployed <t:${now}:F> (<t:${now}:R>)\nCheck <#1467848525890195510> for the update information.`);
 
             await channel.send({ embeds: [embed] }).catch(() => {});
           }
