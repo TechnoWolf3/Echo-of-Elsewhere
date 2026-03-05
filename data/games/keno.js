@@ -110,20 +110,14 @@ function formatTime(ms) {
 }
 
 function buildBoxes(headsNums, tailsNums) {
-  // Up to 20 boxes each side (4 rows of 5) so a round can be all-heads or all-tails.
-  const SLOTS = 20;
-  const COLS = 5;
-  const ROWS = 4;
+  // 10 boxes each (2 rows of 5)
   const pad2 = (n) => String(n).padStart(2, "0");
   const toCells = (arr) => arr.map((n) => (n == null ? "  " : pad2(n)));
 
-  const Hraw = headsNums.slice(0, SLOTS);
-  const Traw = tailsNums.slice(0, SLOTS);
-  const H = toCells(Hraw.concat(Array(Math.max(0, SLOTS - Hraw.length)).fill(null))).slice(0, SLOTS);
-  const T = toCells(Traw.concat(Array(Math.max(0, SLOTS - Traw.length)).fill(null))).slice(0, SLOTS);
+  const H = toCells(headsNums.concat(Array(10 - headsNums.length).fill(null))).slice(0, 10);
+  const T = toCells(tailsNums.concat(Array(10 - tailsNums.length).fill(null))).slice(0, 10);
 
-  const row = (cells, start) =>
-    `│ ${cells[start]} │ ${cells[start + 1]} │ ${cells[start + 2]} │ ${cells[start + 3]} │ ${cells[start + 4]} │`;
+  const row = (cells, start) => `│ ${cells[start]} │ ${cells[start + 1]} │ ${cells[start + 2]} │ ${cells[start + 3]} │ ${cells[start + 4]} │`;
   const top = "┌────┬────┬────┬────┬────┐";
   const mid = "├────┼────┼────┼────┼────┤";
   const bot = "└────┴────┴────┴────┴────┘";
@@ -131,13 +125,10 @@ function buildBoxes(headsNums, tailsNums) {
   const lines = [];
   lines.push("HEADS (1–40)                 TAILS (41–80)");
   lines.push(`${top}   ${top}`);
-  for (let r = 0; r < ROWS; r++) {
-    const start = r * COLS;
-    lines.push(`${row(H, start)}   ${row(T, start)}`);
-    if (r !== ROWS - 1) lines.push(`${mid}   ${mid}`);
-  }
+  lines.push(`${row(H, 0)}   ${row(T, 0)}`);
+  lines.push(`${mid}   ${mid}`);
+  lines.push(`${row(H, 5)}   ${row(T, 5)}`);
   lines.push(`${bot}   ${bot}`);
-
   return "```txt\n" + lines.join("\n") + "\n```";
 }
 
@@ -149,24 +140,28 @@ function outcomeFromCounts(headsCount, tailsCount) {
 
 function buildComponents(session, { disabled = false } = {}) {
   const tableId = session.tableId;
-  const bettingOpen = session.phase === "betting" && !disabled;
+  // Allow placing bets during DRAWING by queueing them for the NEXT round.
+  // Only disable components when the table is closing.
+  const canInteract = session.phase !== "closing" && !disabled;
+  const canCancel = canInteract; // cancel works for current bet (betting) or queued bet (drawing)
+  const canBetNowOrQueue = canInteract; // betting phase = applies now, drawing phase = queues
 
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId(`keno:bet:${tableId}:heads`)
       .setLabel("Heads (2x)")
       .setStyle(ButtonStyle.Danger)
-      .setDisabled(!bettingOpen),
+      .setDisabled(!canBetNowOrQueue),
     new ButtonBuilder()
       .setCustomId(`keno:bet:${tableId}:tails`)
       .setLabel("Tails (2x)")
       .setStyle(ButtonStyle.Primary)
-      .setDisabled(!bettingOpen),
+      .setDisabled(!canBetNowOrQueue),
     new ButtonBuilder()
       .setCustomId(`keno:bet:${tableId}:draw`)
       .setLabel("Draw (4x)")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(!bettingOpen),
+      .setDisabled(!canBetNowOrQueue),
   );
 
   const row2 = new ActionRowBuilder().addComponents(
@@ -174,17 +169,17 @@ function buildComponents(session, { disabled = false } = {}) {
       .setCustomId(`keno:ticket:${tableId}`)
       .setLabel("Keno Ticket (1–10)")
       .setStyle(ButtonStyle.Success)
-      .setDisabled(!bettingOpen),
+      .setDisabled(!canBetNowOrQueue),
     new ButtonBuilder()
       .setCustomId(`keno:quick:${tableId}`)
       .setLabel("Quick Pick")
       .setStyle(ButtonStyle.Success)
-      .setDisabled(!bettingOpen),
+      .setDisabled(!canBetNowOrQueue),
     new ButtonBuilder()
       .setCustomId(`keno:cancel:${tableId}`)
       .setLabel("Cancel Bet")
       .setStyle(ButtonStyle.Secondary)
-      .setDisabled(!bettingOpen),
+      .setDisabled(!canCancel),
   );
 
   const row3 = new ActionRowBuilder().addComponents(
@@ -375,7 +370,15 @@ function bumpIdle(session) {
 
 async function runBettingPhase(session) {
   session.phase = "betting";
+  // Carry over any queued bets from the previous DRAWING phase.
   session.bets.clear();
+  if (session.queuedBets && session.queuedBets.size) {
+    for (const [uid, bet] of session.queuedBets.entries()) {
+      // Bet was queued for this round; set it as the active bet.
+      session.bets.set(uid, { ...bet, round: session.round });
+    }
+    session.queuedBets.clear();
+  }
   session.bettingEndsAt = Date.now() + BETTING_MS;
 
   bumpIdle(session);
@@ -538,6 +541,7 @@ async function startFromHub(interaction) {
     phase: "betting",
 
     bets: new Map(), // userId -> bet
+    queuedBets: new Map(), // userId -> bet queued for next round (placed during drawing)
     lastResult: null,
 
     lastInteractionAt: Date.now(),
@@ -614,32 +618,37 @@ async function startFromHub(interaction) {
 
     // Cancel bet (refund)
     if (cid.startsWith("keno:cancel:")) {
-      if (session.phase !== "betting") {
-        return i.reply({ content: "❌ Betting is closed right now.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      const isBetting = session.phase === "betting";
+      const isDrawing = session.phase === "drawing";
+      if (!isBetting && !isDrawing) {
+        return i.reply({ content: "❌ You can’t cancel a bet right now.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
-      const existing = session.bets.get(i.user.id);
+
+      const existing = (isBetting ? session.bets : session.queuedBets).get(i.user.id);
       if (!existing) {
-        return i.reply({ content: "You don’t have a bet to cancel this round.", flags: MessageFlags.Ephemeral }).catch(() => {});
+        return i.reply({ content: isBetting ? "You don’t have a bet to cancel this round." : "You don’t have a queued bet to cancel.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
       // Refund bet amount
       await economy.creditUser(session.guildId, i.user.id, existing.amount, "keno_refund", {
         game: "keno",
-        round: session.round,
+        round: existing.round ?? (isBetting ? session.round : session.round + 1),
       }).catch(() => {});
-      session.bets.delete(i.user.id);
-      await i.reply({ content: `✅ Bet cancelled. Refunded **$${existing.amount.toLocaleString()}**.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+
+      (isBetting ? session.bets : session.queuedBets).delete(i.user.id);
+      await i.reply({ content: `✅ ${isBetting ? "Bet" : "Queued bet"} cancelled. Refunded **$${existing.amount.toLocaleString()}**.`, flags: MessageFlags.Ephemeral }).catch(() => {});
       await safeEdit(session);
       return;
     }
 
     // Betting actions open modals (handled in handleInteraction)
-    if (session.phase !== "betting") {
-      return i.reply({ content: "❌ Betting is closed — wait for the next round.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    // If we're drawing, we allow queueing a bet for the next round.
+    if (session.phase !== "betting" && session.phase !== "drawing") {
+      return i.reply({ content: "❌ This table isn’t accepting bets right now.", flags: MessageFlags.Ephemeral }).catch(() => {});
     }
 
-    // One bet per round
-    if (session.bets.has(i.user.id)) {
-      return i.reply({ content: "❌ You already placed a bet this round. (Use **Cancel Bet** if you want to change it.)", flags: MessageFlags.Ephemeral }).catch(() => {});
+    // One bet per user: either placed this round (BETTING) or queued (DRAWING)
+    if (session.bets.has(i.user.id) || session.queuedBets.has(i.user.id)) {
+      return i.reply({ content: "❌ You already have a bet locked in. (Use **Cancel Bet** if you want to change it.)", flags: MessageFlags.Ephemeral }).catch(() => {});
     }
 
     if (cid.startsWith("keno:bet:")) {
@@ -700,15 +709,21 @@ async function handleInteraction(interaction) {
 
   bumpIdle(session);
 
-  if (session.phase !== "betting") {
-    await interaction.reply({ content: "❌ Betting is closed — wait for the next round.", flags: MessageFlags.Ephemeral }).catch(() => {});
+  const isBetting = session.phase === "betting";
+  const isDrawing = session.phase === "drawing";
+  if (!isBetting && !isDrawing) {
+    await interaction.reply({ content: "❌ This table isn’t accepting bets right now.", flags: MessageFlags.Ephemeral }).catch(() => {});
     return true;
   }
 
-  if (session.bets.has(interaction.user.id)) {
-    await interaction.reply({ content: "❌ You already placed a bet this round.", flags: MessageFlags.Ephemeral }).catch(() => {});
+  // One bet per user: either active for this round or queued for next.
+  if (session.bets.has(interaction.user.id) || session.queuedBets.has(interaction.user.id)) {
+    await interaction.reply({ content: "❌ You already have a bet locked in.", flags: MessageFlags.Ephemeral }).catch(() => {});
     return true;
   }
+
+  const targetRound = isBetting ? session.round : session.round + 1;
+  const targetMap = isBetting ? session.bets : session.queuedBets;
 
   const amtRaw = interaction.fields?.getTextInputValue?.("amt");
   const amt = clampInt(amtRaw, 1, 1_000_000_000);
@@ -721,9 +736,10 @@ async function handleInteraction(interaction) {
   await economy.ensureUser(session.guildId, interaction.user.id).catch(() => {});
   const debit = await economy.tryDebitUser(session.guildId, interaction.user.id, amt, "keno_bet", {
     game: "keno",
-    round: session.round,
+    round: targetRound,
     kind: type,
     choice: choice || null,
+    queued: isDrawing ? true : false,
   });
 
   if (!debit?.ok) {
@@ -735,13 +751,18 @@ async function handleInteraction(interaction) {
     const c = String(choice || "").toLowerCase();
     if (!["heads", "tails", "draw"].includes(c)) {
       // Refund if something went wrong
-      await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: session.round }).catch(() => {});
+      await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
       await interaction.reply({ content: "❌ Invalid choice.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
 
-    session.bets.set(interaction.user.id, { kind: "HTD", choice: c, amount: amt });
-    await interaction.reply({ content: `✅ Bet placed: **${c.toUpperCase()}** for **$${amt.toLocaleString()}**.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+    targetMap.set(interaction.user.id, { kind: "HTD", choice: c, amount: amt, round: targetRound });
+    await interaction.reply({
+      content: isBetting
+        ? `✅ Bet placed: **${c.toUpperCase()}** for **$${amt.toLocaleString()}**.`
+        : `✅ Queued for **Round ${targetRound}**: **${c.toUpperCase()}** for **$${amt.toLocaleString()}**.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
     await safeEdit(session);
     return true;
   }
@@ -756,9 +777,13 @@ async function handleInteraction(interaction) {
     const picks = 10;
     for (let i = 0; i < picks; i++) numbers.push(pool[i]);
 
-    session.bets.set(interaction.user.id, { kind: "KENO", numbers, amount: amt });
+    targetMap.set(interaction.user.id, { kind: "KENO", numbers, amount: amt, round: targetRound });
     await interaction.reply({
-      content: `✅ Quick Pick placed for **$${amt.toLocaleString()}**.\n🎟️ Numbers: ${numbers.sort((a, b) => a - b).join(", ")}`,
+      content:
+        (isBetting
+          ? `✅ Quick Pick placed for **$${amt.toLocaleString()}**.`
+          : `✅ Quick Pick queued for **Round ${targetRound}** for **$${amt.toLocaleString()}**.`) +
+        `\n🎟️ Numbers: ${numbers.sort((a, b) => a - b).join(", ")}`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     await safeEdit(session);
@@ -770,14 +795,18 @@ async function handleInteraction(interaction) {
     const numbers = parseNumbersInput(numsRaw).slice(0, 10);
 
     if (numbers.length < 1 || numbers.length > 10) {
-      await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: session.round }).catch(() => {});
+      await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
       await interaction.reply({ content: "❌ You must pick **1–10** valid numbers (1–80).", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
 
-    session.bets.set(interaction.user.id, { kind: "KENO", numbers, amount: amt });
+    targetMap.set(interaction.user.id, { kind: "KENO", numbers, amount: amt, round: targetRound });
     await interaction.reply({
-      content: `✅ Keno ticket placed for **$${amt.toLocaleString()}**.\n🎟️ Numbers: ${numbers.sort((a, b) => a - b).join(", ")}`,
+      content:
+        (isBetting
+          ? `✅ Keno ticket placed for **$${amt.toLocaleString()}**.`
+          : `✅ Keno ticket queued for **Round ${targetRound}** for **$${amt.toLocaleString()}**.`) +
+        `\n🎟️ Numbers: ${numbers.sort((a, b) => a - b).join(", ")}`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     await safeEdit(session);
@@ -785,7 +814,7 @@ async function handleInteraction(interaction) {
   }
 
   // Unknown modal type -> refund to be safe
-  await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: session.round }).catch(() => {});
+  await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
   await interaction.reply({ content: "❌ Unknown bet type.", flags: MessageFlags.Ephemeral }).catch(() => {});
   return true;
 }
