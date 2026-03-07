@@ -89,6 +89,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.MessageContent,
     // ✅ Removed GuildVoiceStates (music system removed)
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
