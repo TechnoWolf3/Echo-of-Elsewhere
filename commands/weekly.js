@@ -55,7 +55,7 @@ function nextSydneyMondayMidnightUTC() {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("weekly")
-    .setDescription("Claim your weekly bonus (resets Monday 12am AEST/AEDT)."),
+    .setDescription("Claim your weekly bonus (resets Monday 12am AEDT)."),
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
@@ -113,7 +113,7 @@ module.exports = {
     await creditUser(guildId, userId, amount, "weekly", { reset: "monday_midnight_sydney" });
 
     return interaction.editReply(
-      `🎁 Weekly claimed: **$${amount.toLocaleString()}** (resets Monday 12am AEST/AEDT).`
+      `🎁 Weekly claimed: **$${amount.toLocaleString()}** (resets at 12am AEDT).`
     );
   },
 };

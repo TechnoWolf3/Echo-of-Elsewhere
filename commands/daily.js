@@ -36,7 +36,7 @@ function nextSydneyMidnightUTC() {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("daily")
-    .setDescription("Claim your daily bonus (resets at midnight AEST/AEDT)."),
+    .setDescription("Claim your daily bonus (resets at 12am AEDT)."),
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
@@ -92,7 +92,7 @@ module.exports = {
     await creditUser(guildId, userId, amount, "daily", { reset: "midnight_sydney" });
 
     return interaction.editReply(
-      `🎁 Daily claimed: **$${amount.toLocaleString()}** (resets at midnight AEST/AEDT).`
+      `🎁 Daily claimed: **$${amount.toLocaleString()}** (resets at 12am AEDT).`
     );
   },
 };

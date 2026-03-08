@@ -363,6 +363,28 @@ async function listUserTickets(guildId, userId, drawKey, limit = 10) {
   return res.rows.map(r => r.numbers);
 }
 
+async function listTicketBuyers(guildId, drawKey, limit = 100) {
+  const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100));
+  const res = await pool.query(
+    `SELECT user_id,
+            COUNT(*)::int AS ticket_count,
+            MIN(purchased_at) AS first_purchased_at,
+            MAX(purchased_at) AS last_purchased_at
+       FROM lottery_tickets
+      WHERE guild_id=$1 AND draw_key=$2
+      GROUP BY user_id
+      ORDER BY ticket_count DESC, last_purchased_at DESC
+      LIMIT $3`,
+    [guildId, drawKey, safeLimit]
+  );
+  return res.rows.map(r => ({
+    user_id: r.user_id,
+    ticket_count: Number(r.ticket_count || 0),
+    first_purchased_at: r.first_purchased_at,
+    last_purchased_at: r.last_purchased_at,
+  }));
+}
+
 async function maybeSeedJackpot(guildId, nowMs, drawUtcMs) {
   const closeMs = salesCloseUtcMs(drawUtcMs);
   if (nowMs < closeMs) return { seeded: 0 };
@@ -869,5 +891,6 @@ module.exports = {
   countTickets,
   countUserTickets,
   listUserTickets,
+  listTicketBuyers,
   runDraw
 };

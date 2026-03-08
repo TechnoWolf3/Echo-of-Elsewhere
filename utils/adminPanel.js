@@ -13,6 +13,7 @@ const {
 
 const BOT_MASTER_ROLE_ID = '741251069002121236';
 const botGames = require('./botGames');
+const lottery = require('./lottery');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -38,6 +39,7 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'economy:addbalance', label: 'Add Balance', style: ButtonStyle.Primary, modal: true },
     { id: 'economy:addserverbal', label: 'Add Server Bank', style: ButtonStyle.Primary, modal: true },
     { id: 'economy:serverbal', label: 'View Server Bank', style: ButtonStyle.Secondary, modal: false },
+    { id: 'economy:powerballbuyers', label: 'Powerball Buyers', style: ButtonStyle.Secondary, modal: false },
   ],
   moderation: [
     { id: 'moderation:purge', label: 'Purge Messages', style: ButtonStyle.Danger, modal: true },
@@ -640,6 +642,44 @@ async function runActionFromId({ interaction, actionId, fields }) {
       commandFile: getLegacy('addbalance'),
       values: { user: target, amount: Number(fields.amount) },
     });
+  }
+
+  if (actionId === 'economy:powerballbuyers') {
+    const drawUtc = lottery.nextDrawUtcMs();
+    const drawKey = lottery.drawKeyFromDrawUtc(drawUtc);
+    const buyers = await lottery.listTicketBuyers(guild.id, drawKey, 100);
+    const totalTickets = await lottery.countTickets(guild.id, drawKey);
+    const drawUnix = Math.floor(drawUtc / 1000);
+
+    if (!buyers.length) {
+      return safeReply(`🎟 **Powerball buyers** for <t:${drawUnix}:F>\nNo tickets have been bought yet.`);
+    }
+
+    const lines = buyers.map((b, i) => {
+      const last = b.last_purchased_at ? Math.floor(new Date(b.last_purchased_at).getTime() / 1000) : null;
+      return `${i + 1}. <@${b.user_id}> — **${b.ticket_count}** ticket${b.ticket_count === 1 ? '' : 's'}${last ? ` • last buy <t:${last}:R>` : ''}`;
+    });
+
+    const chunks = [];
+    let current = `🎟 **Powerball buyers** for <t:${drawUnix}:F>\nTotal tickets sold: **${totalTickets}**\nUnique buyers: **${buyers.length}**\n\n`;
+    for (const line of lines) {
+      if ((current + line + '\n').length > 1900) {
+        chunks.push(current.trim());
+        current = '';
+      }
+      current += `${line}\n`;
+    }
+    if (current.trim()) chunks.push(current.trim());
+
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.reply({ content: chunks[0], flags: MessageFlags.Ephemeral });
+    } else {
+      await interaction.followUp({ content: chunks[0], flags: MessageFlags.Ephemeral });
+    }
+    for (let i = 1; i < chunks.length; i++) {
+      await interaction.followUp({ content: chunks[i], flags: MessageFlags.Ephemeral });
+    }
+    return true;
   }
 
   // MODERATION
