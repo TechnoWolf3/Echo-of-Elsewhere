@@ -14,6 +14,8 @@ const {
   ButtonStyle,
   mention,
   normalizeText,
+  resultRow,
+  returnToFunHub,
 } = require('./funHelpers');
 
 const WORDS = ['galaxy', 'outback', 'rescue', 'discord', 'penguin', 'thunder', 'station', 'biscuit', 'hangar', 'rocket'];
@@ -23,8 +25,10 @@ function maskWord(word, guessed) {
 }
 
 async function startFromHub(interaction, opts = {}) {
-  const opponent = interaction.guild.members.cache.filter((m) => !m.user.bot && m.id !== interaction.user.id).first();
-  if (!opponent) {
+  const opponent = opts.opponentId
+    ? await interaction.guild.members.fetch(opts.opponentId).catch(() => null)
+    : interaction.guild.members.cache.filter((m) => !m.user.bot && m.id !== interaction.user.id).first();
+  if (!opponent || opponent.user?.bot || opponent.id === interaction.user.id) {
     await safeReply(interaction, { content: '❌ I need at least one other human in the server for Hangman.', flags: MessageFlags.Ephemeral });
     return null;
   }
@@ -36,11 +40,14 @@ async function startFromHub(interaction, opts = {}) {
   const acceptId = `${sessionId}:accept`;
   const declineId = `${sessionId}:decline`;
   const closeId = `${sessionId}:close`;
+  const againId = `${sessionId}:again`;
+  const returnId = `${sessionId}:return`;
   const players = [interaction.user.id, opponent.id];
   let turn = 0;
   let phase = 'challenge';
   let ended = false;
   let turnTimer = null;
+  let resultCollector = null;
 
   startActive(interaction.channelId, 'hangman', 'challenge', { startedBy: interaction.user.id, opponentId: opponent.id, sessionId });
 
@@ -72,8 +79,33 @@ async function startFromHub(interaction, opts = {}) {
           status && phase !== 'playing' ? status : '',
         ].filter(Boolean).join('\n'),
       })],
-      components: phase === 'ended' ? [] : [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(closeId).setLabel('Close').setStyle(ButtonStyle.Secondary))],
+      components: phase === 'ended'
+        ? [resultRow({ againId, returnId, closeId, againLabel: 'Play Again' })]
+        : [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(closeId).setLabel('Close').setStyle(ButtonStyle.Secondary))],
     }).catch(() => {});
+  }
+
+  async function attachResultButtons() {
+    if (resultCollector) return;
+    resultCollector = message.createMessageComponentCollector({ time: 10 * 60_000 });
+    resultCollector.on('collect', async (btn) => {
+      if (await guardGameButton(btn)) return;
+      if (btn.customId === againId) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('again');
+        return startFromHub(btn, { reuseMessage: message, opponentId: players[1] });
+      }
+      if (btn.customId === returnId) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('return');
+        return returnToFunHub(btn, message);
+      }
+      if (btn.customId === closeId) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('closed');
+        await message.edit({ components: [] }).catch(() => {});
+      }
+    });
   }
 
   async function finish(reason, winnerId = null) {
@@ -89,7 +121,9 @@ async function startFromHub(interaction, opts = {}) {
     if (reason === 'timeout') status = '⌛ Game timed out.';
     if (reason === 'solved') status = `🏆 ${mention(winnerId)} solved the word: **${word.toUpperCase()}**`;
     if (reason === 'failed') status = `💀 The word was **${word.toUpperCase()}**. Nobody escaped the noose.`;
+    if (reason !== 'closed') status += '\n\nUse **Play Again** for another round, or **Return** to go back to Just for Fun.';
     await render(status);
+    await attachResultButtons();
   }
 
   function bumpTurnTimer() {
@@ -155,7 +189,7 @@ async function startFromHub(interaction, opts = {}) {
   });
 
   componentCollector.on('end', async (_, reason) => {
-    if (!ended && reason !== 'closed' && reason !== 'declined' && reason !== 'solved' && reason !== 'failed') await finish('timeout');
+    if (!ended && !['closed', 'declined', 'solved', 'failed'].includes(reason)) await finish('timeout');
   });
 
   return message;

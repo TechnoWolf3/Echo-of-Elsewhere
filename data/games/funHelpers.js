@@ -24,16 +24,8 @@ function normalizeText(input) {
     .trim();
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function shuffle(arr) {
-  return [...arr].sort(() => Math.random() - 0.5);
 }
 
 function mention(userId) {
@@ -42,11 +34,52 @@ function mention(userId) {
 
 function closeRow(customId, label = 'Close Game') {
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(customId)
-      .setLabel(label)
-      .setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId(customId).setLabel(label).setStyle(ButtonStyle.Secondary)
   );
+}
+
+function resultRow({ againId, returnId, closeId, againLabel = 'Play Again' }) {
+  const row = new ActionRowBuilder();
+  if (againId) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(againId)
+        .setLabel(againLabel)
+        .setEmoji('🔁')
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+  if (returnId) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(returnId)
+        .setLabel('Return')
+        .setEmoji('↩️')
+        .setStyle(ButtonStyle.Secondary)
+    );
+  }
+  if (closeId) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(closeId)
+        .setLabel('Close')
+        .setEmoji('🗑️')
+        .setStyle(ButtonStyle.Danger)
+    );
+  }
+  return row;
+}
+
+async function returnToFunHub(interaction, message) {
+  try {
+    const gamesCmd = require('../../commands/games');
+    if (typeof gamesCmd.showFunCategory !== 'function') return false;
+    await gamesCmd.showFunCategory(interaction, message);
+    return true;
+  } catch (err) {
+    console.warn('[FUN GAMES] returnToFunHub failed:', err?.message || err);
+    return false;
+  }
 }
 
 async function getOrReuseMessage(interaction, reuseMessage, payload) {
@@ -102,11 +135,11 @@ function buildStandardEmbed({ title, description, footer }) {
 module.exports = {
   gameId,
   normalizeText,
-  sleep,
   pick,
-  shuffle,
   mention,
   closeRow,
+  resultRow,
+  returnToFunHub,
   getOrReuseMessage,
   safeReply,
   canControl,

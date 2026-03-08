@@ -13,6 +13,8 @@ const {
   ButtonBuilder,
   ButtonStyle,
   mention,
+  resultRow,
+  returnToFunHub,
 } = require('./funHelpers');
 
 const PROMPTS = [
@@ -24,8 +26,10 @@ const PROMPTS = [
 ];
 
 async function startFromHub(interaction, opts = {}) {
-  const opponent = interaction.guild.members.cache.filter((m) => !m.user.bot && m.id !== interaction.user.id).first();
-  if (!opponent) {
+  const opponent = opts.opponentId
+    ? await interaction.guild.members.fetch(opts.opponentId).catch(() => null)
+    : interaction.guild.members.cache.filter((m) => !m.user.bot && m.id !== interaction.user.id).first();
+  if (!opponent || opponent.user?.bot || opponent.id === interaction.user.id) {
     await safeReply(interaction, { content: '❌ I need at least one other human in the server for Story Builder.', flags: MessageFlags.Ephemeral });
     return null;
   }
@@ -37,6 +41,8 @@ async function startFromHub(interaction, opts = {}) {
     close: `${sessionId}:close`,
     voteA: `${sessionId}:votea`,
     voteB: `${sessionId}:voteb`,
+    again: `${sessionId}:again`,
+    return: `${sessionId}:return`,
   };
   const players = { a: interaction.user.id, b: opponent.id };
   const scores = { a: 0, b: 0 };
@@ -47,6 +53,7 @@ async function startFromHub(interaction, opts = {}) {
   let message;
   let ended = false;
   let roundTimer = null;
+  let resultCollector = null;
 
   startActive(interaction.channelId, 'storybuilder', 'challenge', { startedBy: interaction.user.id, opponentId: opponent.id, sessionId });
 
@@ -126,6 +133,29 @@ async function startFromHub(interaction, opts = {}) {
     }, 25_000);
   }
 
+  async function attachResultButtons() {
+    if (resultCollector) return;
+    resultCollector = message.createMessageComponentCollector({ time: 10 * 60_000 });
+    resultCollector.on('collect', async (btn) => {
+      if (await guardGameButton(btn)) return;
+      if (btn.customId === ids.again) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('again');
+        return startFromHub(btn, { reuseMessage: message, opponentId: players.b });
+      }
+      if (btn.customId === ids.return) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('return');
+        return returnToFunHub(btn, message);
+      }
+      if (btn.customId === ids.close) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('closed');
+        await message.edit({ components: [] }).catch(() => {});
+      }
+    });
+  }
+
   async function finish(reason) {
     if (ended) return;
     ended = true;
@@ -141,9 +171,12 @@ async function startFromHub(interaction, opts = {}) {
         `Final score — ${mention(players.a)}: **${scores.a}** | ${mention(players.b)}: **${scores.b}**`,
         '',
         scores.a === scores.b ? '🤝 It ends in a draw.' : `🏆 ${mention(scores.a > scores.b ? players.a : players.b)} wins Story Builder.`,
+        '',
+        'Use **Play Again** for another round, or **Return** to go back to Just for Fun.',
       ].join('\n');
     }
-    await message.edit({ embeds: [buildStandardEmbed({ title: '📖 Story Builder', description })], components: [] }).catch(() => {});
+    await message.edit({ embeds: [buildStandardEmbed({ title: '📖 Story Builder', description })], components: [resultRow({ againId: ids.again, returnId: ids.return, closeId: ids.close, againLabel: 'Play Again' })] }).catch(() => {});
+    await attachResultButtons();
   }
 
   componentCollector.on('collect', async (btn) => {

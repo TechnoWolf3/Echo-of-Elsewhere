@@ -12,6 +12,8 @@ const {
   ButtonBuilder,
   ButtonStyle,
   mention,
+  resultRow,
+  returnToFunHub,
 } = require('./funHelpers');
 
 const CHOICES = {
@@ -27,8 +29,11 @@ function winner(a, b) {
 }
 
 async function startFromHub(interaction, opts = {}) {
-  const opponent = interaction.guild.members.cache.filter((m) => !m.user.bot && m.id !== interaction.user.id).first();
-  if (!opponent) {
+  const opponent = opts.opponentId
+    ? await interaction.guild.members.fetch(opts.opponentId).catch(() => null)
+    : interaction.guild.members.cache.filter((m) => !m.user.bot && m.id !== interaction.user.id).first();
+
+  if (!opponent || opponent.user?.bot || opponent.id === interaction.user.id) {
     await safeReply(interaction, { content: '❌ I need at least one other human in the server for multiplayer RPS.', flags: MessageFlags.Ephemeral });
     return null;
   }
@@ -37,6 +42,8 @@ async function startFromHub(interaction, opts = {}) {
   const acceptId = `${sessionId}:accept`;
   const declineId = `${sessionId}:decline`;
   const closeId = `${sessionId}:close`;
+  const againId = `${sessionId}:again`;
+  const returnId = `${sessionId}:return`;
   const chooseIds = {
     rock: `${sessionId}:rock`,
     paper: `${sessionId}:paper`,
@@ -47,6 +54,7 @@ async function startFromHub(interaction, opts = {}) {
   const picks = new Map();
   let phase = 'challenge';
   let ended = false;
+  let resultCollector = null;
 
   startActive(interaction.channelId, 'rps', 'challenge', { startedBy: interaction.user.id, opponentId: opponent.id, sessionId });
 
@@ -66,6 +74,32 @@ async function startFromHub(interaction, opts = {}) {
 
   const collector = message.createMessageComponentCollector({ time: 5 * 60_000 });
 
+  async function attachResultButtons() {
+    if (resultCollector) return;
+    resultCollector = message.createMessageComponentCollector({ time: 10 * 60_000 });
+    resultCollector.on('collect', async (btn) => {
+      if (await guardGameButton(btn)) return;
+      if (btn.customId === againId) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('again');
+        return startFromHub(btn, { reuseMessage: message, opponentId: players.b });
+      }
+      if (btn.customId === returnId) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('return');
+        return returnToFunHub(btn, message);
+      }
+      if (btn.customId === closeId) {
+        if (!canControl(btn.member, interaction.user.id)) {
+          return safeReply(btn, { content: '❌ Only the challenger or a channel manager can close this.', flags: MessageFlags.Ephemeral });
+        }
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('closed');
+        await message.edit({ components: [] }).catch(() => {});
+      }
+    });
+  }
+
   async function finish(reason) {
     if (ended) return;
     ended = true;
@@ -83,12 +117,15 @@ async function startFromHub(interaction, opts = {}) {
         `${mention(players.b)} chose ${CHOICES[b].emoji} **${CHOICES[b].label}**`,
         '',
         w === 'draw' ? '🤝 It is a draw.' : `🏆 ${mention(w === 'a' ? players.a : players.b)} wins.`,
+        '',
+        'Use **Play Again** for another round, or **Return** to go back to Just for Fun.',
       ].join('\n');
     }
     await message.edit({
       embeds: [buildStandardEmbed({ title: '🪨📄✂️ Rock Paper Scissors', description })],
-      components: [],
+      components: [resultRow({ againId, returnId, closeId, againLabel: 'Play Again' })],
     }).catch(() => {});
+    await attachResultButtons();
   }
 
   collector.on('collect', async (btn) => {
@@ -137,7 +174,6 @@ async function startFromHub(interaction, opts = {}) {
       picks.set(btn.user.id, choice);
       await safeReply(btn, { content: `✅ You locked in **${CHOICES[choice].label}**.`, flags: MessageFlags.Ephemeral });
       if (picks.size >= 2) return finish('done');
-      return;
     }
   });
 

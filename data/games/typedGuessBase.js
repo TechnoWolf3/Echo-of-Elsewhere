@@ -1,7 +1,6 @@
 const {
   gameId,
   normalizeText,
-  closeRow,
   getOrReuseMessage,
   safeReply,
   canControl,
@@ -9,6 +8,9 @@ const {
   startActive,
   endActive,
   buildStandardEmbed,
+  closeRow,
+  resultRow,
+  returnToFunHub,
   MessageFlags,
 } = require('./funHelpers');
 
@@ -19,7 +21,10 @@ async function buildGuessingGame(interaction, opts = {}) {
   const prompt = opts.prompt();
   const timeoutMs = Number(opts.timeoutMs || 45_000);
   const closeId = `${sessionId}:close`;
+  const againId = `${sessionId}:again`;
+  const returnId = `${sessionId}:return`;
   let ended = false;
+  let resultCollector = null;
 
   startActive(channel.id, opts.key || 'guess', 'live', { startedBy: starterId, sessionId });
 
@@ -46,6 +51,36 @@ async function buildGuessingGame(interaction, opts = {}) {
     filter: (m) => !m.author.bot,
   });
 
+  async function attachResultButtons() {
+    if (resultCollector) return;
+    resultCollector = message.createMessageComponentCollector({ time: 10 * 60_000 });
+
+    resultCollector.on('collect', async (btn) => {
+      if (await guardGameButton(btn)) return;
+
+      if (btn.customId === againId) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('again');
+        return opts.restart ? opts.restart(btn, { reuseMessage: message }) : buildGuessingGame(btn, opts);
+      }
+
+      if (btn.customId === returnId) {
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('return');
+        return returnToFunHub(btn, message);
+      }
+
+      if (btn.customId === closeId) {
+        if (!canControl(btn.member, starterId)) {
+          return safeReply(btn, { content: '❌ Only the game starter or a channel manager can close this.', flags: MessageFlags.Ephemeral });
+        }
+        await btn.deferUpdate().catch(() => {});
+        resultCollector.stop('closed');
+        await message.edit({ components: [] }).catch(() => {});
+      }
+    });
+  }
+
   async function finish(reason, winner) {
     if (ended) return;
     ended = true;
@@ -65,11 +100,15 @@ async function buildGuessingGame(interaction, opts = {}) {
     desc.push(prompt.ask);
     desc.push('');
     desc.push(prompt.reveal);
+    desc.push('');
+    desc.push('Use **Play Again** for another round, or **Return** to go back to Just for Fun.');
 
     await message.edit({
       embeds: [buildStandardEmbed({ title: opts.title || 'Guessing Game', description: desc.join('\n') })],
-      components: [],
+      components: [resultRow({ againId, returnId, closeId, againLabel: 'Play Again' })],
     }).catch(() => {});
+
+    await attachResultButtons();
   }
 
   componentCollector.on('collect', async (btn) => {

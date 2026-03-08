@@ -64,6 +64,22 @@ function buildCategoryEmbed(channelId, cat) {
     );
 }
 
+
+function buildFunCategoryPayload(channelId, categories) {
+  const cat = getCategory(categories, "fun");
+  if (!cat) {
+    return {
+      embeds: [buildHomeEmbed(channelId, categories)],
+      components: [buildCategorySelect(categories), buildButtons({ showBack: false })],
+    };
+  }
+  return {
+    embeds: [buildCategoryEmbed(channelId, cat)],
+    components: [buildGameSelect(cat), buildButtons({ showBack: true })],
+    cat,
+  };
+}
+
 function buildCategorySelect(categories) {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -355,6 +371,40 @@ async function upsertPanel(interaction) {
   return msg;
 }
 
+
+async function showFunCategory(interaction, existingMessage = null) {
+  const channelId = interaction.channelId || interaction.channel?.id;
+  const categories = loadCategories();
+  const payload = buildFunCategoryPayload(channelId, categories);
+  let msg = existingMessage;
+
+  if (!msg) {
+    const rec = panels.get(channelId);
+    if (rec?.messageId) {
+      try {
+        msg = await interaction.channel.messages.fetch(rec.messageId);
+      } catch {}
+    }
+  }
+
+  if (!msg) {
+    msg = await upsertPanel(interaction);
+  }
+
+  const state = panels.get(channelId);
+  if (state) {
+    state.view = "cat";
+    state.catId = payload.cat?.id || "fun";
+  }
+
+  await msg.edit({
+    embeds: payload.embeds,
+    components: payload.components,
+  }).catch(() => {});
+
+  return msg;
+}
+
 // Internal helper for rerouting (like your old pattern)
 async function ensureHub(interaction) {
   try {
@@ -388,3 +438,4 @@ module.exports = {
 };
 
 module.exports.ensureHub = ensureHub;
+module.exports.showFunCategory = showFunCategory;
