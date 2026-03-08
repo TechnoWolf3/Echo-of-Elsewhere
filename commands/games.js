@@ -307,7 +307,12 @@ async function upsertPanel(interaction) {
             console.error("[games] launch error:", e);
           });
 
-          // refresh view after launch
+          // If the game reused the hub message and is now active, leave the game UI in place.
+          // Refreshing here would instantly overwrite the launched game embed.
+          const activeNow = getActiveGame(channelId);
+          if (activeNow) return;
+
+          // If no game became active (launch failed, was declined instantly, etc.), restore the hub view.
           const fresh = panels.get(channelId);
           if (!fresh || fresh.view === "home") {
             return msg
