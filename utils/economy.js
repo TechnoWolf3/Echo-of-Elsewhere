@@ -1,13 +1,13 @@
 // utils/economy.js
 // Central money movement utilities.
-// NOW ALSO: updates achievement counters + unlocks economy achievements where appropriate.
+// Wallet = active cash (old balance column)
+// Bank   = protected stored funds
 
 const { pool } = require("./db");
 const achievementEngine = require("./achievementEngine");
 const achievementProgress = require("./achievementProgress");
 
-// 🕳️ Echo's Chosen perk checks (kept lightweight + cached)
-let _chosenCache = new Map(); // key: guildId:userId -> { perk, expiresAtMs, cachedAtMs }
+let _chosenCache = new Map();
 async function getActiveEchoChosenPerk(guildId, userId) {
   try {
     const key = `${guildId}:${userId}`;
@@ -46,7 +46,6 @@ function shouldDoubleCasinoPayout(type) {
   );
 }
 
-// --- Internal: ensure counter tables once per process ---
 let _countersReady = false;
 async function ensureCountersReady() {
   if (_countersReady) return;
@@ -54,7 +53,6 @@ async function ensureCountersReady() {
     await achievementProgress.ensureCounterTables(pool);
     _countersReady = true;
   } catch (e) {
-    // Achievements must never break economy. Log and continue.
     console.warn("[ECON][ACH] ensureCounterTables failed:", e?.message || e);
   }
 }
@@ -109,29 +107,22 @@ async function safeMaxAndCheck({ guildId, userId, key, candidate }) {
 }
 
 async function trackCredit({ guildId, userId, amount, newBalance }) {
-  // Progress counters
   const credits = await safeIncAndCheck({ guildId, userId, key: "economy_credits", delta: 1 });
   await safeIncAndCheck({ guildId, userId, key: "economy_transactions", delta: 1 });
-
   await safeMaxAndCheck({ guildId, userId, key: "economy_max_credit", candidate: amount });
   await safeMaxAndCheck({ guildId, userId, key: "economy_max_balance", candidate: newBalance });
-
-  // Event-style unlocks
   if (credits === 1) await safeUnlock(guildId, userId, "eco_first_coin");
 }
 
 async function trackDebit({ guildId, userId, amount, newBalance }) {
   const debits = await safeIncAndCheck({ guildId, userId, key: "economy_debits", delta: 1 });
   await safeIncAndCheck({ guildId, userId, key: "economy_transactions", delta: 1 });
-
   await safeMaxAndCheck({ guildId, userId, key: "economy_max_debit", candidate: amount });
   await safeMaxAndCheck({ guildId, userId, key: "economy_max_balance", candidate: newBalance });
-
   if (debits === 1) await safeUnlock(guildId, userId, "eco_first_spend");
   if (Number(newBalance) === 0) await safeUnlock(guildId, userId, "eco_broke");
 }
 
-// Ensure guild exists
 async function ensureGuild(guildId) {
   await pool.query(
     `INSERT INTO guilds (guild_id) VALUES ($1)
@@ -140,23 +131,99 @@ async function ensureGuild(guildId) {
   );
 }
 
-// Ensure user exists
-async function ensureUser(guildId, userId) {
-  await ensureGuild(guildId);
-  await pool.query(
-    `INSERT INTO user_balances (guild_id, user_id) VALUES ($1, $2)
-     ON CONFLICT (guild_id, user_id) DO NOTHING`,
-    [guildId, userId]
-  );
+async function generateUniqueAccountNumber(client) {
+  for (let i = 0; i < 10; i++) {
+    const accountNumber = String(Math.floor(1000000000 + Math.random() * 9000000000));
+    const exists = await client.query(
+      `SELECT 1 FROM user_balances WHERE account_number=$1 LIMIT 1`,
+      [accountNumber]
+    );
+    if (exists.rowCount === 0) return accountNumber;
+  }
+  return `${Date.now()}`.slice(-10);
 }
 
-async function getBalance(guildId, userId) {
+async function ensureUser(guildId, userId) {
+  await ensureGuild(guildId);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO user_balances (guild_id, user_id) VALUES ($1, $2)
+       ON CONFLICT (guild_id, user_id) DO NOTHING`,
+      [guildId, userId]
+    );
+
+    const rowRes = await client.query(
+      `SELECT account_number FROM user_balances WHERE guild_id=$1 AND user_id=$2 FOR UPDATE`,
+      [guildId, userId]
+    );
+    if (!rowRes.rows?.[0]?.account_number) {
+      const newAccount = await generateUniqueAccountNumber(client);
+      await client.query(
+        `UPDATE user_balances
+         SET account_number=$3
+         WHERE guild_id=$1 AND user_id=$2`,
+        [guildId, userId, newAccount]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function getWalletBalance(guildId, userId) {
   await ensureUser(guildId, userId);
   const res = await pool.query(
     `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
     [guildId, userId]
   );
   return Number(res.rows[0]?.balance ?? 0);
+}
+
+async function getBankBalance(guildId, userId) {
+  await ensureUser(guildId, userId);
+  const res = await pool.query(
+    `SELECT bank_balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
+    [guildId, userId]
+  );
+  return Number(res.rows[0]?.bank_balance ?? 0);
+}
+
+async function getAccountNumber(guildId, userId) {
+  await ensureUser(guildId, userId);
+  const res = await pool.query(
+    `SELECT account_number FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
+    [guildId, userId]
+  );
+  return String(res.rows[0]?.account_number ?? "");
+}
+
+async function getEconomySnapshot(guildId, userId) {
+  await ensureUser(guildId, userId);
+  const res = await pool.query(
+    `SELECT balance, bank_balance, account_number
+     FROM user_balances
+     WHERE guild_id=$1 AND user_id=$2`,
+    [guildId, userId]
+  );
+  const row = res.rows?.[0] || {};
+  const wallet = Number(row.balance ?? 0);
+  const bank = Number(row.bank_balance ?? 0);
+  return {
+    wallet,
+    bank,
+    total: wallet + bank,
+    accountNumber: String(row.account_number ?? ""),
+  };
+}
+
+async function getBalance(guildId, userId) {
+  return getWalletBalance(guildId, userId);
 }
 
 async function getServerBank(guildId) {
@@ -168,13 +235,8 @@ async function getServerBank(guildId) {
   return Number(res.rows[0]?.bank_balance ?? 0);
 }
 
-/**
- * Debit user only if they have enough.
- * Returns { ok:true, newBalance } or { ok:false }
- */
 async function tryDebitUser(guildId, userId, amount, type, meta = {}) {
   if (amount <= 0) throw new Error("Amount must be positive");
-
   await ensureUser(guildId, userId);
 
   const res = await pool.query(
@@ -190,20 +252,16 @@ async function tryDebitUser(guildId, userId, amount, type, meta = {}) {
   await pool.query(
     `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
      VALUES ($1, $2, $3, $4, $5)`,
-    [guildId, userId, -amount, type, meta]
+    [guildId, userId, -amount, type, { ...meta, balance_type: "wallet" }]
   );
 
   const newBalance = Number(res.rows[0].balance);
-
-  // Achievements: best-effort only
   trackDebit({ guildId, userId, amount, newBalance }).catch(() => {});
-
   return { ok: true, newBalance };
 }
 
 async function creditUser(guildId, userId, amount, type, meta = {}) {
   if (amount <= 0) throw new Error("Amount must be positive");
-
   await ensureUser(guildId, userId);
 
   const res = await pool.query(
@@ -217,24 +275,249 @@ async function creditUser(guildId, userId, amount, type, meta = {}) {
   await pool.query(
     `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
      VALUES ($1, $2, $3, $4, $5)`,
-    [guildId, userId, amount, type, meta]
+    [guildId, userId, amount, type, { ...meta, balance_type: "wallet" }]
   );
 
   const newBalance = Number(res.rows[0].balance);
-
-  // Achievements: best-effort only
   trackCredit({ guildId, userId, amount, newBalance }).catch(() => {});
-
   return { ok: true, newBalance };
 }
 
-/**
- * Add to server bank (can be negative or positive if you choose to call it that way)
- * NOTE: Your blackjack payouts will NOT use this directly for negative changes.
- */
+async function creditBank(guildId, userId, amount, type, meta = {}) {
+  if (amount <= 0) throw new Error("Amount must be positive");
+  await ensureUser(guildId, userId);
+
+  const res = await pool.query(
+    `UPDATE user_balances
+     SET bank_balance = bank_balance + $3
+     WHERE guild_id=$1 AND user_id=$2
+     RETURNING bank_balance`,
+    [guildId, userId, amount]
+  );
+
+  await pool.query(
+    `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [guildId, userId, amount, type, { ...meta, balance_type: "bank" }]
+  );
+
+  return { ok: true, newBalance: Number(res.rows[0].bank_balance) };
+}
+
+async function tryDebitBank(guildId, userId, amount, type, meta = {}) {
+  if (amount <= 0) throw new Error("Amount must be positive");
+  await ensureUser(guildId, userId);
+
+  const res = await pool.query(
+    `UPDATE user_balances
+     SET bank_balance = bank_balance - $3
+     WHERE guild_id=$1 AND user_id=$2 AND bank_balance >= $3
+     RETURNING bank_balance`,
+    [guildId, userId, amount]
+  );
+
+  if (res.rowCount === 0) return { ok: false };
+
+  await pool.query(
+    `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [guildId, userId, -amount, type, { ...meta, balance_type: "bank" }]
+  );
+
+  return { ok: true, newBalance: Number(res.rows[0].bank_balance) };
+}
+
+async function depositToBank(guildId, userId, amount, meta = {}) {
+  if (amount <= 0) throw new Error("Amount must be positive");
+  await ensureUser(guildId, userId);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const move = await client.query(
+      `UPDATE user_balances
+       SET balance = balance - $3,
+           bank_balance = bank_balance + $3
+       WHERE guild_id=$1 AND user_id=$2 AND balance >= $3
+       RETURNING balance, bank_balance, account_number`,
+      [guildId, userId, amount]
+    );
+
+    if (move.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false };
+    }
+
+    await client.query(
+      `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [guildId, userId, 0, "bank_deposit", { ...meta, amount, from: "wallet", to: "bank" }]
+    );
+
+    await client.query("COMMIT");
+    const row = move.rows[0];
+    return {
+      ok: true,
+      wallet: Number(row.balance ?? 0),
+      bank: Number(row.bank_balance ?? 0),
+      accountNumber: String(row.account_number ?? ""),
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function withdrawFromBank(guildId, userId, amount, meta = {}) {
+  if (amount <= 0) throw new Error("Amount must be positive");
+  await ensureUser(guildId, userId);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const move = await client.query(
+      `UPDATE user_balances
+       SET bank_balance = bank_balance - $3,
+           balance = balance + $3
+       WHERE guild_id=$1 AND user_id=$2 AND bank_balance >= $3
+       RETURNING balance, bank_balance, account_number`,
+      [guildId, userId, amount]
+    );
+
+    if (move.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false };
+    }
+
+    await client.query(
+      `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [guildId, userId, 0, "bank_withdraw", { ...meta, amount, from: "bank", to: "wallet" }]
+    );
+
+    await client.query("COMMIT");
+    const row = move.rows[0];
+    return {
+      ok: true,
+      wallet: Number(row.balance ?? 0),
+      bank: Number(row.bank_balance ?? 0),
+      accountNumber: String(row.account_number ?? ""),
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function transferBankByAccount(guildId, fromUserId, toAccountNumber, amount, meta = {}) {
+  if (amount <= 0) throw new Error("Amount must be positive");
+  await ensureUser(guildId, fromUserId);
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const sourceRes = await client.query(
+      `SELECT user_id, bank_balance, account_number
+       FROM user_balances
+       WHERE guild_id=$1 AND user_id=$2
+       FOR UPDATE`,
+      [guildId, fromUserId]
+    );
+    const source = sourceRes.rows?.[0];
+    if (!source) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: "source_missing" };
+    }
+
+    const targetRes = await client.query(
+      `SELECT user_id, account_number
+       FROM user_balances
+       WHERE guild_id=$1 AND account_number=$2
+       FOR UPDATE`,
+      [guildId, String(toAccountNumber)]
+    );
+    const target = targetRes.rows?.[0];
+    if (!target) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: "account_not_found" };
+    }
+    if (String(target.user_id) === String(fromUserId)) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: "same_account" };
+    }
+
+    const debit = await client.query(
+      `UPDATE user_balances
+       SET bank_balance = bank_balance - $3
+       WHERE guild_id=$1 AND user_id=$2 AND bank_balance >= $3
+       RETURNING bank_balance`,
+      [guildId, fromUserId, amount]
+    );
+    if (debit.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: "insufficient_funds" };
+    }
+
+    const credit = await client.query(
+      `UPDATE user_balances
+       SET bank_balance = bank_balance + $3
+       WHERE guild_id=$1 AND user_id=$2
+       RETURNING bank_balance`,
+      [guildId, target.user_id, amount]
+    );
+
+    await client.query(
+      `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+       VALUES ($1, $2, $3, $4, $5),
+              ($1, $6, $7, $8, $9)`,
+      [
+        guildId,
+        fromUserId,
+        -amount,
+        "bank_transfer_out",
+        { ...meta, amount, balance_type: "bank", toAccountNumber: String(toAccountNumber), toUserId: String(target.user_id) },
+        target.user_id,
+        amount,
+        "bank_transfer_in",
+        { ...meta, amount, balance_type: "bank", fromUserId: String(fromUserId), fromAccountNumber: String(source.account_number || "") },
+      ]
+    );
+
+    await client.query("COMMIT");
+    return {
+      ok: true,
+      toUserId: String(target.user_id),
+      senderBank: Number(debit.rows[0].bank_balance ?? 0),
+      recipientBank: Number(credit.rows[0].bank_balance ?? 0),
+    };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+async function getRecentTransactions(guildId, userId, limit = 10) {
+  await ensureUser(guildId, userId);
+  const res = await pool.query(
+    `SELECT amount, type, meta, created_at
+     FROM transactions
+     WHERE guild_id=$1 AND user_id=$2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [guildId, userId, Math.max(1, Math.min(25, Number(limit) || 10))]
+  );
+  return res.rows || [];
+}
+
 async function addServerBank(guildId, amount, type, meta = {}) {
   await ensureGuild(guildId);
-
   const res = await pool.query(
     `UPDATE guilds
      SET bank_balance = bank_balance + $2
@@ -249,36 +532,19 @@ async function addServerBank(guildId, amount, type, meta = {}) {
     [guildId, amount, type, meta]
   );
 
-  // Economy achievements: count bank contributions per-player IF you pass an actor id.
-  // Callers should pass meta.userId or meta.actorId (or *_id variants) for this to track.
   if (Number(amount) > 0) {
     const actorId = meta?.userId || meta?.actorId || meta?.user_id || meta?.actor_id;
     if (actorId) {
-      safeIncAndCheck({
-        guildId,
-        userId: String(actorId),
-        key: "economy_bank_adds",
-        delta: 1,
-      }).catch(() => {});
+      safeIncAndCheck({ guildId, userId: String(actorId), key: "economy_bank_adds", delta: 1 }).catch(() => {});
     }
   }
 
   return Number(res.rows[0].bank_balance);
 }
 
-/**
- * Transfer from server bank -> user ONLY if bank has enough.
- * Bank will NEVER go negative.
- *
- * Returns:
- *  - { ok:true, bankBalance }
- *  - { ok:false, bankBalance }
- */
 async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
   if (amount <= 0) throw new Error("Amount must be positive");
 
-  // 🌟 Echo's Chosen: double casino payouts (perk-based)
-  // NOTE: Only applies to specific payout transaction types.
   if (!meta?.echoChosenApplied && shouldDoubleCasinoPayout(type)) {
     const perk = await getActiveEchoChosenPerk(guildId, userId);
     if (perk === "double_casino") {
@@ -290,21 +556,9 @@ async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await client.query(`INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING`, [guildId]);
+    await client.query(`INSERT INTO user_balances (guild_id, user_id) VALUES ($1, $2) ON CONFLICT (guild_id, user_id) DO NOTHING`, [guildId, userId]);
 
-    // ensure rows
-    await client.query(
-      `INSERT INTO guilds (guild_id) VALUES ($1)
-       ON CONFLICT (guild_id) DO NOTHING`,
-      [guildId]
-    );
-
-    await client.query(
-      `INSERT INTO user_balances (guild_id, user_id) VALUES ($1, $2)
-       ON CONFLICT (guild_id, user_id) DO NOTHING`,
-      [guildId, userId]
-    );
-
-    // debit bank only if enough
     const bankUpdate = await client.query(
       `UPDATE guilds
        SET bank_balance = bank_balance - $2
@@ -314,15 +568,11 @@ async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
     );
 
     if (bankUpdate.rowCount === 0) {
-      const bankNow = await client.query(
-        `SELECT bank_balance FROM guilds WHERE guild_id=$1`,
-        [guildId]
-      );
+      const bankNow = await client.query(`SELECT bank_balance FROM guilds WHERE guild_id=$1`, [guildId]);
       await client.query("ROLLBACK");
       return { ok: false, bankBalance: Number(bankNow.rows[0]?.bank_balance ?? 0) };
     }
 
-    // credit user
     const userUpdate = await client.query(
       `UPDATE user_balances
        SET balance = balance + $3
@@ -332,14 +582,11 @@ async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
     );
 
     const newBalance = Number(userUpdate.rows?.[0]?.balance ?? 0);
-
-    // logs
     await client.query(
       `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
        VALUES ($1, $2, $3, $4, $5)`,
-      [guildId, userId, amount, type, meta]
+      [guildId, userId, amount, type, { ...meta, balance_type: "wallet" }]
     );
-
     await client.query(
       `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
        VALUES ($1, NULL, $2, $3, $4)`,
@@ -347,8 +594,6 @@ async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
     );
 
     await client.query("COMMIT");
-
-    // Achievements: best-effort only (outside tx so never breaks money movement)
     trackCredit({ guildId, userId, amount, newBalance }).catch(() => {});
     safeIncAndCheck({ guildId, userId, key: "economy_bank_payouts", delta: 1 }).catch(() => {});
 
@@ -365,9 +610,19 @@ module.exports = {
   ensureGuild,
   ensureUser,
   getBalance,
+  getWalletBalance,
+  getBankBalance,
+  getAccountNumber,
+  getEconomySnapshot,
+  getRecentTransactions,
   getServerBank,
   tryDebitUser,
+  tryDebitBank,
   creditUser,
+  creditBank,
+  depositToBank,
+  withdrawFromBank,
+  transferBankByAccount,
   addServerBank,
   bankToUserIfEnough,
 };

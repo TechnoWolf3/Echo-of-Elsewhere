@@ -10,6 +10,7 @@ const lottery = require("./utils/lottery");
 const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
+const bankCommand = require("./commands/bank");
 
 // 📌 Persistent "Bot Features" hub (stays working after restarts)
 const featuresHub = require("./data/features");
@@ -242,6 +243,21 @@ async function ensureEconomyTables(db) {
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
       balance  BIGINT NOT NULL DEFAULT 0,
+      bank_balance BIGINT NOT NULL DEFAULT 0,
+      account_number TEXT NULL,
+      PRIMARY KEY (guild_id, user_id)
+    );
+
+    ALTER TABLE IF EXISTS user_balances ADD COLUMN IF NOT EXISTS bank_balance BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE IF EXISTS user_balances ADD COLUMN IF NOT EXISTS account_number TEXT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_user_balances_account_number ON user_balances (account_number) WHERE account_number IS NOT NULL;
+
+    CREATE TABLE IF NOT EXISTS robbery_protection (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      protected_until TIMESTAMPTZ NOT NULL,
+      reason TEXT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (guild_id, user_id)
     );
 
@@ -693,6 +709,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[ADMINPANEL] handler failed:", e);
+  }
+
+  // 🏦 Bank hub interactions
+  try {
+    const handled = await bankCommand.handleInteraction(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[BANK] handler failed:", e);
   }
 
   // 🩸 Blood Tax (Pay Tribute / Serve Time) buttons

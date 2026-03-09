@@ -65,7 +65,7 @@ module.exports = {
       user.displayAvatarURL({ extension: 'png', size: 256 });
 
     // Balance
-    const balance = await economy.getBalance(guildId, user.id).catch(() => 0);
+    const snapshot = await economy.getEconomySnapshot(guildId, user.id).catch(() => ({ wallet: 0, bank: 0, total: 0, accountNumber: '' }));
 
     // Messages
     let messages = 0;
@@ -139,7 +139,9 @@ module.exports = {
         .setThumbnail(avatarUrl)
         .setDescription(echoLine({ profit, totalJobs, rouletteWins, messages }))
         .addFields(
-          { name: 'Balance', value: money(balance), inline: true },
+          { name: 'Wallet', value: money(snapshot.wallet), inline: true },
+          { name: 'Bank', value: money(snapshot.bank), inline: true },
+          { name: 'Wealth', value: money(snapshot.total), inline: true },
           { name: 'Lifetime Profit', value: moneySigned(profit), inline: true },
           { name: 'Achievements', value: fmtInt(achievementCount), inline: true },
           {
@@ -162,7 +164,9 @@ module.exports = {
         .setAuthor({ name: `${user.username} • Economy`, iconURL: avatarUrl })
         .setThumbnail(avatarUrl)
         .addFields(
-          { name: 'Balance', value: money(balance), inline: true },
+          { name: 'Wallet', value: money(snapshot.wallet), inline: true },
+          { name: 'Bank', value: money(snapshot.bank), inline: true },
+          { name: 'Wealth', value: money(snapshot.total), inline: true },
           { name: 'Lifetime Profit', value: moneySigned(profit), inline: true },
           { name: 'Fees Paid', value: money(feesPaid), inline: true },
           { name: 'Totals', value: `Earned: **${money(earned)}**\nSpent: **${money(spent)}**`, inline: false }
@@ -178,7 +182,7 @@ module.exports = {
         .addFields(
           { name: 'Roulette Wins', value: fmtInt(rouletteWins), inline: true },
           { name: 'Lifetime Profit', value: moneySigned(profit), inline: true },
-          { name: 'Balance', value: money(balance), inline: true }
+          { name: 'Wallet', value: money(snapshot.wallet), inline: true }
         )
         .setFooter({ text: 'Casino • This tab will expand as more game stats are tracked' });
     };

@@ -302,7 +302,7 @@ async function buyTicketsSelected(interaction, main, power, count) {
   if (count > canBuy) count = canBuy;
 
   const totalCost = count * config.ticketPrice;
-  const ok = await economy.tryDebitUser(guildId, userId, totalCost, 'lottery_ticket', { count, mode: 'pick' });
+  const ok = await economy.tryDebitBank(guildId, userId, totalCost, 'lottery_ticket', { count, mode: 'pick' });
   if (!ok) {
     await interaction.reply({ content: `Not enough funds. You need ${formatMoney(totalCost)}.`, flags: MessageFlags.Ephemeral });
     return true;
@@ -545,13 +545,13 @@ async function buyTickets(interaction, count) {
   }
 
   const totalCost = config.ticketPrice * toBuy;
-  const bal = await economy.getBalance(guildId, userId);
+  const bal = await economy.getBankBalance(guildId, userId);
   if (bal < totalCost) {
     await interaction.reply({ content: `Not enough balance. Need **${formatMoney(totalCost)}**.`, flags: MessageFlags.Ephemeral });
     return true;
   }
 
-  const debit = await economy.tryDebitUser(guildId, userId, totalCost, "lottery_ticket", { draw: drawKey, count: toBuy });
+  const debit = await economy.tryDebitBank(guildId, userId, totalCost, "lottery_ticket", { draw: drawKey, count: toBuy });
   if (!debit.ok) {
     await interaction.reply({ content: "Not enough balance.", flags: MessageFlags.Ephemeral });
     return true;

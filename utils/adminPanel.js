@@ -280,7 +280,8 @@ function buildModal(actionId) {
     modal.setTitle('Add Balance');
     modal.addComponents(
       addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'),
-      addInput('amount', 'Amount', TextInputStyle.Short, true, '1000')
+      addInput('amount', 'Amount', TextInputStyle.Short, true, '1000'),
+      addInput('target', 'Target (wallet/bank)', TextInputStyle.Short, false, 'wallet')
     );
     return modal;
   }
@@ -640,7 +641,7 @@ async function runActionFromId({ interaction, actionId, fields }) {
     return runLegacyCommand({
       interaction,
       commandFile: getLegacy('addbalance'),
-      values: { user: target, amount: Number(fields.amount) },
+      values: { user: target, amount: Number(fields.amount), target: (fields.target || 'wallet').trim().toLowerCase() },
     });
   }
 
@@ -914,7 +915,7 @@ async function runActionFromId({ interaction, actionId, fields }) {
         interaction,
         commandFile: getLegacy('riftdebug'),
         subcommand: 'tax',
-        values: { user: target, amount: Number(fields.amount) },
+        values: { user: target, amount: Number(fields.amount), target: (fields.target || 'wallet').trim().toLowerCase() },
       });
     }
   }

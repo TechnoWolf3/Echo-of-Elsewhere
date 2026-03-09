@@ -208,23 +208,23 @@ async function purchaseItem(guildId, userId, itemId, qtyRaw, meta = {}) {
     const debitRes = await client.query(
       `
       UPDATE user_balances
-      SET balance = balance - $3
-      WHERE guild_id=$1 AND user_id=$2 AND balance >= $3
-      RETURNING balance
+      SET bank_balance = bank_balance - $3
+      WHERE guild_id=$1 AND user_id=$2 AND bank_balance >= $3
+      RETURNING bank_balance
       `,
       [guildId, userId, totalPrice]
     );
 
     if (debitRes.rowCount === 0) {
       const balNow = await client.query(
-        `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
+        `SELECT bank_balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
         [guildId, userId]
       );
       await client.query("ROLLBACK");
-      return { ok: false, reason: "insufficient_funds", balance: Number(balNow.rows?.[0]?.balance ?? 0) };
+      return { ok: false, reason: "insufficient_funds", balance: Number(balNow.rows?.[0]?.bank_balance ?? 0) };
     }
 
-    const newBalance = Number(debitRes.rows[0].balance);
+    const newBalance = Number(debitRes.rows[0].bank_balance);
 
     // Inventory upsert:
     // - Uses items: on INSERT set uses_remaining=maxUses
@@ -268,6 +268,7 @@ async function purchaseItem(guildId, userId, itemId, qtyRaw, meta = {}) {
         -totalPrice,
         "shop_purchase",
         JSON.stringify({
+          balanceType: "bank",
           itemId,
           qty: qtyBought,
           unitPrice,
@@ -411,16 +412,16 @@ async function sellItem(guildId, userId, itemId, qtyRaw, meta = {}) {
       );
     }
 
-    // Credit user
+    // Credit user bank
     const balRes = await client.query(
       `UPDATE user_balances
-       SET balance = balance + $3
+       SET bank_balance = bank_balance + $3
        WHERE guild_id=$1 AND user_id=$2
-       RETURNING balance`,
+       RETURNING bank_balance`,
       [guildId, userId, total]
     );
 
-    const newBalance = Number(balRes.rows?.[0]?.balance ?? 0);
+    const newBalance = Number(balRes.rows?.[0]?.bank_balance ?? 0);
 
     // Transactions audit
     await client.query(
@@ -434,6 +435,7 @@ async function sellItem(guildId, userId, itemId, qtyRaw, meta = {}) {
         total,
         "shop_sell",
         JSON.stringify({
+          balanceType: "bank",
           itemId,
           itemName: item.name ?? itemId,
           qty,
