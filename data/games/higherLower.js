@@ -295,7 +295,7 @@ async function placeBet({ interaction, table, amount }) {
   });
 
   if (!charge.ok) {
-    await sendEphemeral(interaction, "❌ You don’t have enough funds for that bet (including casino fee).");
+    await sendEphemeral(interaction, "❌ You don’t have enough wallet funds for that bet (including casino fee).");
     return false;
   }
 

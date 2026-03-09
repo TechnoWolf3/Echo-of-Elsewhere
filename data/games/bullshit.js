@@ -933,7 +933,7 @@ async function handleBuyInModal(interaction, table) {
     const diff = buyIn - prev;
     const debit = await tryDebitUser(table.guildId, userId, diff, "bullshit_buyin", { tableId: table.tableId, step: "increase" });
     if (!debit.ok) {
-      await interaction.reply({ content: "❌ Not enough balance to increase.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.reply({ content: "❌ Not enough wallet funds to increase your buy-in.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
     }
 
@@ -948,7 +948,7 @@ async function handleBuyInModal(interaction, table) {
   // First payment
   const debit = await tryDebitUser(table.guildId, userId, buyIn, "bullshit_buyin", { tableId: table.tableId });
   if (!debit.ok) {
-    await interaction.reply({ content: "❌ Not enough balance.", flags: MessageFlags.Ephemeral }).catch(() => {});
+    await interaction.reply({ content: "❌ Not enough wallet funds for that buy-in.", flags: MessageFlags.Ephemeral }).catch(() => {});
     return;
   }
 

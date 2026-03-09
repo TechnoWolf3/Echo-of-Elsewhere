@@ -23,7 +23,7 @@ const {
   addServerBank,
   bankToUserIfEnough,
   getServerBank,
-  getBalance,
+  getWalletBalance,
 } = require("../../utils/economy");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
@@ -346,7 +346,7 @@ async function applyBetChange({ i, session, guildId, channelId, amount }) {
       });
 
       if (!charge.ok) {
-        await sendEphemeralToast(i, "❌ You don’t have enough balance to increase your bet (including table fee).");
+        await sendEphemeralToast(i, "❌ You don’t have enough wallet funds to increase your bet (including table fee).");
         return false;
       }
 
@@ -431,7 +431,7 @@ async function applyBetChange({ i, session, guildId, channelId, amount }) {
     p.bet = null;
     p.paid = false;
     await session.updatePanel();
-    await sendEphemeralToast(i, "❌ You don’t have enough balance for that bet + fee.");
+    await sendEphemeralToast(i, "❌ You don’t have enough wallet funds for that bet + fee.");
     return false;
   }
 
@@ -675,7 +675,7 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       const amtRaw = parts[2];
       let amount = 0;
       if (amtRaw === "max") {
-        const bal = await getBalance(guildId, i.user.id);
+        const bal = await getWalletBalance(guildId, i.user.id);
         amount = Math.max(MIN_BET, Math.min(250000, Number(bal || 0)));
       } else {
         amount = Number(amtRaw);
@@ -754,15 +754,17 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       const amountStr = submitted.fields.getTextInputValue("amount") || "";
       const amount = Number(String(amountStr).replace(/[^\d]/g, ""));
 
-      await applyBetChange({ i: submitted, session, guildId, channelId, amount });
+      const applied = await applyBetChange({ i: submitted, session, guildId, channelId, amount });
 
-      // If host set their bet, treat as default bet for joiners
-      if (submitted.user.id === session.hostId) {
+      // If host set their bet successfully, treat it as default bet for joiners
+      if (applied && submitted.user.id === session.hostId) {
         const p = session.players.get(session.hostId);
         if (p?.bet) session.defaultBet = Number(p.bet);
       }
 
-      return submitted.editReply("✅ Done.");
+      return submitted.editReply(applied
+        ? "✅ Bet applied."
+        : "❌ Bet was not applied. Check your wallet balance and try again.");
     }
 
     if (action === "quickbet") {
@@ -864,7 +866,7 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
         hostId: session.hostId,
       });
 
-      if (!charge.ok) return sendEphemeralToast(i, "❌ Not enough balance to double down (including table fee).");
+      if (!charge.ok) return sendEphemeralToast(i, "❌ Not enough wallet funds to double down (including table fee).");
 
       await addServerBank(guildId, extraStake, "blackjack_bank_double_down", { channelId, gameId: session.gameId, userId: i.user.id, extraStake });
 
@@ -905,7 +907,7 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
         hostId: session.hostId,
       });
 
-      if (!charge.ok) return sendEphemeralToast(i, "❌ Not enough balance to split (including table fee).");
+      if (!charge.ok) return sendEphemeralToast(i, "❌ Not enough wallet funds to split (including table fee).");
 
       await addServerBank(guildId, extraStake, "blackjack_bank_split", { channelId, gameId: session.gameId, userId: i.user.id, extraStake });
 

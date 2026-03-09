@@ -23,7 +23,7 @@ const {
   tryDebitUser,
   addServerBank,
   bankToUserIfEnough,
-  getBalance,
+  getWalletBalance,
 } = require("../../utils/economy");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
@@ -466,7 +466,7 @@ async function placeBet({ interaction, table, amount, betType, betValue }) {
   });
 
   if (!charge.ok) {
-    await sendEphemeralToast(interaction, "❌ Not enough balance for that bet + table fee.");
+    await sendEphemeralToast(interaction, "❌ Not enough wallet funds for that bet + table fee.");
     return false;
   }
 
@@ -739,8 +739,9 @@ async function startFromHub(interaction, opts = {}) {
       const amount = parseAmount(submitted.fields.getTextInputValue("amount"));
       const value = submitted.fields.fields.get("value") ? submitted.fields.getTextInputValue("value") : null;
 
-      await placeBet({ interaction: submitted, table, amount, betType, betValue: value });
-      return submitted.editReply("✅ Done.");
+      const placed = await placeBet({ interaction: submitted, table, amount, betType, betValue: value });
+      if (!placed) return;
+      return submitted.editReply("✅ Bet placed.");
     }
 
     if (await guardGamesComponent(i)) return;
@@ -897,8 +898,8 @@ async function handleInteraction(interaction) {
       betValue = interaction.fields.getTextInputValue("value") || "";
     }
 
-    await placeBet({ interaction, table, amount, betType, betValue });
-    await interaction.editReply("✅ Bet placed.").catch(() => {});
+    const placed = await placeBet({ interaction, table, amount, betType, betValue });
+    if (placed) await interaction.editReply("✅ Bet placed.").catch(() => {});
     return true;
   }
 
