@@ -14,16 +14,19 @@ const { guardNotJailed } = require("../utils/jail");
 
 const BRAND_NAME = "The Echo Reserve";
 const BRAND_COLOR = 0x0875AF;
+// Replace this with the direct URL of your uploaded bank logo.
+const BANK_LOGO = "https://i.ibb.co/rR1VMCSW/The-Echo-Reserve-Logo.png";
+const BRAND_MOTTO = "Stability. Security. Silence.";
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString("en-AU")}`;
 }
 
 function buildHomeEmbed(user, snapshot) {
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(BRAND_COLOR)
     .setTitle(`🏦 ${BRAND_NAME}`)
-    .setDescription("A polished ledger for the chaos of Echo of Elsewhere.")
+    .setDescription(`${BRAND_MOTTO}\n\nA polished ledger for the chaos of Echo of Elsewhere.`)
     .addFields(
       { name: "Wallet", value: money(snapshot.wallet), inline: true },
       { name: "Bank", value: money(snapshot.bank), inline: true },
@@ -31,8 +34,14 @@ function buildHomeEmbed(user, snapshot) {
       { name: "Account Number", value: `\`${snapshot.accountNumber || "Pending"}\``, inline: false },
       { name: "Banking Notes", value: "• Casino uses your **wallet**\n• Purchases use your **bank**\n• Transfers move **bank → bank**", inline: false },
     )
-    .setFooter({ text: `${user.username} • ${BRAND_NAME}` })
+    .setFooter({ text: `${user.username} • ${BRAND_NAME} • ${BRAND_MOTTO}` })
     .setTimestamp();
+
+  if (BANK_LOGO && BANK_LOGO !== "https://i.ibb.co/rR1VMCSW/The-Echo-Reserve-Logo.png") {
+    embed.setThumbnail(BANK_LOGO);
+  }
+
+  return embed;
 }
 
 function buildHomeComponents() {
@@ -156,8 +165,13 @@ module.exports = {
             .setColor(BRAND_COLOR)
             .setTitle(`📜 ${BRAND_NAME} Statement`)
             .setDescription(txs.length ? txs.map(txLine).join("\n") : "No transactions have been recorded yet.")
-            .setFooter({ text: "Last 10 transactions" })
+            .setFooter({ text: `Last 10 transactions • ${BRAND_MOTTO}` })
             .setTimestamp();
+
+          if (BANK_LOGO && BANK_LOGO !== "https://i.ibb.co/rR1VMCSW/The-Echo-Reserve-Logo.png") {
+            embed.setThumbnail(BANK_LOGO);
+          }
+
           await interaction.editReply({ embeds: [embed], components: buildHomeComponents() });
           return true;
         }
