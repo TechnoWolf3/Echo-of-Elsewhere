@@ -5,6 +5,7 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("
 const path = require("path");
 const { pool } = require(path.join(process.cwd(), "utils", "db"));
 const { setJail } = require(path.join(process.cwd(), "utils", "jail"));
+const { creditUser, tryDebitUser, addServerBank } = require(path.join(process.cwd(), "utils", "economy"));
 // Scenarios (data-only)
 let scenarios = require("./storeRobbery.scenarios");
 
@@ -112,39 +113,35 @@ async function consumeItemUse(guildId, userId, itemId, usesToConsume = 1) {
 // =====================
 // DB HELPERS
 // =====================
-async function addUserBalance(guildId, userId, amount) {
+async function ensureUserRow(guildId, userId) {
   await pool.query(
-    `UPDATE user_balances
-     SET balance = balance + $1
-     WHERE guild_id=$2 AND user_id=$3`,
-    [amount, guildId, userId]
+    `INSERT INTO user_balances (guild_id, user_id)
+     VALUES ($1, $2)
+     ON CONFLICT (guild_id, user_id) DO NOTHING`,
+    [guildId, userId]
   );
 }
 
-async function subtractUserBalanceAndSendToBank(guildId, userId, amount) {
+async function addUserWallet(guildId, userId, amount, type = "crime_payout", meta = {}) {
+  await creditUser(guildId, userId, amount, type, { ...meta, destination: "wallet" });
+}
+
+async function subtractUserWalletAndSendToBank(guildId, userId, amount, type = "crime_fine", meta = {}) {
+  await ensureUserRow(guildId, userId);
+
   const res = await pool.query(
     `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
     [guildId, userId]
   );
 
   const current = Number(res.rows?.[0]?.balance || 0);
-  const take = Math.min(current, Math.max(0, amount));
+  const take = Math.min(current, Math.max(0, Number(amount) || 0));
   if (take <= 0) return 0;
 
-  await pool.query(
-    `UPDATE user_balances
-     SET balance = balance - $1
-     WHERE guild_id=$2 AND user_id=$3`,
-    [take, guildId, userId]
-  );
+  const debit = await tryDebitUser(guildId, userId, take, type, { ...meta, source: "wallet" });
+  if (!debit?.ok) return 0;
 
-  await pool.query(
-    `UPDATE guilds
-     SET bank_balance = bank_balance + $1
-     WHERE guild_id=$2`,
-    [take, guildId]
-  );
-
+  await addServerBank(guildId, take, `${type}_bank`, { ...meta, source: "wallet", userId });
   return take;
 }
 
@@ -469,7 +466,7 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       if (outcome === "clean" || outcome === "spotted") {
         const payout = computeSuccessPayout(outcome) + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
-        await addUserBalance(guildId, userId, finalPayout);
+        await addUserWallet(guildId, userId, finalPayout, mode === "major" ? "crime_major_heist_success" : "crime_heist_success", { job: mode });
 
         resultLines.push(
           outcome === "clean"
@@ -481,12 +478,12 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       } else if (outcome === "partial") {
         const payout = computeSuccessPayout("partial") + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
-        await addUserBalance(guildId, userId, finalPayout);
+        await addUserWallet(guildId, userId, finalPayout, mode === "major" ? "crime_major_heist_success" : "crime_heist_success", { job: mode });
 
         resultLines.push(`😬 You got something, but not much. You pocket **$${finalPayout.toLocaleString()}**.`);
       } else {
         const fine = computeFine(outcome);
-        const taken = await subtractUserBalanceAndSendToBank(guildId, userId, fine);
+        const taken = await subtractUserWalletAndSendToBank(guildId, userId, fine, "crime_store_fine", { job: "store_robbery" });
 
         resultLines.push(
           outcome === "busted_hard"
