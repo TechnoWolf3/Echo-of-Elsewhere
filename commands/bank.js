@@ -12,7 +12,7 @@ const {
 const economy = require("../utils/economy");
 const { guardNotJailed } = require("../utils/jail");
 
-const BRAND_NAME = "Echo Holdings";
+const BRAND_NAME = "The Echo Reserve";
 const BRAND_COLOR = 0x0875AF;
 
 function money(n) {
@@ -122,7 +122,7 @@ function buildTransferModal() {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("bank")
-    .setDescription("Open the Echo Holdings banking hub."),
+    .setDescription("Open the Echo Reserve banking hub."),
 
   async execute(interaction) {
     if (!interaction.inGuild()) {
@@ -264,9 +264,9 @@ module.exports = {
       console.error("[BANK] interaction failed:", e);
       try {
         if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ content: "❌ Echo Holdings hit a paperwork snag.", flags: MessageFlags.Ephemeral });
+          await interaction.followUp({ content: "❌ The Echo Reserve hit a paperwork snag.", flags: MessageFlags.Ephemeral });
         } else {
-          await interaction.reply({ content: "❌ Echo Holdings hit a paperwork snag.", flags: MessageFlags.Ephemeral });
+          await interaction.reply({ content: "❌ The Echo Reserve hit a paperwork snag.", flags: MessageFlags.Ephemeral });
         }
       } catch {}
       return true;
