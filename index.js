@@ -693,7 +693,7 @@ client.once(Events.ClientReady, async () => {
       // ===========================
       setInterval(async () => {
         try {
-          const result = tickMarket();
+          const result = await tickMarket();
 
           const significantMoves = result.moves.filter(
             (m) => Math.abs(Number(m.percent || 0)) >= Number(eseConfig.breakingNewsThreshold || 5)

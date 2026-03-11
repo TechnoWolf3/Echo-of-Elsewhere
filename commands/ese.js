@@ -27,15 +27,17 @@ function pct(n) {
   return `${num >= 0 ? "+" : ""}${num.toFixed(2)}%`;
 }
 
-function buildOverviewEmbed() {
-  const snap = getSnapshot();
+async function buildOverviewEmbed() {
+  const snap = await getSnapshot();
   const { topGainer, topLoser } = getTopMovers(snap);
 
   return new EmbedBuilder()
     .setColor(0x0875af)
     .setTitle("📈 Echo Stock Exchange")
     .setThumbnail(config.logo)
-    .setDescription("A live simulated exchange shaped by market sentiment, player pressure, and server activity.")
+    .setDescription(
+      "A live simulated exchange shaped by market sentiment, player pressure, and server activity."
+    )
     .addFields(
       {
         name: "Market State",
@@ -45,14 +47,18 @@ function buildOverviewEmbed() {
       {
         name: "Top Gainer",
         value: topGainer
-          ? `**${topGainer.symbol}** • ${money(topGainer.price)} (${pct(topGainer.dayChangePercent)})`
+          ? `**${topGainer.symbol}** • ${money(topGainer.price)} (${pct(
+              topGainer.dayChangePercent
+            )})`
           : "N/A",
         inline: true,
       },
       {
         name: "Top Loser",
         value: topLoser
-          ? `**${topLoser.symbol}** • ${money(topLoser.price)} (${pct(topLoser.dayChangePercent)})`
+          ? `**${topLoser.symbol}** • ${money(topLoser.price)} (${pct(
+              topLoser.dayChangePercent
+            )})`
           : "N/A",
         inline: true,
       }
@@ -61,12 +67,12 @@ function buildOverviewEmbed() {
     .setTimestamp();
 }
 
-function buildListingEmbed(symbol) {
-  const snap = getSnapshot();
+async function buildListingEmbed(symbol) {
+  const snap = await getSnapshot();
   const company = snap.companies.find((c) => c.symbol === symbol);
   if (!company) return null;
 
-  const history = getCompanyHistory(symbol, 48);
+  const history = await getCompanyHistory(symbol, 48);
   const chartUrl = buildChartUrl(symbol, history);
 
   return new EmbedBuilder()
@@ -81,16 +87,24 @@ function buildListingEmbed(symbol) {
       { name: "Open", value: money(company.open), inline: true },
       { name: "High", value: money(company.high), inline: true },
       { name: "Low", value: money(company.low), inline: true },
-      { name: "Volume", value: `${Number(company.volume || 0).toLocaleString("en-AU")}`, inline: true },
+      {
+        name: "Volume",
+        value: `${Number(company.volume || 0).toLocaleString("en-AU")}`,
+        inline: true,
+      },
       { name: "Dividend", value: company.dividend ? "Yes" : "No", inline: true },
-      { name: "Sentiment", value: `${Number(company.sentiment || 0).toFixed(3)}`, inline: true }
+      {
+        name: "Sentiment",
+        value: `${Number(company.sentiment || 0).toFixed(3)}`,
+        inline: true,
+      }
     )
     .setFooter({ text: "Trading terminal wiring comes next." })
     .setTimestamp();
 }
 
-function buildMenu() {
-  const snap = getSnapshot();
+async function buildMenu() {
+  const snap = await getSnapshot();
 
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -125,25 +139,31 @@ module.exports = {
     .setDescription("Open the Echo Stock Exchange hub."),
 
   async execute(interaction) {
-    const embed = buildOverviewEmbed();
+    const embed = await buildOverviewEmbed();
 
     await interaction.reply({
       embeds: [embed],
-      components: [buildMenu(), buildButtons()],
+      components: [await buildMenu(), buildButtons()],
     });
   },
 
   async handleComponent(interaction) {
-    if (interaction.customId === "ese-home" || interaction.customId === "ese-refresh") {
+    if (
+      interaction.customId === "ese-home" ||
+      interaction.customId === "ese-refresh"
+    ) {
       return interaction.update({
-        embeds: [buildOverviewEmbed()],
-        components: [buildMenu(), buildButtons()],
+        embeds: [await buildOverviewEmbed()],
+        components: [await buildMenu(), buildButtons()],
       });
     }
 
-    if (interaction.isStringSelectMenu() && interaction.customId === "ese-view-stock") {
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "ese-view-stock"
+    ) {
       const symbol = interaction.values[0];
-      const embed = buildListingEmbed(symbol);
+      const embed = await buildListingEmbed(symbol);
 
       if (!embed) {
         return interaction.reply({
@@ -154,7 +174,7 @@ module.exports = {
 
       return interaction.update({
         embeds: [embed],
-        components: [buildMenu(), buildButtons()],
+        components: [await buildMenu(), buildButtons()],
       });
     }
   },
