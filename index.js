@@ -13,7 +13,7 @@ const adminPanel = require("./utils/adminPanel");
 const bankCommand = require("./commands/bank");
 
 // 📈 Echo Stock Exchange
-const { tickMarket } = require("./utils/ese/engine");
+const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
 const eseCommand = require("./commands/ese");
 const eseConfig = require("./data/ese/config");
 
@@ -666,6 +666,8 @@ client.once(Events.ClientReady, async () => {
     try {
       await ensureAchievementTables(client.db);
       await ensureEconomyTables(client.db);
+      await ensureEseSchema();
+      console.log("[ESE] schema ready");
 
       // Start Bot Games AFTER DB tables exist
       botGames.startScheduler(client);
