@@ -23,6 +23,9 @@ const {
   getUserPortfolio,
   applyBuy,
   applySell,
+  getLatestNews,
+  getRumorBoard,
+  getDividendRule,
 } = require("../utils/ese/engine");
 const { buildChartUrl } = require("../utils/ese/chartRenderer");
 const {
@@ -55,6 +58,12 @@ async function buildOverviewEmbed(interaction) {
   const snap = await getSnapshot();
   const { topGainer, topLoser } = getTopMovers(snap);
   const portfolio = await getUserPortfolio(interaction.guildId, interaction.user.id);
+  const news = await getLatestNews(2);
+
+  const newsText =
+    news.length > 0
+      ? news.map((n) => `• ${n.headline}`).join("\n")
+      : "No market bulletins yet.";
 
   return new EmbedBuilder()
     .setColor(0x0875af)
@@ -100,6 +109,11 @@ async function buildOverviewEmbed(interaction) {
               )}**`
             : "No holdings yet.",
         inline: false,
+      },
+      {
+        name: "Latest News",
+        value: newsText,
+        inline: false,
       }
     )
     .setFooter({ text: "Use the menu below to inspect a listing." })
@@ -113,6 +127,14 @@ async function buildListingEmbed(interaction, symbol) {
   const history = await getCompanyHistory(symbol, 48);
   const chartUrl = buildChartUrl(symbol, history);
   const holding = await getUserHolding(interaction.guildId, interaction.user.id, symbol);
+  const dividendRule = getDividendRule(symbol);
+
+  let dividendText = "No";
+  if (dividendRule?.enabled) {
+    dividendText = `Yes • ${(Number(dividendRule.payoutRate || 0) * 100).toFixed(2)}% / ${Number(
+      dividendRule.intervalTicks || 0
+    )} ticks`;
+  }
 
   return new EmbedBuilder()
     .setColor(0x0875af)
@@ -131,7 +153,7 @@ async function buildListingEmbed(interaction, symbol) {
         value: `${Number(company.volume || 0).toLocaleString("en-AU")}`,
         inline: true,
       },
-      { name: "Dividend", value: company.dividend ? "Yes" : "No", inline: true },
+      { name: "Dividend", value: dividendText, inline: true },
       {
         name: "Sentiment",
         value: `${Number(company.sentiment || 0).toFixed(3)}`,
@@ -191,6 +213,32 @@ async function buildPortfolioEmbed(interaction) {
     .setTimestamp();
 }
 
+async function buildRumorsEmbed() {
+  const rumors = await getRumorBoard();
+  const news = await getLatestNews(5);
+
+  const rumorText =
+    rumors.length > 0
+      ? rumors.map((r) => `• **${r.symbol}** — ${r.text}`).join("\n\n")
+      : "No active rumors.";
+
+  const newsText =
+    news.length > 0
+      ? news.slice(0, 3).map((n) => `• ${n.headline}`).join("\n")
+      : "No recent news.";
+
+  return new EmbedBuilder()
+    .setColor(0x0875af)
+    .setTitle("🕵️ ESE Rumors & Market Chatter")
+    .setThumbnail(config.logo)
+    .addFields(
+      { name: "Rumor Board", value: rumorText, inline: false },
+      { name: "Recent Bulletins", value: newsText, inline: false }
+    )
+    .setFooter({ text: "Rumors are directionally useful, not guarantees." })
+    .setTimestamp();
+}
+
 async function buildMenu() {
   const snap = await getSnapshot();
 
@@ -217,6 +265,10 @@ function buildOverviewButtons() {
     new ButtonBuilder()
       .setCustomId("ese-portfolio")
       .setLabel("Portfolio")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ese-rumors")
+      .setLabel("Rumors")
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId("ese-refresh")
@@ -253,8 +305,29 @@ function buildPortfolioButtons() {
       .setLabel("Overview")
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
+      .setCustomId("ese-rumors")
+      .setLabel("Rumors")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
       .setCustomId("ese-refresh-portfolio")
       .setLabel("Refresh Portfolio")
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+function buildRumorButtons() {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId("ese-home")
+      .setLabel("Overview")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("ese-portfolio")
+      .setLabel("Portfolio")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("ese-refresh-rumors")
+      .setLabel("Refresh Rumors")
       .setStyle(ButtonStyle.Secondary)
   );
 }
@@ -305,6 +378,13 @@ module.exports = {
       return interaction.update({
         embeds: [await buildPortfolioEmbed(interaction)],
         components: [buildPortfolioButtons()],
+      });
+    }
+
+    if (interaction.customId === "ese-rumors" || interaction.customId === "ese-refresh-rumors") {
+      return interaction.update({
+        embeds: [await buildRumorsEmbed()],
+        components: [buildRumorButtons()],
       });
     }
 

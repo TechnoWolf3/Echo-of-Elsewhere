@@ -1,6 +1,10 @@
 const { pool } = require("../db");
+const { creditUser } = require("../economy");
 const config = require("../../data/ese/config");
 const companies = require("../../data/ese/companies");
+const dividendConfig = require("../../data/ese/dividends");
+const newsTemplates = require("../../data/ese/newsTemplates");
+const rumorTemplates = require("../../data/ese/rumors");
 
 let schemaReady = false;
 
@@ -10,6 +14,18 @@ function clamp(num, min, max) {
 
 function rand(min, max) {
   return Math.random() * (max - min) + min;
+}
+
+function pick(arr, fallback = null) {
+  if (!Array.isArray(arr) || !arr.length) return fallback;
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function formatTemplate(template, data) {
+  return String(template || "")
+    .replaceAll("{symbol}", data.symbol || "")
+    .replaceAll("{name}", data.name || "")
+    .replaceAll("{sector}", data.sector || "");
 }
 
 function pickMarketState() {
@@ -99,6 +115,53 @@ function getTopMovers(state) {
   };
 }
 
+function normalizeCompanyRow(row) {
+  return {
+    ...row,
+    price: Number(row.price),
+    open: Number(row.open),
+    previousClose: Number(row.previousClose),
+    high: Number(row.high),
+    low: Number(row.low),
+    volatility: Number(row.volatility),
+    dividend: Boolean(row.dividend),
+    sentiment: Number(row.sentiment),
+    volume: Number(row.volume),
+    dayChangePercent: Number(row.dayChangePercent),
+    buyPressure: Number(row.buyPressure),
+    sellPressure: Number(row.sellPressure),
+  };
+}
+
+async function getMeta(key, fallback = null) {
+  const res = await pool.query(
+    `SELECT value FROM ese_market_meta WHERE key = $1`,
+    [key]
+  );
+  return res.rows?.[0]?.value ?? fallback;
+}
+
+async function setMeta(key, value) {
+  await pool.query(
+    `
+    INSERT INTO ese_market_meta (key, value)
+    VALUES ($1, $2::jsonb)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    `,
+    [key, JSON.stringify(value)]
+  );
+}
+
+async function addNews(kind, symbol, headline) {
+  await pool.query(
+    `
+    INSERT INTO ese_news (kind, symbol, headline)
+    VALUES ($1, $2, $3)
+    `,
+    [kind, symbol || null, headline]
+  );
+}
+
 async function ensureSchema() {
   if (schemaReady) return;
 
@@ -156,6 +219,29 @@ async function ensureSchema() {
       user_id TEXT NOT NULL,
       expires_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ese_news (
+      id BIGSERIAL PRIMARY KEY,
+      kind TEXT NOT NULL,
+      symbol TEXT NULL,
+      headline TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ese_news_created
+    ON ese_news (created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ese_dividend_payouts (
+      id BIGSERIAL PRIMARY KEY,
+      payout_key TEXT NOT NULL UNIQUE,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      shares NUMERIC(18,4) NOT NULL,
+      payout_rate NUMERIC(18,6) NOT NULL,
+      payout_total BIGINT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 
@@ -224,6 +310,14 @@ async function ensureSchema() {
         [JSON.stringify({ name: "Stable Session", updatedAt: Date.now() })]
       );
 
+      await client.query(
+        `
+        INSERT INTO ese_market_meta (key, value)
+        VALUES ('tick_counter', '{"count":0}'::jsonb)
+        ON CONFLICT (key) DO NOTHING
+        `
+      );
+
       await client.query("COMMIT");
     } catch (err) {
       await client.query("ROLLBACK");
@@ -264,44 +358,13 @@ async function ensureSchema() {
 
 async function getMarketStateName() {
   await ensureSchema();
-
-  const res = await pool.query(
-    `SELECT value FROM ese_market_meta WHERE key = 'market_state'`
-  );
-
-  const row = res.rows?.[0];
-  return row?.value?.name || "Stable Session";
+  const row = await getMeta("market_state", { name: "Stable Session" });
+  return row?.name || "Stable Session";
 }
 
 async function setMarketStateName(name) {
   await ensureSchema();
-
-  await pool.query(
-    `
-    INSERT INTO ese_market_meta (key, value)
-    VALUES ('market_state', $1::jsonb)
-    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-    `,
-    [JSON.stringify({ name, updatedAt: Date.now() })]
-  );
-}
-
-function normalizeCompanyRow(row) {
-  return {
-    ...row,
-    price: Number(row.price),
-    open: Number(row.open),
-    previousClose: Number(row.previousClose),
-    high: Number(row.high),
-    low: Number(row.low),
-    volatility: Number(row.volatility),
-    dividend: Boolean(row.dividend),
-    sentiment: Number(row.sentiment),
-    volume: Number(row.volume),
-    dayChangePercent: Number(row.dayChangePercent),
-    buyPressure: Number(row.buyPressure),
-    sellPressure: Number(row.sellPressure),
-  };
+  await setMeta("market_state", { name, updatedAt: Date.now() });
 }
 
 async function getSnapshot() {
@@ -418,6 +481,175 @@ async function recordTradePressure(symbol, side, amount) {
   return res.rows?.[0] ? normalizeCompanyRow(res.rows[0]) : null;
 }
 
+async function getLatestNews(limit = 5) {
+  await ensureSchema();
+
+  const res = await pool.query(
+    `
+    SELECT id, kind, symbol, headline, created_at AS "createdAt"
+    FROM ese_news
+    ORDER BY created_at DESC
+    LIMIT $1
+    `,
+    [Math.max(1, Number(limit || 5))]
+  );
+
+  return res.rows || [];
+}
+
+async function rebuildRumorBoard() {
+  const snapshot = await getSnapshot();
+  const { topGainer, topLoser } = getTopMovers(snapshot);
+
+  const poolList = snapshot.companies || [];
+  const randomPick =
+    poolList.length > 0
+      ? poolList[Math.floor(Math.random() * poolList.length)]
+      : null;
+
+  const rumors = [];
+
+  if (topGainer) {
+    rumors.push({
+      symbol: topGainer.symbol,
+      tone: "bullish",
+      text: formatTemplate(pick(rumorTemplates.bullish), topGainer),
+    });
+  }
+
+  if (topLoser) {
+    rumors.push({
+      symbol: topLoser.symbol,
+      tone: "bearish",
+      text: formatTemplate(pick(rumorTemplates.bearish), topLoser),
+    });
+  }
+
+  if (randomPick) {
+    let tone = "neutral";
+    if (Number(randomPick.sentiment) > 0.01) tone = "bullish";
+    if (Number(randomPick.sentiment) < -0.01) tone = "bearish";
+
+    rumors.push({
+      symbol: randomPick.symbol,
+      tone,
+      text: formatTemplate(pick(rumorTemplates[tone]), randomPick),
+    });
+  }
+
+  await setMeta("rumor_board", {
+    updatedAt: Date.now(),
+    items: rumors.slice(0, 3),
+  });
+
+  return rumors.slice(0, 3);
+}
+
+async function getRumorBoard() {
+  await ensureSchema();
+
+  const cached = await getMeta("rumor_board", null);
+  const maxAge = Number(config.tickIntervalMinutes || 10) * 60 * 1000 * 2;
+
+  if (
+    cached &&
+    Array.isArray(cached.items) &&
+    cached.updatedAt &&
+    Date.now() - Number(cached.updatedAt) < maxAge
+  ) {
+    return cached.items;
+  }
+
+  return rebuildRumorBoard();
+}
+
+async function processDividends(companiesForTick, tickCount) {
+  const announcements = [];
+
+  for (const company of companiesForTick) {
+    const rule = dividendConfig[company.symbol];
+    if (!rule?.enabled) continue;
+
+    const intervalTicks = Number(rule.intervalTicks || 0);
+    const payoutRate = Number(rule.payoutRate || 0);
+    const minShares = Number(rule.minShares || 1);
+
+    if (!intervalTicks || !payoutRate) continue;
+    if (tickCount % intervalTicks !== 0) continue;
+
+    const holdingsRes = await pool.query(
+      `
+      SELECT guild_id, user_id, shares
+      FROM ese_portfolios
+      WHERE symbol = $1 AND shares >= $2
+      `,
+      [company.symbol, minShares]
+    );
+
+    let totalPaid = 0;
+
+    for (const row of holdingsRes.rows) {
+      const shares = Number(row.shares || 0);
+      const payout = Math.round(shares * Number(company.price) * payoutRate);
+      if (payout <= 0) continue;
+
+      const payoutKey = `${tickCount}:${row.guild_id}:${row.user_id}:${company.symbol}`;
+
+      const insert = await pool.query(
+        `
+        INSERT INTO ese_dividend_payouts (
+          payout_key, guild_id, user_id, symbol, shares, payout_rate, payout_total
+        )
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (payout_key) DO NOTHING
+        RETURNING id
+        `,
+        [
+          payoutKey,
+          row.guild_id,
+          row.user_id,
+          company.symbol,
+          shares,
+          payoutRate,
+          payout,
+        ]
+      );
+
+      if (!insert.rows?.length) continue;
+
+      await creditUser(
+        row.guild_id,
+        row.user_id,
+        payout,
+        "ese_dividend",
+        {
+          symbol: company.symbol,
+          shares,
+          payoutRate,
+          price: Number(company.price),
+          tickCount,
+        }
+      );
+
+      totalPaid += payout;
+    }
+
+    if (totalPaid > 0) {
+      const template = pick(newsTemplates.dividends);
+      const headline = formatTemplate(template, company);
+      await addNews("dividend", company.symbol, headline);
+
+      announcements.push({
+        symbol: company.symbol,
+        headline,
+        totalPaid,
+      });
+    }
+  }
+
+  return announcements;
+}
+
 async function tickMarket(activity = {}) {
   await ensureSchema();
 
@@ -425,7 +657,17 @@ async function tickMarket(activity = {}) {
   if (Math.random() < 0.18) {
     marketState = pickMarketState();
     await setMarketStateName(marketState);
+
+    const stateLine = pick(
+      newsTemplates.marketStates?.[marketState],
+      `The exchange has shifted into ${marketState}.`
+    );
+    await addNews("market_state", null, stateLine);
   }
+
+  const tickMeta = (await getMeta("tick_counter", { count: 0 })) || { count: 0 };
+  const tickCount = Number(tickMeta.count || 0) + 1;
+  await setMeta("tick_counter", { count: tickCount });
 
   const companiesRes = await pool.query(`
     SELECT
@@ -451,6 +693,7 @@ async function tickMarket(activity = {}) {
 
   const client = await pool.connect();
   const moves = [];
+  const updatedCompanies = [];
 
   try {
     await client.query("BEGIN");
@@ -550,11 +793,24 @@ async function tickMarket(activity = {}) {
         [company.symbol]
       );
 
-      moves.push({
+      const move = {
         symbol: company.symbol,
+        name: company.name,
+        sector: company.sector,
         oldPrice,
         newPrice,
         percent: Number((((newPrice - oldPrice) / oldPrice) * 100).toFixed(2)),
+      };
+
+      moves.push(move);
+      updatedCompanies.push({
+        ...company,
+        price: newPrice,
+        high,
+        low,
+        volume,
+        sentiment,
+        dayChangePercent,
       });
     }
 
@@ -566,9 +822,50 @@ async function tickMarket(activity = {}) {
     client.release();
   }
 
+  const breakingThreshold = Number(config.breakingNewsThreshold || 5);
+
+const strongMoves = moves.filter(
+  (m) => Math.abs(Number(m.percent || 0)) >= breakingThreshold
+);
+
+const newsLines = [];
+
+for (const move of strongMoves.slice(0, 2)) {
+  const bucket =
+    move.percent >= 0
+      ? newsTemplates.bullish?.[move.sector] || newsTemplates.bullish.default
+      : newsTemplates.bearish?.[move.sector] || newsTemplates.bearish.default;
+
+  const headline = formatTemplate(pick(bucket), move);
+
+  await pool.query(
+    `
+    UPDATE ese_companies
+    SET last_headline = $2,
+        updated_at = NOW()
+    WHERE symbol = $1
+    `,
+    [move.symbol, headline]
+  );
+
+  await addNews("move", move.symbol, headline);
+
+  newsLines.push({
+    symbol: move.symbol,
+    headline,
+    percent: Number(move.percent || 0),
+    newPrice: Number(move.newPrice || 0),
+  });
+}
+
+  const dividendAnnouncements = await processDividends(updatedCompanies, tickCount);
+  await rebuildRumorBoard();
+
   return {
     state: await getSnapshot(),
     moves,
+    newsLines,
+    dividendAnnouncements,
   };
 }
 
@@ -776,6 +1073,10 @@ async function applySell(guildId, userId, symbol, shares, executedPrice) {
   await setTradeCooldown(guildId, userId);
 }
 
+function getDividendRule(symbol) {
+  return dividendConfig[String(symbol).toUpperCase()] || { enabled: false };
+}
+
 function getTradeCooldownMs() {
   return Number(config.tradeCooldownSeconds || 15) * 1000;
 }
@@ -792,6 +1093,9 @@ module.exports = {
   getCompanyHistory,
   tickMarket,
   recordTradePressure,
+  getLatestNews,
+  getRumorBoard,
+  getDividendRule,
   getTradeCooldownMs,
   getTradeFeeRate,
   getUserHolding,

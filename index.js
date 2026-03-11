@@ -695,33 +695,53 @@ client.once(Events.ClientReady, async () => {
         try {
           const result = await tickMarket();
 
-          const significantMoves = result.moves.filter(
-            (m) => Math.abs(Number(m.percent || 0)) >= Number(eseConfig.breakingNewsThreshold || 5)
-          );
-
-          if (!significantMoves.length) return;
-
           const channel = await client.channels
-            .fetch(eseConfig.newsChannel)
-            .catch(() => null);
+  .fetch(eseConfig.newsChannel)
+  .catch(() => null);
 
-          if (!channel) return;
+if (!channel) return;
 
-          for (const move of significantMoves.slice(0, 3)) {
-            const direction = move.percent > 0 ? "surged" : "dropped";
+const strongMoves = result.moves.filter(
+  (m) => Math.abs(Number(m.percent || 0)) >= Number(eseConfig.breakingNewsThreshold || 5)
+);
 
-            const embed = new EmbedBuilder()
-              .setColor(move.percent > 0 ? 0x2ecc71 : 0xe74c3c)
-              .setTitle("🚨 ESE BREAKING NEWS")
-              .setThumbnail(eseConfig.logo)
-              .setDescription(
-                `**${move.symbol}** has ${direction} **${Number(move.percent).toFixed(2)}%** to **$${Number(move.newPrice).toFixed(2)}**`
-              )
-              .setFooter({ text: "Echo Stock Exchange Live Market Feed" })
-              .setTimestamp();
+for (const item of (result.newsLines || []).slice(0, 3)) {
+  const embed = new EmbedBuilder()
+    .setColor(Number(item.percent || 0) >= 0 ? 0x2ecc71 : 0xe74c3c)
+    .setTitle("🚨 ESE BREAKING NEWS")
+    .setThumbnail(eseConfig.logo)
+    .setDescription(item.headline)
+    .addFields({
+      name: "Market Move",
+      value: `**${item.symbol}** • ${Number(item.percent || 0) >= 0 ? "+" : ""}${Number(item.percent || 0).toFixed(2)}% • $${Number(item.newPrice || 0).toFixed(2)}`,
+      inline: false,
+    })
+    .setFooter({ text: "Echo Stock Exchange Live Market Feed" })
+    .setTimestamp();
 
-            await channel.send({ embeds: [embed] }).catch(() => {});
-          }
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+for (const item of (result.dividendAnnouncements || []).slice(0, 2)) {
+  const embed = new EmbedBuilder()
+    .setColor(0xf1c40f)
+    .setTitle("💰 ESE DIVIDEND DISTRIBUTION")
+    .setThumbnail(eseConfig.logo)
+    .setDescription(item.headline)
+    .addFields({
+      name: "Total Paid",
+      value: `$${Number(item.totalPaid || 0).toLocaleString("en-AU")}`,
+      inline: false,
+    })
+    .setFooter({ text: "Echo Stock Exchange Live Market Feed" })
+    .setTimestamp();
+
+  await channel.send({ embeds: [embed] }).catch(() => {});
+}
+
+if (!strongMoves.length && !(result.dividendAnnouncements || []).length) {
+  // no-op, quiet tick
+}
         } catch (err) {
           console.error("[ESE] ticker error:", err);
         }

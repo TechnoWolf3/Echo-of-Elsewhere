@@ -5,7 +5,7 @@ module.exports = {
 
   breakingNewsThreshold: 5,
 
-  newsChannel: "1449217901306581074",
+  newsChannel: "1481134858930753719",
 
   logo: "https://i.ibb.co/rRnjd5KS/Echo-Stock-Exchange-Logo.png"
 };
