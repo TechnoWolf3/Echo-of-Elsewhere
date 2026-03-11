@@ -16,6 +16,7 @@ const bankCommand = require("./commands/bank");
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
 const eseCommand = require("./commands/ese");
 const eseConfig = require("./data/ese/config");
+const { getEseActivitySnapshot } = require("./utils/ese/activityHooks");
 
 // 📌 Persistent "Bot Features" hub (stays working after restarts)
 const featuresHub = require("./data/features");
@@ -695,7 +696,8 @@ client.once(Events.ClientReady, async () => {
       // ===========================
       setInterval(async () => {
         try {
-          const result = await tickMarket();
+          const activity = await getEseActivitySnapshot();
+          const result = await tickMarket(activity);
 
           const channel = await client.channels
   .fetch(eseConfig.newsChannel)
