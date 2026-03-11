@@ -137,6 +137,26 @@ async function ensureSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_ese_history_symbol_ts
     ON ese_history (symbol, ts DESC);
+
+    CREATE TABLE IF NOT EXISTS ese_portfolios (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      shares NUMERIC(18,4) NOT NULL DEFAULT 0,
+      avg_price NUMERIC(18,6) NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (guild_id, user_id, symbol)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ese_portfolios_user
+    ON ese_portfolios (guild_id, user_id);
+
+    CREATE TABLE IF NOT EXISTS ese_trade_cooldowns (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (guild_id, user_id)
+    );
   `);
 
   const countRes = await pool.query(`SELECT COUNT(*)::int AS count FROM ese_companies`);
@@ -266,6 +286,24 @@ async function setMarketStateName(name) {
   );
 }
 
+function normalizeCompanyRow(row) {
+  return {
+    ...row,
+    price: Number(row.price),
+    open: Number(row.open),
+    previousClose: Number(row.previousClose),
+    high: Number(row.high),
+    low: Number(row.low),
+    volatility: Number(row.volatility),
+    dividend: Boolean(row.dividend),
+    sentiment: Number(row.sentiment),
+    volume: Number(row.volume),
+    dayChangePercent: Number(row.dayChangePercent),
+    buyPressure: Number(row.buyPressure),
+    sellPressure: Number(row.sellPressure),
+  };
+}
+
 async function getSnapshot() {
   await ensureSchema();
 
@@ -296,22 +334,39 @@ async function getSnapshot() {
 
   return {
     marketState,
-    companies: companiesRes.rows.map((row) => ({
-      ...row,
-      price: Number(row.price),
-      open: Number(row.open),
-      previousClose: Number(row.previousClose),
-      high: Number(row.high),
-      low: Number(row.low),
-      volatility: Number(row.volatility),
-      dividend: Boolean(row.dividend),
-      sentiment: Number(row.sentiment),
-      volume: Number(row.volume),
-      dayChangePercent: Number(row.dayChangePercent),
-      buyPressure: Number(row.buyPressure),
-      sellPressure: Number(row.sellPressure),
-    })),
+    companies: companiesRes.rows.map(normalizeCompanyRow),
   };
+}
+
+async function getCompany(symbol) {
+  await ensureSchema();
+
+  const res = await pool.query(
+    `
+    SELECT
+      symbol,
+      name,
+      sector,
+      price,
+      open,
+      previous_close AS "previousClose",
+      high,
+      low,
+      volatility,
+      dividend,
+      sentiment,
+      volume,
+      day_change_percent AS "dayChangePercent",
+      buy_pressure AS "buyPressure",
+      sell_pressure AS "sellPressure",
+      last_headline AS "lastHeadline"
+    FROM ese_companies
+    WHERE symbol = $1
+    `,
+    [String(symbol).toUpperCase()]
+  );
+
+  return res.rows?.[0] ? normalizeCompanyRow(res.rows[0]) : null;
 }
 
 async function getCompanyHistory(symbol, points = 48) {
@@ -360,24 +415,7 @@ async function recordTradePressure(symbol, side, amount) {
     [String(symbol).toUpperCase(), safeAmount]
   );
 
-  const row = res.rows?.[0];
-  if (!row) return null;
-
-  return {
-    ...row,
-    price: Number(row.price),
-    open: Number(row.open),
-    previousClose: Number(row.previousClose),
-    high: Number(row.high),
-    low: Number(row.low),
-    volatility: Number(row.volatility),
-    dividend: Boolean(row.dividend),
-    sentiment: Number(row.sentiment),
-    volume: Number(row.volume),
-    dayChangePercent: Number(row.dayChangePercent),
-    buyPressure: Number(row.buyPressure),
-    sellPressure: Number(row.sellPressure),
-  };
+  return res.rows?.[0] ? normalizeCompanyRow(res.rows[0]) : null;
 }
 
 async function tickMarket(activity = {}) {
@@ -418,21 +456,7 @@ async function tickMarket(activity = {}) {
     await client.query("BEGIN");
 
     for (const raw of companiesRes.rows) {
-      const company = {
-        ...raw,
-        price: Number(raw.price),
-        open: Number(raw.open),
-        previousClose: Number(raw.previousClose),
-        high: Number(raw.high),
-        low: Number(raw.low),
-        volatility: Number(raw.volatility),
-        dividend: Boolean(raw.dividend),
-        sentiment: Number(raw.sentiment),
-        volume: Number(raw.volume),
-        dayChangePercent: Number(raw.dayChangePercent),
-        buyPressure: Number(raw.buyPressure),
-        sellPressure: Number(raw.sellPressure),
-      };
+      const company = normalizeCompanyRow(raw);
 
       const marketBias = getMarketBias(marketState);
       const sectorBias = getSectorBias(company, activity);
@@ -548,6 +572,210 @@ async function tickMarket(activity = {}) {
   };
 }
 
+async function getUserHolding(guildId, userId, symbol) {
+  await ensureSchema();
+
+  const res = await pool.query(
+    `
+    SELECT symbol, shares, avg_price AS "avgPrice"
+    FROM ese_portfolios
+    WHERE guild_id = $1 AND user_id = $2 AND symbol = $3
+    `,
+    [String(guildId), String(userId), String(symbol).toUpperCase()]
+  );
+
+  const row = res.rows?.[0];
+  if (!row) return null;
+
+  return {
+    symbol: row.symbol,
+    shares: Number(row.shares),
+    avgPrice: Number(row.avgPrice),
+  };
+}
+
+async function getUserPortfolio(guildId, userId) {
+  await ensureSchema();
+
+  const [holdingsRes, snapshot] = await Promise.all([
+    pool.query(
+      `
+      SELECT symbol, shares, avg_price AS "avgPrice"
+      FROM ese_portfolios
+      WHERE guild_id = $1 AND user_id = $2
+      ORDER BY symbol
+      `,
+      [String(guildId), String(userId)]
+    ),
+    getSnapshot(),
+  ]);
+
+  const companyMap = new Map(snapshot.companies.map((c) => [c.symbol, c]));
+  const holdings = holdingsRes.rows.map((row) => {
+    const company = companyMap.get(row.symbol);
+    const shares = Number(row.shares);
+    const avgPrice = Number(row.avgPrice);
+    const currentPrice = Number(company?.price || 0);
+    const marketValue = Number((shares * currentPrice).toFixed(2));
+    const costBasis = Number((shares * avgPrice).toFixed(2));
+    const unrealized = Number((marketValue - costBasis).toFixed(2));
+
+    return {
+      symbol: row.symbol,
+      shares,
+      avgPrice,
+      currentPrice,
+      marketValue,
+      costBasis,
+      unrealized,
+      companyName: company?.name || row.symbol,
+    };
+  });
+
+  const totalValue = holdings.reduce((a, h) => a + h.marketValue, 0);
+  const totalCost = holdings.reduce((a, h) => a + h.costBasis, 0);
+
+  return {
+    holdings,
+    summary: {
+      totalValue: Number(totalValue.toFixed(2)),
+      totalCost: Number(totalCost.toFixed(2)),
+      unrealized: Number((totalValue - totalCost).toFixed(2)),
+    },
+  };
+}
+
+async function getTradeCooldown(guildId, userId) {
+  await ensureSchema();
+
+  const res = await pool.query(
+    `
+    SELECT expires_at
+    FROM ese_trade_cooldowns
+    WHERE guild_id = $1 AND user_id = $2
+    `,
+    [String(guildId), String(userId)]
+  );
+
+  const row = res.rows?.[0];
+  if (!row?.expires_at) return null;
+
+  const expiresAt = new Date(row.expires_at).getTime();
+  if (expiresAt <= Date.now()) return null;
+
+  return expiresAt;
+}
+
+async function setTradeCooldown(guildId, userId) {
+  await ensureSchema();
+
+  const expiresAt = new Date(Date.now() + getTradeCooldownMs());
+
+  await pool.query(
+    `
+    INSERT INTO ese_trade_cooldowns (guild_id, user_id, expires_at)
+    VALUES ($1, $2, $3)
+    ON CONFLICT (guild_id, user_id)
+    DO UPDATE SET expires_at = EXCLUDED.expires_at
+    `,
+    [String(guildId), String(userId), expiresAt]
+  );
+
+  return expiresAt.getTime();
+}
+
+async function applyBuy(guildId, userId, symbol, shares, executedPrice) {
+  await ensureSchema();
+
+  const safeShares = Number(shares);
+  const safePrice = Number(executedPrice);
+
+  const existing = await getUserHolding(guildId, userId, symbol);
+
+  if (!existing) {
+    await pool.query(
+      `
+      INSERT INTO ese_portfolios (guild_id, user_id, symbol, shares, avg_price)
+      VALUES ($1, $2, $3, $4, $5)
+      `,
+      [
+        String(guildId),
+        String(userId),
+        String(symbol).toUpperCase(),
+        safeShares,
+        safePrice,
+      ]
+    );
+  } else {
+    const totalShares = Number(existing.shares) + safeShares;
+    const totalCost =
+      Number(existing.shares) * Number(existing.avgPrice) +
+      safeShares * safePrice;
+    const avgPrice = totalCost / totalShares;
+
+    await pool.query(
+      `
+      UPDATE ese_portfolios
+      SET shares = $4,
+          avg_price = $5,
+          updated_at = NOW()
+      WHERE guild_id = $1 AND user_id = $2 AND symbol = $3
+      `,
+      [
+        String(guildId),
+        String(userId),
+        String(symbol).toUpperCase(),
+        totalShares,
+        avgPrice,
+      ]
+    );
+  }
+
+  await recordTradePressure(symbol, "buy", safeShares * safePrice);
+  await setTradeCooldown(guildId, userId);
+}
+
+async function applySell(guildId, userId, symbol, shares, executedPrice) {
+  await ensureSchema();
+
+  const safeShares = Number(shares);
+  const holding = await getUserHolding(guildId, userId, symbol);
+
+  if (!holding || Number(holding.shares) < safeShares) {
+    throw new Error("INSUFFICIENT_SHARES");
+  }
+
+  const remaining = Number(holding.shares) - safeShares;
+
+  if (remaining <= 0.0001) {
+    await pool.query(
+      `
+      DELETE FROM ese_portfolios
+      WHERE guild_id = $1 AND user_id = $2 AND symbol = $3
+      `,
+      [String(guildId), String(userId), String(symbol).toUpperCase()]
+    );
+  } else {
+    await pool.query(
+      `
+      UPDATE ese_portfolios
+      SET shares = $4,
+          updated_at = NOW()
+      WHERE guild_id = $1 AND user_id = $2 AND symbol = $3
+      `,
+      [
+        String(guildId),
+        String(userId),
+        String(symbol).toUpperCase(),
+        remaining,
+      ]
+    );
+  }
+
+  await recordTradePressure(symbol, "sell", safeShares * Number(executedPrice));
+  await setTradeCooldown(guildId, userId);
+}
+
 function getTradeCooldownMs() {
   return Number(config.tradeCooldownSeconds || 15) * 1000;
 }
@@ -557,11 +785,18 @@ function getTradeFeeRate() {
 }
 
 module.exports = {
+  ensureSchema,
   getSnapshot,
+  getCompany,
   getTopMovers,
   getCompanyHistory,
   tickMarket,
   recordTradePressure,
   getTradeCooldownMs,
   getTradeFeeRate,
+  getUserHolding,
+  getUserPortfolio,
+  getTradeCooldown,
+  applyBuy,
+  applySell,
 };
