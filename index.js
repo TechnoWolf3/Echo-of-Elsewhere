@@ -12,6 +12,11 @@ const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
 const bankCommand = require("./commands/bank");
 
+// 📈 Echo Stock Exchange
+const { tickMarket } = require("./utils/ese/engine");
+const eseCommand = require("./commands/ese");
+const eseConfig = require("./data/ese/config");
+
 // 📌 Persistent "Bot Features" hub (stays working after restarts)
 const featuresHub = require("./data/features");
 
@@ -682,6 +687,45 @@ client.once(Events.ClientReady, async () => {
           console.error("[achievements] hourly sync failed:", err);
         }
       }, 60 * 60_000);
+
+      // ===========================
+      // Echo Stock Exchange Ticker
+      // ===========================
+      setInterval(async () => {
+        try {
+          const result = tickMarket();
+
+          const significantMoves = result.moves.filter(
+            (m) => Math.abs(Number(m.percent || 0)) >= Number(eseConfig.breakingNewsThreshold || 5)
+          );
+
+          if (!significantMoves.length) return;
+
+          const channel = await client.channels
+            .fetch(eseConfig.newsChannel)
+            .catch(() => null);
+
+          if (!channel) return;
+
+          for (const move of significantMoves.slice(0, 3)) {
+            const direction = move.percent > 0 ? "surged" : "dropped";
+
+            const embed = new EmbedBuilder()
+              .setColor(move.percent > 0 ? 0x2ecc71 : 0xe74c3c)
+              .setTitle("🚨 ESE BREAKING NEWS")
+              .setThumbnail(eseConfig.logo)
+              .setDescription(
+                `**${move.symbol}** has ${direction} **${Number(move.percent).toFixed(2)}%** to **$${Number(move.newPrice).toFixed(2)}**`
+              )
+              .setFooter({ text: "Echo Stock Exchange Live Market Feed" })
+              .setTimestamp();
+
+            await channel.send({ embeds: [embed] }).catch(() => {});
+          }
+        } catch (err) {
+          console.error("[ESE] ticker error:", err);
+        }
+      }, Number(eseConfig.tickIntervalMinutes || 10) * 60 * 1000);
     } catch (e) {
       console.error("[init] DB init failed:", e);
     }
@@ -700,6 +744,32 @@ client.on(Events.InteractionCreate, async (interaction) => {
     (interaction.isButton?.() || interaction.isAnySelectMenu?.()) &&
     interaction.customId?.startsWith("help:")
   ) {
+    return;
+  }
+
+  // 📈 Echo Stock Exchange components
+  try {
+    if (
+      typeof interaction.customId === "string" &&
+      (interaction.customId.startsWith("ese-") || interaction.customId === "ese-view-stock")
+    ) {
+      return await eseCommand.handleComponent(interaction);
+    }
+  } catch (e) {
+    console.error("[ESE] component handler failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({
+          content: "❌ Echo Stock Exchange failed to handle that interaction.",
+          flags: MessageFlags.Ephemeral,
+        });
+      } else {
+        await interaction.reply({
+          content: "❌ Echo Stock Exchange failed to handle that interaction.",
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+    } catch (_) {}
     return;
   }
 
