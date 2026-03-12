@@ -1,5 +1,5 @@
 module.exports = {
-  tickIntervalMinutes: 10,
+  tickIntervalMinutes: 60,
   tradeFee: 0.02,
   tradeCooldownSeconds: 15,
 

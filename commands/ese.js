@@ -416,7 +416,7 @@ module.exports = {
     }
 
     if (interaction.isModalSubmit() && interaction.customId.startsWith("ese-trade-modal:")) {
-      const [, , side, symbol] = interaction.customId.split(":");
+      const [, side, symbol] = interaction.customId.split(":");
       const rawShares = interaction.fields.getTextInputValue("shares");
       const shares = Number(rawShares);
 

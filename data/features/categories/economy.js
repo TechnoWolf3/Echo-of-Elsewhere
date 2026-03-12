@@ -25,7 +25,12 @@ module.exports = {
       name: "💳 Personal Balance System",
       short: "Personal finances!.",
       detail:
+        "**Wallet**\n" +
+        "Each member is awarded their very own wallet when joining.\n" +
+        "All payouts are treated as cash in hand and therefore will be delivered to your wallet directly\n" +
+        "Any cash stored in your wallet leaves your funds at risk, remember to visit your nearest bank branch to deposit your money.\n" +
         "**Personal Bank**\n" +
+        "Acess the Echo Reserve via `/bank`\n\n" +
         "Each member has their own persistent balance that tracks earnings, losses, and spending across all money-based activities.\n\n" +
         "Your funds are securely stored and updated in real time, ensuring that every gamble, job, and purchase is accurately reflected.\n\n" +
         "What you earn is yours, until it's the casinos.",
@@ -68,6 +73,18 @@ module.exports = {
         "- Store Robbery - Rob a servo maybe a supermarket? Plan your entry and exit. Success leads to high payout.\n" +
         "- Heist - Wether standard or major, were going to the bank. Plan every move, watch your Heat, higher heat = higher chance of failure.\n" +
         "Whether you prefer steady income or high-risk opportunities, every earning method feeds into the wider economic structure.",
+    },
+    {
+      id: "echostock_Exchange",
+      name: "📈 Echo Stock Exchange",
+      short: "Buy & Sell Stocks - Profit!",
+      detail:
+        "**How the market works.**\n" +
+        "Buying stocks is a long term investment, play it right and win big.\n" +
+        "The latest stock news can be found in <#1481134858930753719>.\n\n" +
+        "- Visit the stock market using '/ese'.\n" +
+        "- View the stocks and make educated decisions, wait them out!.\n" +
+        "The market fluctates based on its own findings and interaction across the server, your decisions and action WILL cause fluctuation!",
     },
     {
       id: "riskandloss_mechanics",
