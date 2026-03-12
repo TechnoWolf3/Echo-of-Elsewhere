@@ -1,4 +1,6 @@
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
+const { pool } = require("../../../utils/db");
+
 
 const RESET_ROLE_ID = "741251069002121236";
 
@@ -29,14 +31,6 @@ module.exports = {
 
     const target = interaction.options.getUser("user");
     const guildId = interaction.guildId;
-    const db = interaction.client.db;
-
-    if (!db) {
-      return interaction.reply({
-        content: "❌ Database not configured.",
-        flags: MessageFlags.Ephemeral,
-      });
-    }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -44,35 +38,35 @@ module.exports = {
 
     try {
       // 1️⃣ Delete earned achievements
-      const achRes = await db.query(
+      const achRes = await pool.query(
         `DELETE FROM public.user_achievements
          WHERE guild_id = $1 AND user_id = $2`,
         [guildId, cleanUserId]
       );
 
       // ✅ NEW: wipe progress counters so progress bars reset too
-      await db.query(
+      await pool.query(
         `DELETE FROM public.user_achievement_counters
          WHERE guild_id = $1 AND user_id = $2`,
         [guildId, cleanUserId]
       );
 
       // 2️⃣ Reset blackjack progress (prevents instant re-unlock)
-      await db.query(
+      await pool.query(
         `DELETE FROM public.blackjack_stats
          WHERE guild_id = $1 AND user_id = $2`,
         [guildId, cleanUserId]
       );
 
       // Reset message progress (needed for msg_* achievements)
-      await db.query(
+      await pool.query(
         `DELETE FROM public.message_stats
          WHERE guild_id = $1 AND user_id = $2`,
         [guildId, cleanUserId]
       );
 
       // (Optional) If you add roulette_stats later, you can also clear it here safely:
-      // await db.query(
+      // await pool.query(
       //   `DELETE FROM public.roulette_stats WHERE guild_id = $1 AND user_id = $2`,
       //   [guildId, cleanUserId]
       // );
