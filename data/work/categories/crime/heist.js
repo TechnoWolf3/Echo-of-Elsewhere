@@ -10,22 +10,12 @@ const path = require("path");
 const { pool } = require(path.join(process.cwd(), "utils", "db"));
 const { setJail } = require(path.join(process.cwd(), "utils", "jail"));
 const { tryDebitUser, addServerBank } = require(path.join(process.cwd(), "utils", "economy"));
-const { payoutWithEffects } = require(path.join(process.cwd(), "utils", "effectSystem"));
+const { creditUserWithEffects } = require(path.join(process.cwd(), "utils", "effectSystem"));
 const scenarios = require("./heist.scenarios");
 
 // ============================================================
 // CONFIG (all tuning lives here)
 // ============================================================
-
-const ACTIVITY_EFFECTS = {
-  key: "heist",
-  name: "Heist",
-  effectsApply: true,
-  canAwardEffects: true,
-  blockedBlessings: [],
-  blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
-};
 
 const GLOBAL_LOCKOUT_KEY = "crime_global";
 const GLOBAL_LOCKOUT_MINUTES = 10;
@@ -182,14 +172,14 @@ async function ensureUserRow(guildId, userId) {
 }
 
 async function addUserWallet(guildId, userId, amount, type = "crime_payout", meta = {}) {
-  return payoutWithEffects({
+  await creditUserWithEffects({
     guildId,
     userId,
-    baseAmount: amount,
+    amount,
     type,
     meta: { ...meta, destination: "wallet" },
-    payoutSource: "mint",
-    activity: ACTIVITY_EFFECTS,
+    activityEffects: ACTIVITY_EFFECTS,
+    awardSource: "crime_heist",
   });
 }
 
@@ -677,3 +667,5 @@ module.exports = function startHeist(interaction, context = {}) {
     await showStep();
   });
 };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

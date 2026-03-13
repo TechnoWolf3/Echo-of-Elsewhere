@@ -1,338 +1,326 @@
 const { pool } = require('./db');
-const economy = require('./economy');
-const defs = require('../data/effects/definitions');
+const definitions = require('../data/effects/definitions');
 
-const SYSTEM = defs.system || {};
+let schemaReady = false;
 
-function getEffectDefinition(effectId) {
-  return defs.effects?.[String(effectId)] || null;
-}
+const DEFAULT_ACTIVITY_EFFECTS = Object.freeze({
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: {
+    nothingWeight: 100,
+    blessingWeight: 0,
+    curseWeight: 0,
+    blessingWeights: {},
+    curseWeights: {},
+  },
+});
 
-function normalizeActivityConfig(activity = {}) {
-  return {
-    key: String(activity.key || activity.id || activity.name || 'unknown_activity'),
-    name: String(activity.name || activity.title || activity.key || activity.id || 'Unknown Activity'),
-    effectsApply: activity.effectsApply !== false,
-    canAwardEffects: activity.canAwardEffects !== false,
-    blockedBlessings: Array.isArray(activity.blockedBlessings) ? activity.blockedBlessings.map(String) : [],
-    blockedCurses: Array.isArray(activity.blockedCurses) ? activity.blockedCurses.map(String) : [],
-    effectAwardPool: activity.effectAwardPool || null,
-  };
-}
-
-async function ensureTables() {
+async function ensureSchema() {
+  if (schemaReady) return;
   await pool.query(`
-    CREATE TABLE IF NOT EXISTS echo_status_effects (
+    CREATE TABLE IF NOT EXISTS user_effects (
       guild_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
       effect_id TEXT NOT NULL,
       effect_type TEXT NOT NULL,
       target TEXT NOT NULL DEFAULT 'money_reward',
       modifier_mode TEXT NOT NULL,
-      modifier_value BIGINT NOT NULL,
-      uses_remaining INTEGER NULL,
+      modifier_value INTEGER NOT NULL,
       expires_at TIMESTAMPTZ NULL,
-      source_key TEXT NULL,
-      source_type TEXT NULL,
-      award_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      uses_remaining INTEGER NULL,
+      source TEXT NULL,
+      awarded_meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (guild_id, user_id)
-    );
-    CREATE INDEX IF NOT EXISTS echo_status_effects_exp_idx
-      ON echo_status_effects (expires_at);
+    )
   `);
+  schemaReady = true;
 }
 
-function buildExpiry(minutes) {
-  const mins = Number(minutes);
-  if (!Number.isFinite(mins) || mins <= 0) return null;
-  return new Date(Date.now() + mins * 60_000);
-}
-
-async function clearActiveEffect(guildId, userId) {
-  await ensureTables();
-  await pool.query(
-    `DELETE FROM echo_status_effects WHERE guild_id=$1 AND user_id=$2`,
-    [String(guildId), String(userId)]
-  );
-}
-
-function hydrateRow(row) {
+function normalizeActivityEffects(input) {
+  const cfg = input || {};
+  const poolCfg = cfg.effectAwardPool || {};
   return {
-    effectId: String(row.effect_id),
-    effectType: String(row.effect_type),
-    target: String(row.target || 'money_reward'),
-    modifierMode: String(row.modifier_mode),
-    modifierValue: Number(row.modifier_value || 0),
-    usesRemaining: row.uses_remaining == null ? null : Number(row.uses_remaining),
-    expiresAt: row.expires_at ? new Date(row.expires_at) : null,
-    sourceKey: row.source_key ? String(row.source_key) : null,
-    sourceType: row.source_type ? String(row.source_type) : null,
-    awardMeta: row.award_meta || {},
-    createdAt: row.created_at ? new Date(row.created_at) : null,
-    updatedAt: row.updated_at ? new Date(row.updated_at) : null,
-    definition: getEffectDefinition(row.effect_id),
+    effectsApply: cfg.effectsApply !== false,
+    canAwardEffects: cfg.canAwardEffects === true,
+    blockedBlessings: Array.isArray(cfg.blockedBlessings) ? cfg.blockedBlessings.map(String) : [],
+    blockedCurses: Array.isArray(cfg.blockedCurses) ? cfg.blockedCurses.map(String) : [],
+    effectAwardPool: {
+      nothingWeight: Number(poolCfg.nothingWeight ?? DEFAULT_ACTIVITY_EFFECTS.effectAwardPool.nothingWeight) || 0,
+      blessingWeight: Number(poolCfg.blessingWeight ?? DEFAULT_ACTIVITY_EFFECTS.effectAwardPool.blessingWeight) || 0,
+      curseWeight: Number(poolCfg.curseWeight ?? DEFAULT_ACTIVITY_EFFECTS.effectAwardPool.curseWeight) || 0,
+      blessingWeights: poolCfg.blessingWeights && typeof poolCfg.blessingWeights === 'object' ? poolCfg.blessingWeights : {},
+      curseWeights: poolCfg.curseWeights && typeof poolCfg.curseWeights === 'object' ? poolCfg.curseWeights : {},
+    },
   };
 }
 
-function isExpired(effect) {
-  if (!effect) return true;
-  if (effect.expiresAt && effect.expiresAt.getTime() <= Date.now()) return true;
-  if (effect.usesRemaining != null && effect.usesRemaining <= 0) return true;
-  return false;
+function getDefinition(effectId) {
+  return definitions[String(effectId)] || null;
 }
 
 async function getActiveEffect(guildId, userId, { clearExpired = true } = {}) {
-  await ensureTables();
+  await ensureSchema();
   const res = await pool.query(
-    `SELECT * FROM echo_status_effects WHERE guild_id=$1 AND user_id=$2 LIMIT 1`,
+    `SELECT * FROM user_effects WHERE guild_id=$1 AND user_id=$2 LIMIT 1`,
     [String(guildId), String(userId)]
   );
-  const row = res.rows?.[0];
+  const row = res.rows?.[0] || null;
   if (!row) return null;
 
-  const effect = hydrateRow(row);
-  if (!effect.definition || effect.definition.enabled === false || isExpired(effect)) {
-    if (clearExpired) await clearActiveEffect(guildId, userId);
-    return null;
-  }
-  return effect;
-}
-
-function normalizeAwardFromDefinition(definition, award = {}) {
-  const modifierMode = String(award.modifierMode || definition.defaultModifierMode || 'percent');
-  if (!definition.allowedModifierModes?.includes(modifierMode)) {
-    throw new Error(`Modifier mode ${modifierMode} is not allowed for ${definition.id}`);
-  }
-
-  const modifierValue = Number(award.modifierValue ?? definition.defaultModifierValue ?? 0);
-  const requestedUses = award.usesRemaining ?? award.uses ?? definition.defaultDuration?.uses ?? null;
-  const requestedMinutes = award.minutes ?? definition.defaultDuration?.minutes ?? null;
-
-  const usesRemaining = definition.allowUseDuration
-    ? (requestedUses == null ? null : Math.max(0, Math.floor(Number(requestedUses))))
-    : null;
-
-  const expiresAt = definition.allowTimeDuration ? buildExpiry(requestedMinutes) : null;
-
-  return { modifierMode, modifierValue, usesRemaining, expiresAt };
-}
-
-async function awardEffect(guildId, userId, effectId, award = {}) {
-  await ensureTables();
-  if (!SYSTEM.enabled) return { ok: false, status: 'system_disabled' };
-
-  const definition = getEffectDefinition(effectId);
-  if (!definition || definition.enabled === false) return { ok: false, status: 'effect_disabled' };
-
-  const payload = normalizeAwardFromDefinition(definition, award);
-  const active = await getActiveEffect(guildId, userId, { clearExpired: true });
-
-  if (!active) {
-    await pool.query(
-      `INSERT INTO echo_status_effects (guild_id, user_id, effect_id, effect_type, target, modifier_mode, modifier_value, uses_remaining, expires_at, source_key, source_type, award_meta, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,NOW())
-       ON CONFLICT (guild_id, user_id)
-       DO UPDATE SET effect_id=EXCLUDED.effect_id, effect_type=EXCLUDED.effect_type, target=EXCLUDED.target, modifier_mode=EXCLUDED.modifier_mode, modifier_value=EXCLUDED.modifier_value, uses_remaining=EXCLUDED.uses_remaining, expires_at=EXCLUDED.expires_at, source_key=EXCLUDED.source_key, source_type=EXCLUDED.source_type, award_meta=EXCLUDED.award_meta, updated_at=NOW()`,
-      [
-        String(guildId),
-        String(userId),
-        definition.id,
-        definition.type,
-        definition.target || 'money_reward',
-        payload.modifierMode,
-        payload.modifierValue,
-        payload.usesRemaining,
-        payload.expiresAt,
-        award.sourceKey || null,
-        award.sourceType || null,
-        JSON.stringify(award.meta || {}),
-      ]
-    );
-    return { ok: true, status: 'awarded', effectId: definition.id };
-  }
-
-  if (active.effectId === definition.id && active.effectType === 'blessing') {
-    await pool.query(
-      `UPDATE echo_status_effects
-       SET modifier_mode=$3, modifier_value=$4, uses_remaining=$5, expires_at=$6, source_key=$7, source_type=$8, award_meta=$9::jsonb, updated_at=NOW()
-       WHERE guild_id=$1 AND user_id=$2`,
-      [
-        String(guildId),
-        String(userId),
-        payload.modifierMode,
-        payload.modifierValue,
-        payload.usesRemaining,
-        payload.expiresAt,
-        award.sourceKey || null,
-        award.sourceType || null,
-        JSON.stringify(award.meta || {}),
-      ]
-    );
-    return { ok: true, status: 'refreshed', effectId: definition.id };
-  }
-
-  if (active.effectId === definition.id && active.effectType === 'curse') {
-    return { ok: false, status: 'rejected_same_curse', activeEffectId: active.effectId };
-  }
-
-  return { ok: false, status: 'rejected_existing_other', activeEffectId: active.effectId };
-}
-
-function calculateAdjustment(baseAmount, effect) {
-  const base = Math.max(0, Math.floor(Number(baseAmount || 0)));
-  const value = Number(effect?.modifierValue || 0);
-  if (!effect || base <= 0 || !Number.isFinite(value)) return 0;
-  if (effect.modifierMode === 'flat') return Math.trunc(value);
-  return Math.trunc(base * (value / 100));
-}
-
-async function consumeUse(guildId, userId) {
-  await ensureTables();
-  const res = await pool.query(
-    `UPDATE echo_status_effects
-     SET uses_remaining = CASE
-       WHEN uses_remaining IS NULL THEN NULL
-       ELSE GREATEST(uses_remaining - 1, 0)
-     END,
-     updated_at = NOW()
-     WHERE guild_id=$1 AND user_id=$2
-     RETURNING uses_remaining, expires_at`,
-    [String(guildId), String(userId)]
-  );
-  const row = res.rows?.[0];
-  if (!row) return null;
-  if ((row.uses_remaining != null && Number(row.uses_remaining) <= 0) || (row.expires_at && new Date(row.expires_at).getTime() <= Date.now())) {
+  const expiredByTime = row.expires_at ? new Date(row.expires_at).getTime() <= Date.now() : false;
+  const expiredByUses = row.uses_remaining !== null && Number(row.uses_remaining) <= 0;
+  if ((expiredByTime || expiredByUses) && clearExpired) {
     await clearActiveEffect(guildId, userId);
+    return null;
   }
   return row;
 }
 
-async function performPrimaryPayout({ payoutSource, guildId, userId, amount, type, meta }) {
-  const amt = Math.max(0, Math.floor(Number(amount || 0)));
-  if (amt <= 0) return { ok: true, skipped: true, amount: 0 };
-  if (payoutSource === 'bank') {
-    return economy.bankToUserIfEnough(guildId, userId, amt, type, meta);
-  }
-  return economy.creditUser(guildId, userId, amt, type, meta);
+async function clearActiveEffect(guildId, userId) {
+  await ensureSchema();
+  await pool.query(`DELETE FROM user_effects WHERE guild_id=$1 AND user_id=$2`, [String(guildId), String(userId)]);
 }
 
-async function payoutWithEffects({ guildId, userId, baseAmount, type, meta = {}, payoutSource = 'mint', activity = {} }) {
-  const base = Math.max(0, Math.floor(Number(baseAmount || 0)));
-  const activityCfg = normalizeActivityConfig(activity);
+function buildAwardInstance(def, award = {}) {
+  const useTime = award.useTime === true || (!!award.durationMinutes && award.useTime !== false);
+  const useUses = award.useUses === true || (Number.isFinite(Number(award.uses)) && award.useUses !== false);
+  const durationMinutes = useTime
+    ? Number(award.durationMinutes ?? def.defaultDurationMinutes ?? 0)
+    : null;
+  const uses = useUses
+    ? Number(award.uses ?? def.defaultUses ?? 0)
+    : null;
 
-  let activeEffect = null;
-  let adjustment = 0;
-  let finalAmount = base;
+  return {
+    effectId: def.id,
+    effectType: def.type,
+    target: def.target,
+    modifierMode: String(award.modifierMode || def.modifierMode),
+    modifierValue: Number(award.value ?? def.defaultValue ?? 0),
+    expiresAt: useTime && durationMinutes > 0 ? new Date(Date.now() + durationMinutes * 60_000) : null,
+    usesRemaining: useUses && uses > 0 ? uses : null,
+    source: award.source ? String(award.source) : null,
+    awardedMeta: award.meta && typeof award.meta === 'object' ? award.meta : {},
+  };
+}
 
-  if (SYSTEM.enabled && activityCfg.effectsApply && base > 0) {
-    activeEffect = await getActiveEffect(guildId, userId, { clearExpired: true });
-    if (activeEffect && activeEffect.target === 'money_reward') {
-      adjustment = calculateAdjustment(base, activeEffect);
-      finalAmount = Math.max(Number(SYSTEM.minPayoutFloor || 0), base + adjustment);
+async function awardEffect(guildId, userId, effectId, award = {}) {
+  await ensureSchema();
+  const def = getDefinition(effectId);
+  if (!def || def.enabled === false) return { ok: false, status: 'rejected_invalid' };
+
+  const current = await getActiveEffect(guildId, userId);
+  const instance = buildAwardInstance(def, award);
+
+  if (!current) {
+    await pool.query(
+      `INSERT INTO user_effects (
+        guild_id, user_id, effect_id, effect_type, target, modifier_mode, modifier_value,
+        expires_at, uses_remaining, source, awarded_meta, granted_at, updated_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,NOW(),NOW())
+      ON CONFLICT (guild_id, user_id) DO UPDATE SET
+        effect_id=EXCLUDED.effect_id,
+        effect_type=EXCLUDED.effect_type,
+        target=EXCLUDED.target,
+        modifier_mode=EXCLUDED.modifier_mode,
+        modifier_value=EXCLUDED.modifier_value,
+        expires_at=EXCLUDED.expires_at,
+        uses_remaining=EXCLUDED.uses_remaining,
+        source=EXCLUDED.source,
+        awarded_meta=EXCLUDED.awarded_meta,
+        granted_at=NOW(),
+        updated_at=NOW()`,
+      [String(guildId), String(userId), instance.effectId, instance.effectType, instance.target, instance.modifierMode,
+        instance.modifierValue, instance.expiresAt, instance.usesRemaining, instance.source, JSON.stringify(instance.awardedMeta || {})]
+    );
+    return { ok: true, status: 'awarded', effectId: instance.effectId };
+  }
+
+  if (String(current.effect_id) === String(instance.effectId)) {
+    if (String(current.effect_type) === 'curse') {
+      return { ok: false, status: 'rejected_same_curse', effectId: instance.effectId };
+    }
+    await pool.query(
+      `UPDATE user_effects
+       SET effect_type=$3, target=$4, modifier_mode=$5, modifier_value=$6,
+           expires_at=$7, uses_remaining=$8, source=$9, awarded_meta=$10::jsonb,
+           granted_at=NOW(), updated_at=NOW()
+       WHERE guild_id=$1 AND user_id=$2`,
+      [String(guildId), String(userId), instance.effectType, instance.target, instance.modifierMode,
+        instance.modifierValue, instance.expiresAt, instance.usesRemaining, instance.source, JSON.stringify(instance.awardedMeta || {})]
+    );
+    return { ok: true, status: 'refreshed', effectId: instance.effectId };
+  }
+
+  return { ok: false, status: 'rejected_existing_other', activeEffectId: String(current.effect_id) };
+}
+
+function pickWeighted(entries) {
+  const valid = entries.filter((e) => Number(e.weight) > 0);
+  if (!valid.length) return null;
+  const total = valid.reduce((sum, e) => sum + Number(e.weight), 0);
+  let roll = Math.random() * total;
+  for (const entry of valid) {
+    roll -= Number(entry.weight);
+    if (roll <= 0) return entry;
+  }
+  return valid[valid.length - 1];
+}
+
+function listAllowedEffects(kind, activityEffects) {
+  const cfg = normalizeActivityEffects(activityEffects);
+  const blocklist = kind === 'blessing' ? cfg.blockedBlessings : cfg.blockedCurses;
+  const weightsMap = kind === 'blessing' ? cfg.effectAwardPool.blessingWeights : cfg.effectAwardPool.curseWeights;
+
+  return Object.values(definitions)
+    .filter((def) => def.enabled !== false && def.type === kind)
+    .filter((def) => !blocklist.includes(def.id))
+    .map((def) => ({
+      id: def.id,
+      weight: Number(weightsMap[def.id] ?? def.defaultAwardWeight ?? 1),
+    }))
+    .filter((x) => x.weight > 0);
+}
+
+function pickWeightedEffect(activityEffects) {
+  const cfg = normalizeActivityEffects(activityEffects);
+  const category = pickWeighted([
+    { kind: 'none', weight: cfg.effectAwardPool.nothingWeight },
+    { kind: 'blessing', weight: cfg.effectAwardPool.blessingWeight },
+    { kind: 'curse', weight: cfg.effectAwardPool.curseWeight },
+  ]);
+  if (!category || category.kind === 'none') return null;
+  const pool = listAllowedEffects(category.kind, cfg);
+  const chosen = pickWeighted(pool);
+  return chosen ? chosen.id : null;
+}
+
+async function maybeAwardEffectFromActivity({ guildId, userId, activityEffects, source, award = {} }) {
+  const cfg = normalizeActivityEffects(activityEffects);
+  if (!cfg.canAwardEffects) return { ok: true, status: 'disabled' };
+  const effectId = pickWeightedEffect(cfg);
+  if (!effectId) return { ok: true, status: 'none' };
+  return awardEffect(guildId, userId, effectId, { ...award, source });
+}
+
+async function previewMoneyEffect({ guildId, userId, activityEffects, amount }) {
+  const baseAmount = Math.max(0, Math.floor(Number(amount || 0)));
+  const cfg = normalizeActivityEffects(activityEffects);
+  if (!cfg.effectsApply || baseAmount <= 0) {
+    return { baseAmount, finalAmount: baseAmount, modifierAmount: 0, activeEffect: null };
+  }
+
+  const active = await getActiveEffect(guildId, userId);
+  if (!active) {
+    return { baseAmount, finalAmount: baseAmount, modifierAmount: 0, activeEffect: null };
+  }
+  if (String(active.target) !== 'money_reward') {
+    return { baseAmount, finalAmount: baseAmount, modifierAmount: 0, activeEffect: null };
+  }
+
+  const mode = String(active.modifier_mode || 'percent');
+  const value = Number(active.modifier_value || 0);
+  let modifierAmount = 0;
+  if (mode === 'flat') modifierAmount = Math.trunc(value);
+  else modifierAmount = Math.floor(baseAmount * (value / 100));
+
+  const finalAmount = Math.max(0, baseAmount + modifierAmount);
+  return {
+    baseAmount,
+    finalAmount,
+    modifierAmount,
+    activeEffect: active,
+    effectId: String(active.effect_id),
+    effectType: String(active.effect_type),
+    modifierMode: mode,
+    modifierValue: value,
+  };
+}
+
+async function consumeEffectUse(guildId, userId, activeEffect) {
+  if (!activeEffect) return;
+  await ensureSchema();
+  const current = await getActiveEffect(guildId, userId);
+  if (!current || String(current.effect_id) !== String(activeEffect.effect_id)) return;
+
+  let nextUses = current.uses_remaining === null ? null : Number(current.uses_remaining) - 1;
+  const expiredByTime = current.expires_at ? new Date(current.expires_at).getTime() <= Date.now() : false;
+  const expiredByUses = nextUses !== null && nextUses <= 0;
+
+  if (expiredByTime || expiredByUses) {
+    await clearActiveEffect(guildId, userId);
+    return;
+  }
+
+  if (current.uses_remaining !== null) {
+    await pool.query(
+      `UPDATE user_effects SET uses_remaining=$3, updated_at=NOW() WHERE guild_id=$1 AND user_id=$2`,
+      [String(guildId), String(userId), nextUses]
+    );
+  }
+}
+
+async function creditUserWithEffects({ guildId, userId, amount, type, meta = {}, activityEffects, awardSource }) {
+  const economy = require('./economy');
+  const preview = await previewMoneyEffect({ guildId, userId, activityEffects, amount });
+
+  if (preview.finalAmount > 0) {
+    const baseToCredit = preview.modifierAmount > 0 ? preview.baseAmount : preview.finalAmount;
+    if (baseToCredit > 0) {
+      await economy.creditUser(guildId, userId, baseToCredit, type, { ...meta, effectApplied: !!preview.activeEffect, effectId: preview.effectId || null, effectAdjustment: preview.modifierAmount || 0 });
+    }
+    if (preview.modifierAmount > 0) {
+      await economy.creditUser(guildId, userId, preview.modifierAmount, `${type}_effect_bonus`, { ...meta, effectBonusMinted: true, effectId: preview.effectId || null });
     }
   }
 
-  const primaryAmount = adjustment >= 0 ? base : finalAmount;
-  const bonusAmount = adjustment > 0 ? adjustment : 0;
-
-  const primaryMeta = {
-    ...meta,
-    activityKey: activityCfg.key,
-    activityName: activityCfg.name,
-    effectApplied: Boolean(activeEffect),
-    effectId: activeEffect?.effectId || null,
-    effectType: activeEffect?.effectType || null,
-    effectModifierMode: activeEffect?.modifierMode || null,
-    effectModifierValue: activeEffect?.modifierValue ?? null,
-    effectBaseAmount: base,
-    effectAdjustment: adjustment,
-    effectFinalAmount: finalAmount,
-  };
-
-  const primary = await performPrimaryPayout({ payoutSource, guildId, userId, amount: primaryAmount, type, meta: primaryMeta });
-  if (!primary?.ok) {
-    return { ok: false, baseAmount: base, finalAmount: 0, adjustment, bonusAmount: 0, effect: activeEffect, activity: activityCfg, primary };
+  if (preview.activeEffect) {
+    await consumeEffectUse(guildId, userId, preview.activeEffect);
   }
 
-  if (bonusAmount > 0) {
-    await economy.creditUser(guildId, userId, bonusAmount, `${type}_effect_bonus`, {
-      ...primaryMeta,
-      mintedByEffect: true,
-      bonusOnly: true,
-      balance_type: 'wallet',
-    });
-  }
-
-  if (activeEffect) {
-    await consumeUse(guildId, userId);
-  }
-
-  return {
-    ok: true,
-    baseAmount: base,
-    finalAmount,
-    adjustment,
-    bonusAmount,
-    effect: activeEffect,
-    activity: activityCfg,
-    primary,
-  };
+  const awardResult = await maybeAwardEffectFromActivity({ guildId, userId, activityEffects, source: awardSource || type });
+  return { ok: true, ...preview, awardResult };
 }
 
-function effectAllowedForActivity(effectId, activity = {}) {
-  const def = getEffectDefinition(effectId);
-  if (!def) return false;
-  const cfg = normalizeActivityConfig(activity);
-  if (!cfg.canAwardEffects) return false;
-  if (def.type === 'blessing' && cfg.blockedBlessings.includes(def.id)) return false;
-  if (def.type === 'curse' && cfg.blockedCurses.includes(def.id)) return false;
-  return true;
-}
+async function bankPayoutWithEffects({ guildId, userId, amount, type, meta = {}, activityEffects, awardSource }) {
+  const economy = require('./economy');
+  const preview = await previewMoneyEffect({ guildId, userId, activityEffects, amount });
+  const bankAmount = preview.modifierAmount > 0 ? preview.baseAmount : preview.finalAmount;
+  let payoutResult = { ok: true };
 
-function pickWeightedEffect(activity = {}) {
-  const cfg = normalizeActivityConfig(activity);
-  const pool = cfg.effectAwardPool || {};
-  const nothingWeight = Math.max(0, Number(pool.nothingWeight ?? 0));
-  const blessingWeight = Math.max(0, Number(pool.blessingWeight ?? 0));
-  const curseWeight = Math.max(0, Number(pool.curseWeight ?? 0));
-  const totalBucket = nothingWeight + blessingWeight + curseWeight;
-  if (!cfg.canAwardEffects || totalBucket <= 0) return null;
-
-  let roll = Math.random() * totalBucket;
-  let bucket = 'nothing';
-  if ((roll -= nothingWeight) < 0) bucket = 'nothing';
-  else if ((roll -= blessingWeight) < 0) bucket = 'blessing';
-  else bucket = 'curse';
-  if (bucket === 'nothing') return null;
-
-  const overrides = pool.weightOverrides || {};
-  const candidates = Object.values(defs.effects || {})
-    .filter((def) => def.enabled !== false)
-    .filter((def) => def.type === bucket)
-    .filter((def) => effectAllowedForActivity(def.id, cfg))
-    .map((def) => ({ def, weight: Math.max(0, Number(overrides[def.id] ?? def.defaultWeight ?? 1)) }))
-    .filter((row) => row.weight > 0);
-
-  if (!candidates.length) return null;
-  const total = candidates.reduce((sum, row) => sum + row.weight, 0);
-  let pick = Math.random() * total;
-  for (const row of candidates) {
-    pick -= row.weight;
-    if (pick <= 0) return row.def;
+  if (bankAmount > 0) {
+    payoutResult = await economy.bankToUserIfEnough(guildId, userId, bankAmount, type, { ...meta, effectApplied: !!preview.activeEffect, effectId: preview.effectId || null, effectAdjustment: preview.modifierAmount || 0 });
+    if (!payoutResult?.ok) {
+      return { ok: false, ...preview, payoutResult, awardResult: { ok: true, status: 'skipped_payout_failed' } };
+    }
   }
-  return candidates[candidates.length - 1]?.def || null;
+
+  if (preview.modifierAmount > 0) {
+    await economy.creditUser(guildId, userId, preview.modifierAmount, `${type}_effect_bonus`, { ...meta, effectBonusMinted: true, effectId: preview.effectId || null });
+  }
+
+  if (preview.activeEffect) {
+    await consumeEffectUse(guildId, userId, preview.activeEffect);
+  }
+
+  const awardResult = await maybeAwardEffectFromActivity({ guildId, userId, activityEffects, source: awardSource || type });
+  return { ok: true, ...preview, payoutResult, awardResult };
 }
 
 module.exports = {
-  ensureTables,
-  getEffectDefinition,
+  DEFAULT_ACTIVITY_EFFECTS,
+  normalizeActivityEffects,
   getActiveEffect,
   clearActiveEffect,
   awardEffect,
-  payoutWithEffects,
-  normalizeActivityConfig,
-  effectAllowedForActivity,
   pickWeightedEffect,
+  maybeAwardEffectFromActivity,
+  previewMoneyEffect,
+  consumeEffectUse,
+  creditUserWithEffects,
+  bankPayoutWithEffects,
 };

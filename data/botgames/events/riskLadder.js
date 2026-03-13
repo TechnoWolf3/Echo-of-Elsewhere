@@ -125,5 +125,19 @@ module.exports = {
 
     // Unknown action
     return interaction.reply({ content: "Unknown action.", ephemeral: true });
-  }
+  },
+
+  activityEffects: {
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: {
+      nothingWeight: 100,
+      blessingWeight: 0,
+      curseWeight: 0,
+      blessingWeights: {},
+      curseWeights: {},
+    },
+  },
 };

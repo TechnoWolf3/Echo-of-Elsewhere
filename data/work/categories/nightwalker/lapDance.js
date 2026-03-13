@@ -1,14 +1,5 @@
 // data/nightwalker/lapDance.js
 module.exports = {
-  effectConfig: {
-    key: "lapDance",
-    name: "Lap Dance",
-    effectsApply: true,
-    canAwardEffects: true,
-    blockedBlessings: [],
-    blockedCurses: [],
-    effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
-  },
   key: "lapDance",
   title: "💃 Lap Dance",
   rounds: 5,
@@ -269,4 +260,18 @@ module.exports = {
   ],
 },
   ],
+
+  activityEffects: {
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: {
+      nothingWeight: 100,
+      blessingWeight: 0,
+      curseWeight: 0,
+      blessingWeights: {},
+      curseWeights: {},
+    },
+  },
 };

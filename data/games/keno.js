@@ -29,22 +29,20 @@ const { setActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const economy = require("../../utils/economy");
-const { payoutWithEffects } = require("../../utils/effectSystem");
+const { creditUserWithEffects } = require("../../utils/effectSystem");
+
+const ACTIVITY_EFFECTS = {
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, blessingWeights: {}, curseWeights: {} },
+};
 
 const TABLE_IDLE_MS = 15 * 60 * 1000;
 const BETTING_MS = 30 * 1000;
 const REVEAL_EVERY_MS = 2 * 1000;
 const DRAW_COUNT = 20;
-
-const ACTIVITY_EFFECTS = {
-  key: "keno",
-  name: "Keno",
-  effectsApply: true,
-  canAwardEffects: true,
-  blockedBlessings: [],
-  blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
-};
 
 const tablesById = new Map(); // tableId -> session
 
@@ -463,10 +461,10 @@ async function processResults(session) {
         const mult = bet.choice === "draw" ? 4 : 2;
         const payout = Math.floor(bet.amount * mult);
         const profit = payout - bet.amount;
-        await payoutWithEffects({
+        await creditUserWithEffects({
           guildId: session.guildId,
           userId,
-          baseAmount: payout,
+          amount: payout,
           type: "keno_win",
           meta: {
             game: "keno",
@@ -475,8 +473,8 @@ async function processResults(session) {
             outcome,
             round: session.round,
           },
-          payoutSource: "mint",
-          activity: ACTIVITY_EFFECTS,
+          activityEffects: ACTIVITY_EFFECTS,
+          awardSource: "keno",
         });
         winners.push({ userId, label: `${bet.choice.toUpperCase()} (x${mult})`, profit });
       }
@@ -487,10 +485,10 @@ async function processResults(session) {
       if (mult > 0) {
         const payout = Math.floor(bet.amount * mult);
         const profit = payout - bet.amount;
-        await payoutWithEffects({
+        await creditUserWithEffects({
           guildId: session.guildId,
           userId,
-          baseAmount: payout,
+          amount: payout,
           type: "keno_win",
           meta: {
             game: "keno",
@@ -500,8 +498,8 @@ async function processResults(session) {
             mult,
             round: session.round,
           },
-          payoutSource: "mint",
-          activity: ACTIVITY_EFFECTS,
+          activityEffects: ACTIVITY_EFFECTS,
+          awardSource: "keno",
         });
         winners.push({ userId, label: `${hits}/${picks} (x${mult})`, profit });
       }
@@ -859,3 +857,5 @@ module.exports = {
   startFromHub,
   handleInteraction,
 };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

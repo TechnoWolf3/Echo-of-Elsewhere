@@ -16,19 +16,24 @@ const {
 const { canGrind, tickFatigue, fatigueBar, MAX_FATIGUE_MS, applyGrindLock } = require("../../../../utils/grindFatigue");
 const { money, mintUser, setJobCooldownSeconds, postUltraToPlayground, ultraEmbed } = require("./_shared");
 
+const JOB_COOLDOWN_SECONDS = 45;
+const SHIFT_TTL_MS = 5 * 60_000;
+const OVERTIME_HARDCAP_MULT = 1.5;
+
 const ACTIVITY_EFFECTS = {
-  key: "fishing",
-  name: "fishing",
   effectsApply: true,
   canAwardEffects: true,
   blockedBlessings: [],
   blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  effectAwardPool: {
+    nothingWeight: 100,
+    blessingWeight: 0,
+    curseWeight: 0,
+    blessingWeights: {},
+    curseWeights: {},
+  },
 };
 
-const JOB_COOLDOWN_SECONDS = 45;
-const SHIFT_TTL_MS = 5 * 60_000;
-const OVERTIME_HARDCAP_MULT = 1.5;
 
 function randInt(min, max) {
   return Math.floor(min + Math.random() * (max - min + 1));
@@ -211,9 +216,8 @@ module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } 
 
     async function endShift(reason, { forceLock = false } = {}) {
       clearTimers();
-      let finalEarned = earned;
       if (earned > 0) {
-        const payout = await mintUser(db, guildId, userId, earned, "grind_fishing_payout", {
+        await mintUser(db, guildId, userId, earned, "grind_fishing_payout", {
           job: "fishing",
           casts,
           bestStreak,
@@ -221,8 +225,7 @@ module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } 
           legends,
           ultras,
           overtime,
-        }, ACTIVITY_EFFECTS);
-        finalEarned = Number(payout?.finalAmount ?? earned);
+        }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_fishing" });
         await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
       }
 
@@ -236,7 +239,7 @@ module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } 
         .setTitle("🎣 Fishing — Shift Complete")
         .setDescription([reason, lockTs ? `🥵 Recovery: Grind unlocks <t:${lockTs}:R>.` : ""].filter(Boolean).join("\n"))
         .addFields(
-          { name: "Total earned", value: money(finalEarned), inline: true },
+          { name: "Total earned", value: money(earned), inline: true },
           { name: "Best streak", value: String(bestStreak), inline: true },
           { name: "Rare / Legendary", value: `${rares} / ${legends}`, inline: true },
           { name: "Ultra events", value: String(ultras), inline: true }
@@ -484,3 +487,5 @@ module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } 
     });
   });
 };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

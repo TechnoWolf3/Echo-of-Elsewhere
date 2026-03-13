@@ -6,23 +6,13 @@ const path = require("path");
 const { pool } = require(path.join(process.cwd(), "utils", "db"));
 const { setJail } = require(path.join(process.cwd(), "utils", "jail"));
 const { tryDebitUser, addServerBank } = require(path.join(process.cwd(), "utils", "economy"));
-const { payoutWithEffects } = require(path.join(process.cwd(), "utils", "effectSystem"));
+const { creditUserWithEffects } = require(path.join(process.cwd(), "utils", "effectSystem"));
 // Scenarios (data-only)
 let scenarios = require("./storeRobbery.scenarios");
 
 // =====================
 // CONFIG (LOCKED RULES)
 // =====================
-const ACTIVITY_EFFECTS = {
-  key: "storeRobbery",
-  name: "Store Robbery",
-  effectsApply: true,
-  canAwardEffects: true,
-  blockedBlessings: [],
-  blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
-};
-
 
 // 3–5 step minigame
 const MIN_STEPS = 3;
@@ -63,6 +53,20 @@ const VALUABLE_MIN = 250;
 const VALUABLE_MAX = 1500;
 
 // UI / timeout
+const ACTIVITY_EFFECTS = {
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: {
+    nothingWeight: 100,
+    blessingWeight: 0,
+    curseWeight: 0,
+    blessingWeights: {},
+    curseWeights: {},
+  },
+};
+
 const RUN_TIMEOUT_MS = 3 * 60_000;
 
 // =====================
@@ -134,14 +138,14 @@ async function ensureUserRow(guildId, userId) {
 }
 
 async function addUserWallet(guildId, userId, amount, type = "crime_payout", meta = {}) {
-  return payoutWithEffects({
+  await creditUserWithEffects({
     guildId,
     userId,
-    baseAmount: amount,
+    amount,
     type,
     meta: { ...meta, destination: "wallet" },
-    payoutSource: "mint",
-    activity: ACTIVITY_EFFECTS,
+    activityEffects: ACTIVITY_EFFECTS,
+    awardSource: "crime_store_robbery",
   });
 }
 
@@ -628,3 +632,5 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
     await showCurrentPhase();
   });
 };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

@@ -17,7 +17,7 @@ const {
 const { activeGames } = require("../../utils/gameManager");
 const { setActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 const { tryDebitUser, bankToUserIfEnough } = require("../../utils/economy");
-const { payoutWithEffects } = require("../../utils/effectSystem");
+const { bankPayoutWithEffects } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
@@ -32,17 +32,15 @@ const {
 } = require("../../utils/casinoSecurity");
 
 const MIN_BET = 500;
-const MAX_BET = 250000;
 
 const ACTIVITY_EFFECTS = {
-  key: "higherLower",
-  name: "Higher or Lower",
   effectsApply: true,
   canAwardEffects: true,
   blockedBlessings: [],
   blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, blessingWeights: {}, curseWeights: {} },
 };
+const MAX_BET = 250000;
 
 const tablesById = new Map(); // tableId -> table
 
@@ -340,10 +338,10 @@ async function cashOut(interaction, table) {
   const stake = Number(p.betAmount || 0);
   const wanted = Math.floor(stake * mult);
 
-  const pay = await payoutWithEffects({
+  const pay = await bankPayoutWithEffects({
     guildId,
     userId,
-    baseAmount: wanted,
+    amount: wanted,
     type: "higherlower_payout",
     meta: {
       channelId: table.channelId,
@@ -351,8 +349,8 @@ async function cashOut(interaction, table) {
       streak,
       multiplier: mult,
     },
-    payoutSource: "bank",
-    activity: ACTIVITY_EFFECTS,
+    activityEffects: ACTIVITY_EFFECTS,
+    awardSource: "higherlower",
   });
 
   if (!pay?.ok) {
@@ -365,7 +363,7 @@ async function cashOut(interaction, table) {
   } else {
     await sendEphemeral(
       interaction,
-      `✅ Cashed out! Streak **${streak}** → **x${mult.toFixed(1)}** payout: **$${Number(pay?.finalAmount ?? wanted).toLocaleString()}**`
+      `✅ Cashed out! Streak **${streak}** → **x${mult.toFixed(1)}** payout: **$${(pay.finalAmount || wanted).toLocaleString()}**`
     );
     try {
       await unlockAchievement(interaction.channel, guildId, userId, ACH.FIRST_CASHOUT);
@@ -614,3 +612,5 @@ async function handleInteraction(interaction) {
 }
 
 module.exports = { startFromHub, handleInteraction };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

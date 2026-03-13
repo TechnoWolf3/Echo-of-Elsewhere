@@ -12,6 +12,13 @@ module.exports = {
       games: [
         {
           key: "blackjack",
+          activityEffects: {
+            effectsApply: true,
+            canAwardEffects: true,
+            blockedBlessings: [],
+            blockedCurses: [],
+            effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, blessingWeights: {}, curseWeights: {} },
+          },
           label: "Blackjack",
           emoji: "🃏",
           hint: "1–10 players • splits/double • table fees",
@@ -20,6 +27,13 @@ module.exports = {
         },
         {
           key: "roulette",
+          activityEffects: {
+            effectsApply: true,
+            canAwardEffects: true,
+            blockedBlessings: [],
+            blockedCurses: [],
+            effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, blessingWeights: {}, curseWeights: {} },
+          },
           label: "Roulette",
           emoji: "🎡",
           hint: "Red/Black/Numbers • table fees",
@@ -28,6 +42,13 @@ module.exports = {
         },
         {
           key: "higherlower",
+          activityEffects: {
+            effectsApply: true,
+            canAwardEffects: true,
+            blockedBlessings: [],
+            blockedCurses: [],
+            effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, blessingWeights: {}, curseWeights: {} },
+          },
           label: "Higher or Lower",
           // IMPORTANT: must be ONE emoji for select menus
           emoji: "🔼",

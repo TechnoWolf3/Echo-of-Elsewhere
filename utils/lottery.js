@@ -14,6 +14,7 @@ const {
 
 const { pool } = require("./db");
 const economy = require("./economy");
+const { creditUserWithEffects } = require("./effectSystem");
 const config = require("../data/lottery/config");
 
 function tzParts(dateMs = Date.now(), timeZone = config.timezone) {
@@ -681,7 +682,7 @@ async function runDraw(client, guildId) {
     const pay = each * winners.length;
     if (each > 0) {
       for (const uid of winners) {
-        await economy.creditUser(guildId, uid, each, "lottery_win", { draw: drawKey, division: div });
+        await creditUserWithEffects({ guildId, userId: uid, amount: each, type: "lottery_win", meta: { draw: drawKey, division: div }, activityEffects: config.activityEffects, awardSource: "lottery" });
       }
     }
     divPaid += pay;
@@ -701,7 +702,7 @@ async function runDraw(client, guildId) {
     jackpotPaid = each * jackpotWinners.length;
     if (each > 0) {
       for (const uid of jackpotWinners) {
-        await economy.creditUser(guildId, uid, each, "lottery_jackpot", { draw: drawKey });
+        await creditUserWithEffects({ guildId, userId: uid, amount: each, type: "lottery_jackpot", meta: { draw: drawKey }, activityEffects: config.activityEffects, awardSource: "lottery" });
       }
     }
     const remainder = Math.max(0, jackpotAfter - jackpotPaid);

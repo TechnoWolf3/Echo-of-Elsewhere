@@ -16,19 +16,24 @@ const {
 const { canGrind, tickFatigue, fatigueBar, MAX_FATIGUE_MS, applyGrindLock } = require("../../../../utils/grindFatigue");
 const { money, mintUser, setJobCooldownSeconds } = require("./_shared");
 
+const JOB_COOLDOWN_SECONDS = 45;
+const SHIFT_TTL_MS = 5 * 60_000;
+const OVERTIME_HARDCAP_MULT = 1.5;
+
 const ACTIVITY_EFFECTS = {
-  key: "quarry",
-  name: "quarry",
   effectsApply: true,
   canAwardEffects: true,
   blockedBlessings: [],
   blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  effectAwardPool: {
+    nothingWeight: 100,
+    blessingWeight: 0,
+    curseWeight: 0,
+    blessingWeights: {},
+    curseWeights: {},
+  },
 };
 
-const JOB_COOLDOWN_SECONDS = 45;
-const SHIFT_TTL_MS = 5 * 60_000;
-const OVERTIME_HARDCAP_MULT = 1.5;
 
 function randInt(min, max) {
   return Math.floor(min + Math.random() * (max - min + 1));
@@ -209,7 +214,7 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
         .setDescription(desc)
         .addFields(
           { name: "Streak", value: String(streak), inline: true },
-          { name: "Earned (shift)", value: money(finalEarned), inline: true },
+          { name: "Earned (shift)", value: money(earned), inline: true },
           { name: "Digs", value: String(digs), inline: true },
           { name: "Fatigue", value: `${fb.bar} ${fb.pct}%`, inline: false }
         );
@@ -238,17 +243,15 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
 
     async function endShift(reason, { forceLock = false } = {}) {
       clearActionTimer();
-      let finalEarned = earned;
       if (earned > 0) {
-        const payout = await mintUser(db, guildId, userId, earned, "grind_quarry_payout", {
+        await mintUser(db, guildId, userId, earned, "grind_quarry_payout", {
           job: "quarry",
           digs,
           depth,
           bestStreak,
           collapses,
           overtime,
-        }, ACTIVITY_EFFECTS);
-        finalEarned = Number(payout?.finalAmount ?? earned);
+        }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_quarry" });
         await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
       }
 
@@ -262,7 +265,7 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
         .setTitle("🪨 Quarry — Shift Complete")
         .setDescription([reason, lockTs ? `🥵 Recovery: Grind unlocks <t:${lockTs}:R>.` : ""].filter(Boolean).join("\n"))
         .addFields(
-          { name: "Total earned", value: money(finalEarned), inline: true },
+          { name: "Total earned", value: money(earned), inline: true },
           { name: "Depth reached", value: String(depth), inline: true },
           { name: "Best streak", value: String(bestStreak), inline: true },
           { name: "Collapses", value: String(collapses), inline: true }
@@ -303,7 +306,6 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
 
       await i.deferUpdate().catch(() => {});
       clearActionTimer();
-      let finalEarned = earned;
 
       // Enforce timeout even if clicked late
       if (Date.now() > actionExpiresAt) {
@@ -363,3 +365,5 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
     });
   });
 };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

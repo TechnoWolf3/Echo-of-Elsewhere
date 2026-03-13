@@ -16,18 +16,22 @@ const { money, mintUser, setJobCooldownSeconds } = require("./_shared");
 // ✅ set this to your store item ID that grants +5% and is consumed per shift
 const CLERK_BONUS_ITEM_ID = "Math_Tutour";
 
+const JOB_COOLDOWN_SECONDS = 45;
+const OVERTIME_HARDCAP_MULT = 1.5; // 150%
+
 const ACTIVITY_EFFECTS = {
-  key: "storeClerk",
-  name: "storeClerk",
   effectsApply: true,
   canAwardEffects: true,
   blockedBlessings: [],
   blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  effectAwardPool: {
+    nothingWeight: 100,
+    blessingWeight: 0,
+    curseWeight: 0,
+    blessingWeights: {},
+    curseWeights: {},
+  },
 };
-
-const JOB_COOLDOWN_SECONDS = 45;
-const OVERTIME_HARDCAP_MULT = 1.5; // 150%
 
 function centsToString(cents) {
   const a = Math.abs(cents);
@@ -247,7 +251,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
         .setTitle("🏪 Store Clerk — Shift Ended")
         .setDescription(`💥 You pushed too far and **collapsed from exhaustion**.\n\n${extraLine}`.trim())
         .addFields(
-          { name: "Earned (shift)", value: money(finalEarned), inline: true },
+          { name: "Earned (shift)", value: money(earned), inline: true },
           { name: "Streak", value: String(streak), inline: true },
           { name: "Bonus item", value: bonus.used ? "✅ Used (+5%)" : "❌ None", inline: true }
         );
@@ -265,7 +269,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
       .setDescription([scenario.text, exhaustedLine, "", extraLine].filter(Boolean).join("\n").trim())
       .addFields(
         { name: "Streak", value: String(streak), inline: true },
-        { name: "Earned (shift)", value: money(finalEarned), inline: true },
+        { name: "Earned (shift)", value: money(earned), inline: true },
         { name: "Fatigue", value: `${fb.bar} ${fb.pct}%`, inline: false },
         {
           name: "Bonuses",
@@ -289,14 +293,12 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
     if (!active) return;
     active = false;
 
-    let finalEarned = earned;
     if (earned > 0) {
-      const payout = await mintUser(db, guildId, userId, earned, "grind_store_clerk_payout", {
+      await mintUser(db, guildId, userId, earned, "grind_store_clerk_payout", {
         job: "store_clerk",
         streak,
         used_bonus_item: bonus.used,
-      }, ACTIVITY_EFFECTS);
-      finalEarned = Number(payout?.finalAmount ?? earned);
+      }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_store_clerk" });
       await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
     }
 
@@ -311,7 +313,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
       .setTitle("🏪 Store Clerk — Shift Complete")
       .setDescription([reason, lockTs ? `🥵 Recovery: Grind unlocks <t:${lockTs}:R>.` : ""].filter(Boolean).join("\n"))
       .addFields(
-        { name: "Earned (shift)", value: money(finalEarned), inline: true },
+        { name: "Earned (shift)", value: money(earned), inline: true },
         { name: "Final streak", value: String(streak), inline: true },
         { name: "Bonus item", value: bonus.used ? "✅ Used (+5%)" : "❌ None", inline: true }
       );
@@ -409,3 +411,4 @@ if (scenario.tier === 0) {return nextScenario(true, "✅ Debit card — no chang
   });
   });
 };
+module.exports.activityEffects = ACTIVITY_EFFECTS;

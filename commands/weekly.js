@@ -2,20 +2,10 @@
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { pool } = require("../utils/db");
 const { ensureUser } = require("../utils/economy");
-const { payoutWithEffects } = require("../utils/effectSystem");
+const { creditUserWithEffects } = require("../utils/effectSystem");
 
 // 🚔 Jail guard
 const { guardNotJailed } = require("../utils/jail");
-
-const WEEKLY_EFFECTS = {
-  key: "weekly",
-  name: "Weekly",
-  effectsApply: true,
-  canAwardEffects: true,
-  blockedBlessings: [],
-  blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
-};
 
 /**
  * Returns the next Monday 00:00:00 in Australia/Sydney as a UTC Date.
@@ -121,20 +111,32 @@ module.exports = {
       [guildId, userId, key, nextClaim]
     );
 
-    const paid = await payoutWithEffects({
+    const payout = await creditUserWithEffects({
       guildId,
       userId,
-      baseAmount: amount,
+      amount,
       type: "weekly",
       meta: { reset: "monday_midnight_sydney" },
-      payoutSource: "mint",
-      activity: WEEKLY_EFFECTS,
+      activityEffects: module.exports.activityEffects,
+      awardSource: "weekly",
     });
 
-    const amountText = Number(paid?.finalAmount ?? amount).toLocaleString();
-
     return interaction.editReply(
-      `🎁 Weekly claimed: **$${amountText}** (resets at 12am AEDT).`
+      `🎁 Weekly claimed: **$${payout.finalAmount.toLocaleString()}** (resets at 12am AEDT).`
     );
+  },
+
+  activityEffects: {
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: {
+      nothingWeight: 100,
+      blessingWeight: 0,
+      curseWeight: 0,
+      blessingWeights: {},
+      curseWeights: {},
+    },
   },
 };

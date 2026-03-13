@@ -12,7 +12,7 @@ const {
 
 const { pool } = require("../utils/db");
 const { ensureUser } = require("../utils/economy");
-const { payoutWithEffects } = require("../utils/effectSystem");
+const { creditUserWithEffects } = require("../utils/effectSystem");
 const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); // jail blocks ALL jobs while active
 const { unlockAchievement } = require("../utils/achievementEngine");
 
@@ -45,15 +45,6 @@ const startStoreClerk = require("../data/work/categories/grind/storeClerk");
 const startWarehousing = require("../data/work/categories/grind/warehousing");
 const startFishing = require("../data/work/categories/grind/fishing");
 const startQuarry = require("../data/work/categories/grind/quarry");
-
-const JOB_EFFECTS = {
-  transportContract: contractCfg.effectConfig || { key: "transportContract", name: "Transport Contract", effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
-  skillCheck: skillCfg.effectConfig || { key: "skillCheck", name: "Skill Check", effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
-  shift: shiftCfg.effectConfig || { key: "shift", name: "Shift", effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
-  flirt: nightWalker?.jobs?.flirt?.effectConfig || { key: "flirt", name: "Flirt", effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
-  lapDance: nightWalker?.jobs?.lapDance?.effectConfig || { key: "lapDance", name: "Lap Dance", effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
-  prostitute: nightWalker?.jobs?.prostitute?.effectConfig || { key: "prostitute", name: "Prostitute", effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
-};
 
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
@@ -1034,7 +1025,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
     }
 
-    async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true, activityConfig = null } = {}) {
+    async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true, activityEffects = null } = {}) {
       const mult = levelMultiplier(session.level);
       let amount = Math.floor(amountBase * mult);
 
@@ -1047,14 +1038,14 @@ function scheduleReturnToCategory(delayMs = 5000) {
       const nextClaim = new Date(Date.now() + JOB_COOLDOWN_SECONDS * 1000);
       await setCooldown(guildId, userId, "job", nextClaim);
 
-      const paidOut = await payoutWithEffects({
+      await creditUserWithEffects({
         guildId,
         userId,
-        baseAmount: amount,
+        amount,
         type: reason,
         meta,
-        payoutSource: "mint",
-        activity: activityConfig || { key: reason, name: reason, effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
+        activityEffects,
+        awardSource: reason,
       });
 
       const progUpdate = await addXpAndMaybeLevel(guildId, userId, xpGain, countJob);
@@ -1072,7 +1063,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         await maybeSpawnLegendary();
       }
 
-      return { amount: Number(paidOut?.finalAmount ?? amount), nextClaim, prog: progUpdate, payout: paidOut };
+      return { amount, nextClaim, prog: progUpdate };
     }
 
     async function redraw() {
@@ -1555,7 +1546,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
               "job_95_contract",
               contractCfg.xp?.success ?? 0,
               { picks: session.contractPicks, bonusTotal: session.contractBonusTotal, riskTotal: session.contractRiskTotal },
-              { countJob: true, allowLegendarySpawn: true, activityConfig: JOB_EFFECTS.transportContract }
+              { countJob: true, allowLegendarySpawn: true, activityEffects: contractCfg.activityEffects }
             );
 
             const embed = new EmbedBuilder()
@@ -1631,7 +1622,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             isLegendary ? "job_95_legendary" : "job_95_skill",
             isLegendary ? (skillCfg.xp?.legendary ?? 30) : (skillCfg.xp?.success ?? 10),
             { legendary: isLegendary },
-            { countJob: true, allowLegendarySpawn: true, activityConfig: JOB_EFFECTS.skillCheck }
+            { countJob: true, allowLegendarySpawn: true, activityEffects: isLegendary ? (skillCfg.legendaryActivityEffects || skillCfg.activityEffects) : skillCfg.activityEffects }
           );
 
           const embed = new EmbedBuilder()
@@ -1672,7 +1663,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             "job_95_shift",
             shiftCfg.xp?.success ?? 12,
             { shift: true },
-            { countJob: true, allowLegendarySpawn: true, activityConfig: JOB_EFFECTS.shift }
+            { countJob: true, allowLegendarySpawn: true, activityEffects: shiftCfg.activityEffects }
           );
 
           const embed = new EmbedBuilder()
@@ -1836,7 +1827,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
               `job_nw_${jobKey}`,
               cfg.xp?.success ?? 0,
               { job: jobKey, modPct: session.nw.payoutModPct },
-              { countJob: true, allowLegendarySpawn: true, activityConfig: JOB_EFFECTS[jobKey] }
+              { countJob: true, allowLegendarySpawn: true, activityEffects: cfg.activityEffects }
             );
 
             const embed = new EmbedBuilder()

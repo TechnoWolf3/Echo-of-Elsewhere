@@ -2,7 +2,7 @@
 // Shared helpers for Grind job modules.
 
 const { EmbedBuilder } = require("discord.js");
-const { payoutWithEffects } = require("../../../../utils/effectSystem");
+const { creditUserWithEffects } = require("../../../../utils/effectSystem");
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
@@ -21,18 +21,17 @@ function bar10(pct) {
   return "█".repeat(filled) + "░".repeat(blocks - filled);
 }
 
-async function mintUser(db, guildId, userId, amount, type, meta = {}, activityConfig = null) {
+async function mintUser(db, guildId, userId, amount, type, meta = {}, options = {}) {
   const amt = Math.max(0, Math.floor(Number(amount || 0)));
-  if (amt <= 0) return { ok: true, finalAmount: 0, adjustment: 0, bonusAmount: 0 };
-
-  return payoutWithEffects({
+  if (amt <= 0) return;
+  return creditUserWithEffects({
     guildId,
     userId,
-    baseAmount: amt,
+    amount: amt,
     type,
     meta,
-    payoutSource: "mint",
-    activity: activityConfig || { key: type, name: type, effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
+    activityEffects: options.activityEffects || null,
+    awardSource: options.awardSource || type,
   });
 }
 

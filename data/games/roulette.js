@@ -25,7 +25,7 @@ const {
   bankToUserIfEnough,
   getWalletBalance,
 } = require("../../utils/economy");
-const { payoutWithEffects } = require("../../utils/effectSystem");
+const { bankPayoutWithEffects } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
@@ -39,18 +39,16 @@ const {
   maybeAnnounceCasinoSecurity,
 } = require("../../utils/casinoSecurity");
 
-const MIN_BET = 500;
-const MAX_BET = 250000;
-
 const ACTIVITY_EFFECTS = {
-  key: "roulette",
-  name: "Roulette",
   effectsApply: true,
   canAwardEffects: true,
   blockedBlessings: [],
   blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, blessingWeights: {}, curseWeights: {} },
 };
+
+const MIN_BET = 500;
+const MAX_BET = 250000;
 
 // tableId -> table (for routing ephemeral selects/modals via index.js)
 const tablesById = new Map();
@@ -586,10 +584,10 @@ async function spinRound({ interaction, table }) {
 
     let paid = 0;
     if (payoutWanted > 0) {
-      const full = await payoutWithEffects({
+      const full = await bankPayoutWithEffects({
         guildId,
         userId: p.userId,
-        baseAmount: payoutWanted,
+        amount: payoutWanted,
         type: "roulette_payout",
         meta: {
           channelId: table.channelId,
@@ -600,12 +598,12 @@ async function spinRound({ interaction, table }) {
           pocket,
           payoutWanted,
         },
-        payoutSource: "bank",
-        activity: ACTIVITY_EFFECTS,
+        activityEffects: ACTIVITY_EFFECTS,
+        awardSource: "roulette",
       });
 
       if (full.ok) {
-        paid = Number(full.finalAmount || payoutWanted);
+        paid = full.finalAmount || payoutWanted;
       } else {
         // fallback: refund stake
         const refund = await bankToUserIfEnough(guildId, p.userId, stake, "roulette_refund", {
@@ -929,3 +927,5 @@ module.exports = {
   startFromHub,
   handleInteraction,
 };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

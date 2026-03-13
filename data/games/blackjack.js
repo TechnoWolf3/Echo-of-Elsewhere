@@ -25,11 +25,11 @@ const {
   getServerBank,
   getWalletBalance,
 } = require("../../utils/economy");
+const { previewMoneyEffect, consumeEffectUse, maybeAwardEffectFromActivity } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
-const { payoutWithEffects } = require("../../utils/effectSystem");
 
 const {
   getUserCasinoSecurity,
@@ -42,13 +42,11 @@ const {
 const MIN_BET = 500;
 
 const ACTIVITY_EFFECTS = {
-  key: "blackjack",
-  name: "Blackjack",
   effectsApply: true,
   canAwardEffects: true,
   blockedBlessings: [],
   blockedCurses: [],
-  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, blessingWeights: {}, curseWeights: {} },
 };
 
 /* =========================================================
@@ -604,38 +602,48 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       let paid = 0;
 
       if (p.payoutWanted > 0) {
-        const full = await payoutWithEffects({
-          guildId,
+        const effectPreview = await previewMoneyEffect({ guildId, userId: p.userId, activityEffects: ACTIVITY_EFFECTS, amount: p.payoutWanted });
+        const bankWanted = effectPreview.modifierAmount > 0 ? effectPreview.baseAmount : effectPreview.finalAmount;
+        const mintedBonus = effectPreview.modifierAmount > 0 ? effectPreview.modifierAmount : 0;
+        let payoutSucceeded = false;
+
+        const full = await bankToUserIfEnough(guildId, p.userId, bankWanted, "blackjack_payout", {
+          ...meta,
           userId: p.userId,
-          baseAmount: p.payoutWanted,
-          type: "blackjack_payout",
-          meta: {
-            ...meta,
-            userId: p.userId,
-            wanted: p.payoutWanted,
-            handIndex: p.handIndex,
-          },
-          payoutSource: "bank",
-          activity: ACTIVITY_EFFECTS,
+          wanted: p.payoutWanted,
+          finalWanted: effectPreview.finalAmount,
+          effectId: effectPreview.effectId || null,
+          handIndex: p.handIndex,
         });
 
         if (full.ok) {
-          paid = Number(full.finalAmount || p.payoutWanted);
+          paid = bankWanted;
+          if (mintedBonus > 0) {
+            await creditUser(guildId, p.userId, mintedBonus, "blackjack_effect_bonus", {
+              ...meta,
+              userId: p.userId,
+              wanted: p.payoutWanted,
+              bonus: mintedBonus,
+              effectId: effectPreview.effectId || null,
+              handIndex: p.handIndex,
+            }).catch(() => {});
+            paid += mintedBonus;
+          }
+          payoutSucceeded = true;
         } else {
-          if (p.payoutWanted > B && B > 0) {
+          if (bankWanted > B && B > 0) {
             const refund = await bankToUserIfEnough(guildId, p.userId, B, "blackjack_refund", {
               ...meta,
               userId: p.userId,
               wanted: p.payoutWanted,
+              finalWanted: effectPreview.finalAmount,
               fallback: "refund_bet",
               handIndex: p.handIndex,
             });
 
             if (refund.ok) {
               paid = B;
-
-              // If the bank can't cover the profit portion, mint just the profit so winners still get paid.
-              const profit = Math.max(0, Number(p.payoutWanted) - B);
+              const profit = Math.max(0, Number(bankWanted) - B);
               if (profit > 0) {
                 await creditUser(guildId, p.userId, profit, "blackjack_profit_mint", {
                   ...meta,
@@ -645,21 +653,36 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
                   fallback: "mint_profit_only",
                   handIndex: p.handIndex,
                 }).catch(() => {});
-                paid = B + profit;
-                payoutNotes.push(
-                  `⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover full winnings — refunded bet (**$${B.toLocaleString()}**) and minted profit (**$${profit.toLocaleString()}**).`
-                );
-              } else {
-                payoutNotes.push(
-                  `⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover full winnings, refunded bet (**$${B.toLocaleString()}**) instead.`
-                );
+                paid += profit;
               }
+              if (mintedBonus > 0) {
+                await creditUser(guildId, p.userId, mintedBonus, "blackjack_effect_bonus", {
+                  ...meta,
+                  userId: p.userId,
+                  wanted: p.payoutWanted,
+                  bonus: mintedBonus,
+                  effectId: effectPreview.effectId || null,
+                  handIndex: p.handIndex,
+                }).catch(() => {});
+                paid += mintedBonus;
+              }
+              payoutSucceeded = true;
+              payoutNotes.push(
+                `⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover full winnings — refunded bet (**$${B.toLocaleString()}**)${profit > 0 ? ` and minted profit (**$${profit.toLocaleString()}**)` : ""}${mintedBonus > 0 ? ` plus Echo bonus (**$${mintedBonus.toLocaleString()}**)` : ""}.`
+              );
             } else {
               payoutNotes.push(`⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover payout/refund. Ping an admin.`);
             }
           } else {
             payoutNotes.push(`⚠️ <@${p.userId}> (${p.handLabel || "Hand"}): Bank couldn’t cover payout/refund. Ping an admin.`);
           }
+        }
+
+        if (payoutSucceeded) {
+          if (effectPreview.activeEffect) {
+            await consumeEffectUse(guildId, p.userId, effectPreview.activeEffect).catch(() => {});
+          }
+          await maybeAwardEffectFromActivity({ guildId, userId: p.userId, activityEffects: ACTIVITY_EFFECTS, source: 'blackjack' }).catch(() => {});
         }
       }
 
@@ -959,3 +982,5 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
 module.exports = {
   startFromHub: startLobbyFromHub,
 };
+
+module.exports.activityEffects = ACTIVITY_EFFECTS;

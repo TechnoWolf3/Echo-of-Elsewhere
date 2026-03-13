@@ -73,5 +73,19 @@ module.exports = {
       "Max **5 tickets** per draw.",
       "Jackpot rolls over until someone hits **Division 1 (7 + Powerball)**."
     ]
-  }
+  },
+
+  activityEffects: {
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: {
+      nothingWeight: 100,
+      blessingWeight: 0,
+      curseWeight: 0,
+      blessingWeights: {},
+      curseWeights: {},
+    },
+  },
 };
