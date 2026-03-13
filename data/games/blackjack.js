@@ -29,6 +29,7 @@ const {
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
+const { payoutWithEffects } = require("../../utils/effectSystem");
 
 const {
   getUserCasinoSecurity,
@@ -39,6 +40,16 @@ const {
 } = require("../../utils/casinoSecurity");
 
 const MIN_BET = 500;
+
+const ACTIVITY_EFFECTS = {
+  key: "blackjack",
+  name: "Blackjack",
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+};
 
 /* =========================================================
    🏆 ACHIEVEMENTS (BLACKJACK) — same IDs as before
@@ -593,15 +604,23 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       let paid = 0;
 
       if (p.payoutWanted > 0) {
-        const full = await bankToUserIfEnough(guildId, p.userId, p.payoutWanted, "blackjack_payout", {
-          ...meta,
+        const full = await payoutWithEffects({
+          guildId,
           userId: p.userId,
-          wanted: p.payoutWanted,
-          handIndex: p.handIndex,
+          baseAmount: p.payoutWanted,
+          type: "blackjack_payout",
+          meta: {
+            ...meta,
+            userId: p.userId,
+            wanted: p.payoutWanted,
+            handIndex: p.handIndex,
+          },
+          payoutSource: "bank",
+          activity: ACTIVITY_EFFECTS,
         });
 
         if (full.ok) {
-          paid = p.payoutWanted;
+          paid = Number(full.finalAmount || p.payoutWanted);
         } else {
           if (p.payoutWanted > B && B > 0) {
             const refund = await bankToUserIfEnough(guildId, p.userId, B, "blackjack_refund", {

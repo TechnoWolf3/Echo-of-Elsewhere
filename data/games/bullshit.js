@@ -24,6 +24,7 @@ const { activeGames } = require("../../utils/gameManager");
 const { setActiveGame, updateActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 
 const { tryDebitUser, creditUser, addServerBank, bankToUserIfEnough } = require("../../utils/economy");
+const { payoutWithEffects } = require("../../utils/effectSystem");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 
@@ -35,6 +36,16 @@ const {
 const MIN_BUYIN = 500;
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
+
+const ACTIVITY_EFFECTS = {
+  key: "bullshit",
+  name: "Bullshit",
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+};
 
 const REVEAL_STAGE_DELAY_MS = 2200;
 const REVOLVER_STAGE_DELAY_MS = 2800;
@@ -481,10 +492,18 @@ async function endGame(table, winId) {
   // Only pay out to a real player (bots don't get paid)
   if (winId && payout > 0 && !isBotId(winId)) {
     try {
-      await bankToUserIfEnough(table.guildId, winId, payout, "bullshit_payout", {
-        tableId: table.tableId,
-        pot,
-        fee,
+      await payoutWithEffects({
+        guildId: table.guildId,
+        userId: winId,
+        baseAmount: payout,
+        type: "bullshit_payout",
+        meta: {
+          tableId: table.tableId,
+          pot,
+          fee,
+        },
+        payoutSource: "bank",
+        activity: ACTIVITY_EFFECTS,
       });
     } catch (e) {
       console.error("[Bullshit] payout failed:", e);

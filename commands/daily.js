@@ -1,7 +1,18 @@
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { pool } = require("../utils/db");
-const { ensureUser, creditUser } = require("../utils/economy");
+const { ensureUser } = require("../utils/economy");
+const { payoutWithEffects } = require("../utils/effectSystem");
 const { guardNotJailed } = require("../utils/jail");
+
+const DAILY_EFFECTS = {
+  key: "daily",
+  name: "Daily",
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+};
 
 function nextSydneyMidnightUTC() {
   // Get "now" in Australia/Sydney, then compute next midnight there
@@ -89,10 +100,20 @@ module.exports = {
       [guildId, userId, key, nextClaim]
     );
 
-    await creditUser(guildId, userId, amount, "daily", { reset: "midnight_sydney" });
+    const paid = await payoutWithEffects({
+      guildId,
+      userId,
+      baseAmount: amount,
+      type: "daily",
+      meta: { reset: "midnight_sydney" },
+      payoutSource: "mint",
+      activity: DAILY_EFFECTS,
+    });
+
+    const amountText = Number(paid?.finalAmount ?? amount).toLocaleString();
 
     return interaction.editReply(
-      `🎁 Daily claimed: **$${amount.toLocaleString()}** (resets at 12am AEDT).`
+      `🎁 Daily claimed: **$${amountText}** (resets at 12am AEDT).`
     );
   },
 };

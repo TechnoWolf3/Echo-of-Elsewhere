@@ -1,5 +1,14 @@
 // data/nineToFive/skillCheck.js
 module.exports = {
+  effectConfig: {
+    key: "skillCheck",
+    name: "Skill Check",
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  },
   // UI
   title: "🧠 Skill Check",
   footer: "Succeed for full pay. Fail for a tiny payout.",

@@ -17,6 +17,7 @@ const {
 const { activeGames } = require("../../utils/gameManager");
 const { setActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 const { tryDebitUser, bankToUserIfEnough } = require("../../utils/economy");
+const { payoutWithEffects } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
@@ -32,6 +33,16 @@ const {
 
 const MIN_BET = 500;
 const MAX_BET = 250000;
+
+const ACTIVITY_EFFECTS = {
+  key: "higherLower",
+  name: "Higher or Lower",
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+};
 
 const tablesById = new Map(); // tableId -> table
 
@@ -329,11 +340,19 @@ async function cashOut(interaction, table) {
   const stake = Number(p.betAmount || 0);
   const wanted = Math.floor(stake * mult);
 
-  const pay = await bankToUserIfEnough(guildId, userId, wanted, "higherlower_payout", {
-    channelId: table.channelId,
-    tableId: `hol${table.tableId}`,
-    streak,
-    multiplier: mult,
+  const pay = await payoutWithEffects({
+    guildId,
+    userId,
+    baseAmount: wanted,
+    type: "higherlower_payout",
+    meta: {
+      channelId: table.channelId,
+      tableId: `hol${table.tableId}`,
+      streak,
+      multiplier: mult,
+    },
+    payoutSource: "bank",
+    activity: ACTIVITY_EFFECTS,
   });
 
   if (!pay?.ok) {
@@ -346,7 +365,7 @@ async function cashOut(interaction, table) {
   } else {
     await sendEphemeral(
       interaction,
-      `✅ Cashed out! Streak **${streak}** → **x${mult.toFixed(1)}** payout: **$${wanted.toLocaleString()}**`
+      `✅ Cashed out! Streak **${streak}** → **x${mult.toFixed(1)}** payout: **$${Number(pay?.finalAmount ?? wanted).toLocaleString()}**`
     );
     try {
       await unlockAchievement(interaction.channel, guildId, userId, ACH.FIRST_CASHOUT);

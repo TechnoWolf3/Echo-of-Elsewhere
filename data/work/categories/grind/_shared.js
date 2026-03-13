@@ -2,6 +2,7 @@
 // Shared helpers for Grind job modules.
 
 const { EmbedBuilder } = require("discord.js");
+const { payoutWithEffects } = require("../../../../utils/effectSystem");
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
@@ -20,23 +21,19 @@ function bar10(pct) {
   return "█".repeat(filled) + "░".repeat(blocks - filled);
 }
 
-async function mintUser(db, guildId, userId, amount, type, meta = {}) {
+async function mintUser(db, guildId, userId, amount, type, meta = {}, activityConfig = null) {
   const amt = Math.max(0, Math.floor(Number(amount || 0)));
-  if (amt <= 0) return;
+  if (amt <= 0) return { ok: true, finalAmount: 0, adjustment: 0, bonusAmount: 0 };
 
-  await db.query(
-    `INSERT INTO user_balances (guild_id, user_id, balance)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (guild_id, user_id)
-     DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance`,
-    [guildId, userId, amt]
-  );
-
-  await db.query(
-    `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
-     VALUES ($1,$2,$3,$4,$5::jsonb)`,
-    [guildId, userId, amt, type, JSON.stringify(meta)]
-  );
+  return payoutWithEffects({
+    guildId,
+    userId,
+    baseAmount: amt,
+    type,
+    meta,
+    payoutSource: "mint",
+    activity: activityConfig || { key: type, name: type, effectsApply: true, canAwardEffects: true, blockedBlessings: [], blockedCurses: [], effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} } },
+  });
 }
 
 async function setJobCooldownSeconds(db, guildId, userId, seconds) {

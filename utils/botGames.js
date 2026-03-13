@@ -10,7 +10,18 @@ const {
 const config = require("../data/botgames/config");
 const { loadEvents } = require("../data/botgames");
 const economy = require("./economy");
+const { payoutWithEffects } = require("./effectSystem");
 const echoCurses = require("./echoCurses");
+
+const BOTGAME_EFFECTS = {
+  key: "botgames",
+  name: "Bot Games",
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+};
 
 // ⏳ How long an event can sit unclaimed before it expires (from data/botgames/config.js)
 const UNCLAIMED_EXPIRE_MS = (Number(config.expireMinutes ?? 180) || 180) * 60_000;
@@ -30,7 +41,15 @@ async function econGetBalance(guildId, userId) {
 async function econAdd(guildId, userId, amount) {
   // economy.js uses creditUser(guildId, userId, amount, type, meta)
   if (typeof economy.creditUser !== "function") throw new Error("economy.creditUser missing");
-  return economy.creditUser(guildId, userId, amount, "botgames_reward", { source: "botgames" });
+  return payoutWithEffects({
+    guildId,
+    userId,
+    baseAmount: amount,
+    type: "botgames_reward",
+    meta: { source: "botgames" },
+    payoutSource: "mint",
+    activity: BOTGAME_EFFECTS,
+  });
 }
 
 async function econRemove(guildId, userId, amount) {

@@ -1,5 +1,14 @@
 // data/nineToFive/transportContract.js
 module.exports = {
+  effectConfig: {
+    key: "transportContract",
+    name: "Transport Contract",
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  },
   // UI
   titlePrefix: "📦", // used in step titles if you want
   footer: "Finish all 3 steps to get paid.",

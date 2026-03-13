@@ -1,5 +1,14 @@
 // data/nightwalker/flirt.js
 module.exports = {
+  effectConfig: {
+    key: "flirt",
+    name: "Flirt",
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  },
   key: "flirt",
   title: "💬 Flirt",
   rounds: 5,

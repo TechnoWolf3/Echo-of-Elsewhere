@@ -1,5 +1,14 @@
 // data/nineToFive/shift.js
 module.exports = {
+  effectConfig: {
+    key: "shift",
+    name: "Shift",
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  },
   // UI
   title: "🕒 Shift",
   inProgressTitle: "🕒 Shift In Progress",

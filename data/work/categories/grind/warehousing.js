@@ -16,6 +16,16 @@ const {
 const { canGrind, tickFatigue, fatigueBar, MAX_FATIGUE_MS, applyGrindLock } = require("../../../../utils/grindFatigue");
 const { money, mintUser, setJobCooldownSeconds } = require("./_shared");
 
+const ACTIVITY_EFFECTS = {
+  key: "warehousing",
+  name: "warehousing",
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+};
+
 const JOB_COOLDOWN_SECONDS = 45;
 const SHIFT_TTL_MS = 5 * 60_000;
 const OVERTIME_HARDCAP_MULT = 1.5;
@@ -179,7 +189,7 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
       return rows;
     }
 
-    function summaryEmbed(reason, lockTs = null) {
+    function summaryEmbed(reason, lockTs = null, finalEarned = earned) {
       const emb = new EmbedBuilder()
         .setTitle(`${roleName} — Shift Complete`)
         .setDescription([reason, lockTs ? `🥵 Recovery: Grind unlocks <t:${lockTs}:R>.` : ""].filter(Boolean).join("\n"))
@@ -187,7 +197,7 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
           { name: "Orders completed", value: String(orders), inline: true },
           { name: "Best streak", value: String(bestStreak), inline: true },
           { name: "Rare events", value: String(rareEvents), inline: true },
-          { name: "Total earned", value: money(earned), inline: true }
+          { name: "Total earned", value: money(finalEarned), inline: true }
         );
       return emb;
     }
@@ -239,7 +249,7 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
         .addFields(
           { name: "Streak", value: String(streak), inline: true },
           { name: "Multiplier", value: `${shownMult}x`, inline: true },
-          { name: "Earned (shift)", value: money(earned), inline: true },
+          { name: "Earned (shift)", value: money(finalEarned), inline: true },
           { name: "Fatigue", value: `${fb.bar} ${fb.pct}%`, inline: false }
         );
 
@@ -289,15 +299,17 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
 
     async function endShift(reason, { forceLock = false } = {}) {
       clearOrderTimer();
+      let finalEarned = earned;
       if (earned > 0) {
-        await mintUser(db, guildId, userId, earned, "grind_warehousing_payout", {
+        const payout = await mintUser(db, guildId, userId, earned, "grind_warehousing_payout", {
           job: "warehousing",
           role,
           orders,
           bestStreak,
           rareEvents,
           overtime,
-        });
+        }, ACTIVITY_EFFECTS);
+        finalEarned = Number(payout?.finalAmount ?? earned);
         await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
       }
 
@@ -307,7 +319,7 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
         lockTs = Math.floor(lock.lockedUntil.getTime() / 1000);
       }
 
-      await boardMsg.edit({ embeds: [summaryEmbed(reason, lockTs)], components: [] }).catch(() => {});
+      await boardMsg.edit({ embeds: [summaryEmbed(reason, lockTs, finalEarned)], components: [] }).catch(() => {});
       collector.stop("done");
       resolveOnce();
     }
@@ -346,6 +358,7 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
 
       await i.deferUpdate().catch(() => {});
       clearOrderTimer();
+      let finalEarned = earned;
 
       // Enforce timeout even if button clicked late
       if (Date.now() > orderExpiresAt) {
@@ -412,6 +425,7 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
 
     collector.on("end", async () => {
       clearOrderTimer();
+      let finalEarned = earned;
       if (_resolved) return;
       await endShift("⏲️ Shift ended (inactivity).", { forceLock: (lastTick?.fatigueMs || 0) >= MAX_FATIGUE_MS });
     });

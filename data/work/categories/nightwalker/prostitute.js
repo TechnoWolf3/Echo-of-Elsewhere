@@ -1,5 +1,14 @@
 // data/nightwalker/prostitute.js
 module.exports = {
+  effectConfig: {
+    key: "prostitute",
+    name: "Prostitute",
+    effectsApply: true,
+    canAwardEffects: true,
+    blockedBlessings: [],
+    blockedCurses: [],
+    effectAwardPool: { nothingWeight: 100, blessingWeight: 0, curseWeight: 0, weightOverrides: {} },
+  },
   key: "prostitute",
   title: "🎲 Prostitute",
   rounds: 4,
