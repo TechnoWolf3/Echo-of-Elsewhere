@@ -25,7 +25,7 @@ const {
   bankToUserIfEnough,
   getWalletBalance,
 } = require("../../utils/economy");
-const { bankPayoutWithEffects } = require("../../utils/effectSystem");
+const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
@@ -578,8 +578,18 @@ async function spinRound({ interaction, table }) {
     const payoutWanted = win ? stake * mult : 0;
 
     // ✅ legacy first loss
+    let lossJailNote = null;
     if (!win) {
       await rouUnlock(interaction.channel, guildId, p.userId, ROU_ACH.FIRST_LOSS);
+      const triggerJail = await handleTriggeredEffectEvent({
+        guildId,
+        userId: p.userId,
+        eventKey: 'casino_loss',
+        context: { source: 'roulette' },
+      }).catch(() => null);
+      if (triggerJail?.triggered && triggerJail.notice) {
+        lossJailNote = triggerJail.notice;
+      }
     }
 
     let paid = 0;

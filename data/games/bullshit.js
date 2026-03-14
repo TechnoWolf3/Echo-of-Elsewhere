@@ -24,7 +24,7 @@ const { activeGames } = require("../../utils/gameManager");
 const { setActiveGame, updateActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 
 const { tryDebitUser, creditUser, addServerBank, bankToUserIfEnough } = require("../../utils/economy");
-const { bankPayoutWithEffects } = require("../../utils/effectSystem");
+const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 
@@ -505,6 +505,19 @@ async function endGame(table, winId) {
       });
     } catch (e) {
       console.error("[Bullshit] payout failed:", e);
+    }
+  }
+
+  for (const [playerId] of table.players.entries()) {
+    if (playerId === winId || isBotId(playerId)) continue;
+    const triggerJail = await handleTriggeredEffectEvent({
+      guildId: table.guildId,
+      userId: playerId,
+      eventKey: 'casino_loss',
+      context: { source: 'bullshit' },
+    }).catch(() => null);
+    if (triggerJail?.triggered && triggerJail.notice) {
+      await table.channel.send(`↳ <@${playerId}> ${triggerJail.notice}`).catch(() => {});
     }
   }
 

@@ -29,7 +29,7 @@ const { setActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const economy = require("../../utils/economy");
-const { creditUserWithEffects } = require("../../utils/effectSystem");
+const { creditUserWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -452,6 +452,7 @@ async function processResults(session) {
   const outcome = outcomeFromCounts(headsCount, tailsCount);
 
   const winners = [];
+  const lossNotices = [];
 
   // Resolve each bet
   for (const [userId, bet] of session.bets.entries()) {
@@ -477,6 +478,16 @@ async function processResults(session) {
           awardSource: "keno",
         });
         winners.push({ userId, label: `${bet.choice.toUpperCase()} (x${mult})`, profit });
+      } else {
+        const triggerJail = await handleTriggeredEffectEvent({
+          guildId: session.guildId,
+          userId,
+          eventKey: 'casino_loss',
+          context: { source: 'keno' },
+        }).catch(() => null);
+        if (triggerJail?.triggered && triggerJail.notice) {
+          lossNotices.push(`• <@${userId}> ${triggerJail.notice}`);
+        }
       }
     } else if (bet.kind === "KENO") {
       const picks = bet.numbers.length;
@@ -502,6 +513,16 @@ async function processResults(session) {
           awardSource: "keno",
         });
         winners.push({ userId, label: `${hits}/${picks} (x${mult})`, profit });
+      } else {
+        const triggerJail = await handleTriggeredEffectEvent({
+          guildId: session.guildId,
+          userId,
+          eventKey: 'casino_loss',
+          context: { source: 'keno' },
+        }).catch(() => null);
+        if (triggerJail?.triggered && triggerJail.notice) {
+          lossNotices.push(`• <@${userId}> ${triggerJail.notice}`);
+        }
       }
     }
   }
@@ -512,6 +533,7 @@ async function processResults(session) {
     headsCount,
     tailsCount,
     winners,
+    lossNotices,
   };
 }
 

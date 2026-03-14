@@ -100,9 +100,12 @@ module.exports = {
       awardSource: "daily",
     });
 
-    return interaction.editReply(
-      `🎁 Daily claimed: **$${payout.finalAmount.toLocaleString()}** (resets at 12am AEDT).`
-    );
+    const lines = [
+      `🎁 Daily claimed: **$${payout.finalAmount.toLocaleString()}** (resets at 12am AEDT).`,
+    ];
+    if (payout?.awardResult?.notice) lines.push('', payout.awardResult.notice);
+
+    return interaction.editReply(lines.join('\n'));
   },
 
   activityEffects: {

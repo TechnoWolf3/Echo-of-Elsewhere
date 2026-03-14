@@ -121,9 +121,12 @@ module.exports = {
       awardSource: "weekly",
     });
 
-    return interaction.editReply(
-      `🎁 Weekly claimed: **$${payout.finalAmount.toLocaleString()}** (resets at 12am AEDT).`
-    );
+    const lines = [
+      `🎁 Weekly claimed: **$${payout.finalAmount.toLocaleString()}** (resets at 12am AEDT).`,
+    ];
+    if (payout?.awardResult?.notice) lines.push('', payout.awardResult.notice);
+
+    return interaction.editReply(lines.join('\n'));
   },
 
   activityEffects: {

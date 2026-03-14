@@ -1,5 +1,6 @@
 const { pool } = require('./db');
 const definitions = require('../data/effects/definitions');
+const { setJail } = require('./jail');
 
 let schemaReady = false;
 
@@ -40,6 +41,49 @@ async function ensureSchema() {
   schemaReady = true;
 }
 
+function randInt(min, max) {
+  const lo = Math.floor(Number(min || 0));
+  const hi = Math.floor(Number(max || 0));
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return 0;
+  if (hi <= lo) return lo;
+  return Math.floor(lo + Math.random() * (hi - lo + 1));
+}
+
+function pickRandom(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  return arr[Math.floor(Math.random() * arr.length)] || null;
+}
+
+function tsOf(value) {
+  const date = value instanceof Date ? value : value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+  return Math.floor(date.getTime() / 1000);
+}
+
+function relativeTs(value) {
+  const ts = tsOf(value);
+  return ts ? `<t:${ts}:R>` : null;
+}
+
+function absoluteTs(value) {
+  const ts = tsOf(value);
+  return ts ? `<t:${ts}:F>` : null;
+}
+
+function pluralize(count, singular, plural = `${singular}s`) {
+  return `${count} ${Number(count) === 1 ? singular : plural}`;
+}
+
+function describeDuration(instance) {
+  const bits = [];
+  if (instance?.expiresAt) bits.push(relativeTs(instance.expiresAt));
+  if (instance?.usesRemaining !== null && instance?.usesRemaining !== undefined) {
+    bits.push(`for **${pluralize(Number(instance.usesRemaining), 'use')}**`);
+  }
+  if (!bits.length) return 'for a while yet';
+  return bits.join(' or ');
+}
+
 function normalizeActivityEffects(input) {
   const cfg = input || {};
   const poolCfg = cfg.effectAwardPool || {};
@@ -62,6 +106,75 @@ function getDefinition(effectId) {
   return definitions[String(effectId)] || null;
 }
 
+function parseJsonMeta(meta) {
+  if (!meta) return {};
+  if (typeof meta === 'object') return meta;
+  try {
+    return JSON.parse(meta);
+  } catch {
+    return {};
+  }
+}
+
+function pickRangeValue(explicitValue, explicitRange, defValue, defRange) {
+  const range = explicitRange || defRange;
+  if (Array.isArray(range) && range.length >= 2) {
+    return randInt(range[0], range[1]);
+  }
+  const n = Number(explicitValue ?? defValue ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function fillTemplate(line, context = {}) {
+  return String(line || '').replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => {
+    const value = context[key];
+    return value === undefined || value === null ? '' : String(value);
+  }).replace(/\s+\./g, '.').trim();
+}
+
+function buildEffectContext(def, instance = {}, extra = {}) {
+  const awardedMeta = parseJsonMeta(instance.awardedMeta || extra.awardedMeta);
+  const expiresAt = instance.expiresAt || instance.expires_at || null;
+  const usesRemaining = instance.usesRemaining ?? instance.uses_remaining ?? null;
+  const jailMinutes = awardedMeta.jailMinutes ?? extra.jailMinutes ?? null;
+  const jailUntil = extra.jailedUntil || null;
+  return {
+    effectName: def?.name || 'Echo effect',
+    effectId: def?.id || instance.effectId || instance.effect_id || '',
+    durationText: describeDuration({ expiresAt, usesRemaining }),
+    expiresRelative: relativeTs(expiresAt) || '',
+    expiresFull: absoluteTs(expiresAt) || '',
+    usesRemaining: usesRemaining ?? '',
+    jailMinutes: jailMinutes ?? '',
+    jailUntilRelative: relativeTs(jailUntil) || '',
+    jailUntilFull: absoluteTs(jailUntil) || '',
+    ...extra,
+  };
+}
+
+function genericLine(kind, ctx) {
+  if (kind === 'awarded') return `✨ **${ctx.effectName}** settles in ${ctx.durationText}.`;
+  if (kind === 'refreshed') return `✨ **${ctx.effectName}** returns and now lasts ${ctx.durationText}.`;
+  if (kind === 'rejected_same_curse') return `🕸️ **${ctx.effectName}** is already on you. Echo refuses to deepen it.`;
+  if (kind === 'rejected_existing_other') return `🌫️ Echo reaches for you, but another effect is already hanging on.`;
+  if (kind === 'triggered') return `⛓️ **${ctx.effectName}** triggers — you are jailed until ${ctx.jailUntilRelative}.`;
+  return null;
+}
+
+function buildEffectNotice(def, kind, instance = {}, extra = {}) {
+  const keyMap = {
+    awarded: 'awardLines',
+    refreshed: 'refreshLines',
+    rejected_same_curse: 'rejectSameCurseLines',
+    rejected_existing_other: 'rejectExistingOtherLines',
+    triggered: 'triggerLines',
+  };
+  const lines = def?.[keyMap[kind]];
+  const ctx = buildEffectContext(def, instance, extra);
+  const raw = pickRandom(lines) || genericLine(kind, ctx);
+  return raw ? fillTemplate(raw, ctx) : null;
+}
+
 async function getActiveEffect(guildId, userId, { clearExpired = true } = {}) {
   await ensureSchema();
   const res = await pool.query(
@@ -70,6 +183,7 @@ async function getActiveEffect(guildId, userId, { clearExpired = true } = {}) {
   );
   const row = res.rows?.[0] || null;
   if (!row) return null;
+  row.awarded_meta = parseJsonMeta(row.awarded_meta);
 
   const expiredByTime = row.expires_at ? new Date(row.expires_at).getTime() <= Date.now() : false;
   const expiredByUses = row.uses_remaining !== null && Number(row.uses_remaining) <= 0;
@@ -86,14 +200,33 @@ async function clearActiveEffect(guildId, userId) {
 }
 
 function buildAwardInstance(def, award = {}) {
-  const useTime = award.useTime === true || (!!award.durationMinutes && award.useTime !== false);
-  const useUses = award.useUses === true || (Number.isFinite(Number(award.uses)) && award.useUses !== false);
+  const useTime = award.useTime ?? def.defaultUseTime ?? !!award.durationMinutes ?? false;
+  const useUses = award.useUses ?? def.defaultUseUses ?? Number.isFinite(Number(award.uses)) ?? false;
+
   const durationMinutes = useTime
-    ? Number(award.durationMinutes ?? def.defaultDurationMinutes ?? 0)
+    ? pickRangeValue(award.durationMinutes, award.durationMinutesRange, def.defaultDurationMinutes, def.defaultDurationMinutesRange)
     : null;
   const uses = useUses
-    ? Number(award.uses ?? def.defaultUses ?? 0)
+    ? pickRangeValue(award.uses, award.usesRange, def.defaultUses, def.defaultUsesRange)
     : null;
+
+  const awardedMeta = {
+    ...(def.defaultAwardedMeta || {}),
+    ...(award.meta && typeof award.meta === 'object' ? award.meta : {}),
+  };
+
+  if (Array.isArray(def.triggers) && !awardedMeta.triggers) {
+    awardedMeta.triggers = [...def.triggers];
+  }
+  if (Array.isArray(award.triggers)) {
+    awardedMeta.triggers = [...award.triggers];
+  }
+  if (Array.isArray(def.jailMinutesRange) && awardedMeta.jailMinutes == null) {
+    awardedMeta.jailMinutes = randInt(def.jailMinutesRange[0], def.jailMinutesRange[1]);
+  }
+  if (award.jailMinutes != null) {
+    awardedMeta.jailMinutes = Number(award.jailMinutes);
+  }
 
   return {
     effectId: def.id,
@@ -104,7 +237,7 @@ function buildAwardInstance(def, award = {}) {
     expiresAt: useTime && durationMinutes > 0 ? new Date(Date.now() + durationMinutes * 60_000) : null,
     usesRemaining: useUses && uses > 0 ? uses : null,
     source: award.source ? String(award.source) : null,
-    awardedMeta: award.meta && typeof award.meta === 'object' ? award.meta : {},
+    awardedMeta,
   };
 }
 
@@ -137,12 +270,18 @@ async function awardEffect(guildId, userId, effectId, award = {}) {
       [String(guildId), String(userId), instance.effectId, instance.effectType, instance.target, instance.modifierMode,
         instance.modifierValue, instance.expiresAt, instance.usesRemaining, instance.source, JSON.stringify(instance.awardedMeta || {})]
     );
-    return { ok: true, status: 'awarded', effectId: instance.effectId };
+    return { ok: true, status: 'awarded', effectId: instance.effectId, instance, notice: buildEffectNotice(def, 'awarded', instance) };
   }
 
   if (String(current.effect_id) === String(instance.effectId)) {
     if (String(current.effect_type) === 'curse') {
-      return { ok: false, status: 'rejected_same_curse', effectId: instance.effectId };
+      return {
+        ok: false,
+        status: 'rejected_same_curse',
+        effectId: instance.effectId,
+        instance,
+        notice: buildEffectNotice(def, 'rejected_same_curse', instance),
+      };
     }
     await pool.query(
       `UPDATE user_effects
@@ -153,10 +292,17 @@ async function awardEffect(guildId, userId, effectId, award = {}) {
       [String(guildId), String(userId), instance.effectType, instance.target, instance.modifierMode,
         instance.modifierValue, instance.expiresAt, instance.usesRemaining, instance.source, JSON.stringify(instance.awardedMeta || {})]
     );
-    return { ok: true, status: 'refreshed', effectId: instance.effectId };
+    return { ok: true, status: 'refreshed', effectId: instance.effectId, instance, notice: buildEffectNotice(def, 'refreshed', instance) };
   }
 
-  return { ok: false, status: 'rejected_existing_other', activeEffectId: String(current.effect_id) };
+  return {
+    ok: false,
+    status: 'rejected_existing_other',
+    activeEffectId: String(current.effect_id),
+    effectId: instance.effectId,
+    instance,
+    notice: buildEffectNotice(def, 'rejected_existing_other', instance),
+  };
 }
 
 function pickWeighted(entries) {
@@ -247,7 +393,7 @@ async function consumeEffectUse(guildId, userId, activeEffect) {
   const current = await getActiveEffect(guildId, userId);
   if (!current || String(current.effect_id) !== String(activeEffect.effect_id)) return;
 
-  let nextUses = current.uses_remaining === null ? null : Number(current.uses_remaining) - 1;
+  const nextUses = current.uses_remaining === null ? null : Number(current.uses_remaining) - 1;
   const expiredByTime = current.expires_at ? new Date(current.expires_at).getTime() <= Date.now() : false;
   const expiredByUses = nextUses !== null && nextUses <= 0;
 
@@ -262,6 +408,43 @@ async function consumeEffectUse(guildId, userId, activeEffect) {
       [String(guildId), String(userId), nextUses]
     );
   }
+}
+
+async function handleTriggeredEffectEvent({ guildId, userId, eventKey, context = {} }) {
+  const active = await getActiveEffect(guildId, userId);
+  if (!active || String(active.target) !== 'trigger_event') return { triggered: false };
+
+  const def = getDefinition(active.effect_id);
+  if (!def || def.enabled === false) return { triggered: false };
+
+  const awardedMeta = parseJsonMeta(active.awarded_meta);
+  const triggers = Array.isArray(awardedMeta.triggers) ? awardedMeta.triggers : Array.isArray(def.triggers) ? def.triggers : [];
+  if (!triggers.includes(String(eventKey))) return { triggered: false };
+
+  if (String(active.modifier_mode) === 'jail_on_failure') {
+    const jailMinutes = Number(awardedMeta.jailMinutes || def.defaultJailMinutes || active.modifier_value || 0);
+    if (!Number.isFinite(jailMinutes) || jailMinutes <= 0) return { triggered: false };
+
+    const jailedUntil = await setJail(guildId, userId, jailMinutes);
+    await clearActiveEffect(guildId, userId);
+    return {
+      triggered: true,
+      action: 'jail',
+      jailMinutes,
+      jailedUntil,
+      effectId: String(active.effect_id),
+      notice: buildEffectNotice(def, 'triggered', {
+        effectId: String(active.effect_id),
+        awardedMeta,
+      }, {
+        ...context,
+        jailedUntil,
+        jailMinutes,
+      }),
+    };
+  }
+
+  return { triggered: false };
 }
 
 async function creditUserWithEffects({ guildId, userId, amount, type, meta = {}, activityEffects, awardSource }) {
@@ -321,6 +504,9 @@ module.exports = {
   maybeAwardEffectFromActivity,
   previewMoneyEffect,
   consumeEffectUse,
+  handleTriggeredEffectEvent,
   creditUserWithEffects,
   bankPayoutWithEffects,
+  buildEffectNotice,
+  describeDuration,
 };

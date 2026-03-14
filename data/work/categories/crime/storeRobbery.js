@@ -6,7 +6,7 @@ const path = require("path");
 const { pool } = require(path.join(process.cwd(), "utils", "db"));
 const { setJail } = require(path.join(process.cwd(), "utils", "jail"));
 const { tryDebitUser, addServerBank } = require(path.join(process.cwd(), "utils", "economy"));
-const { creditUserWithEffects } = require(path.join(process.cwd(), "utils", "effectSystem"));
+const { creditUserWithEffects, handleTriggeredEffectEvent } = require(path.join(process.cwd(), "utils", "effectSystem"));
 // Scenarios (data-only)
 let scenarios = require("./storeRobbery.scenarios");
 
@@ -514,11 +514,24 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
             : `🚓 **BUSTED.** Fine: **$${fine.toLocaleString()}** (paid **$${taken.toLocaleString()}**).`
         );
 
-        const jailedMinutes = await maybeJail(outcome);
-        if (jailedMinutes > 0) {
-          resultLines.push(`⛓️ You were jailed for **${jailedMinutes} minutes**. (All jobs blocked)`);
+        const triggerJail = await handleTriggeredEffectEvent({
+          guildId,
+          userId,
+          eventKey: 'crime_fail',
+          context: { source: 'store_robbery' },
+        });
+
+        if (triggerJail?.triggered && triggerJail.notice) {
+          resultLines.push(triggerJail.notice);
         } else {
-          resultLines.push("😮‍💨 You avoided jail this time.");
+          const jailedMinutes = await maybeJail(outcome);
+          if (jailedMinutes > 0) {
+            const jailedUntil = new Date(Date.now() + jailedMinutes * 60_000);
+            const ts = Math.floor(jailedUntil.getTime() / 1000);
+            resultLines.push(`⛓️ You were jailed for **${jailedMinutes} minutes** — release <t:${ts}:R>.`);
+          } else {
+            resultLines.push("😮‍💨 You avoided jail this time.");
+          }
         }
       }
 

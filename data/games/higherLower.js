@@ -17,7 +17,7 @@ const {
 const { activeGames } = require("../../utils/gameManager");
 const { setActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 const { tryDebitUser, bankToUserIfEnough } = require("../../utils/economy");
-const { bankPayoutWithEffects } = require("../../utils/effectSystem");
+const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
@@ -406,6 +406,15 @@ async function resolveRound(table) {
     } else {
       p.alive = false;
       p.pick = null;
+      const triggerJail = await handleTriggeredEffectEvent({
+        guildId: table.guildId,
+        userId: p.userId,
+        eventKey: 'casino_loss',
+        context: { source: 'higherlower' },
+      }).catch(() => null);
+      if (triggerJail?.triggered && triggerJail.notice) {
+        await table.channel.send(`↳ <@${p.userId}> ${triggerJail.notice}`).catch(() => {});
+      }
       try { await unlockAchievement(table.channel, table.guildId, p.userId, ACH.FIRST_BUST); } catch {}
     }
   }

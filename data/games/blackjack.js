@@ -25,7 +25,7 @@ const {
   getServerBank,
   getWalletBalance,
 } = require("../../utils/economy");
-const { previewMoneyEffect, consumeEffectUse, maybeAwardEffectFromActivity } = require("../../utils/effectSystem");
+const { previewMoneyEffect, consumeEffectUse, maybeAwardEffectFromActivity, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
@@ -600,6 +600,19 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       if (p.result === "blackjack_win") label = "🟣 Blackjack";
 
       let paid = 0;
+      let jailNote = null;
+
+      if (p.payoutWanted === 0) {
+        const triggerJail = await handleTriggeredEffectEvent({
+          guildId,
+          userId: p.userId,
+          eventKey: 'casino_loss',
+          context: { source: 'blackjack' },
+        }).catch(() => null);
+        if (triggerJail?.triggered && triggerJail.notice) {
+          jailNote = triggerJail.notice;
+        }
+      }
 
       if (p.payoutWanted > 0) {
         const effectPreview = await previewMoneyEffect({ guildId, userId: p.userId, activityEffects: ACTIVITY_EFFECTS, amount: p.payoutWanted });
@@ -688,7 +701,9 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
 
       const handTag = p.handLabel ? ` (${p.handLabel})` : "";
       const paidText = paid > 0 ? ` → Paid **$${paid.toLocaleString()}**` : "";
-      resultsLines.push(`${p.user}${handTag} — **${pv}** — ${label}${paidText}`);
+      const jailText = jailNote ? `
+↳ ${jailNote}` : "";
+      resultsLines.push(`${p.user}${handTag} — **${pv}** — ${label}${paidText}${jailText}`);
     }
 
     const dealerLine = `${dealerHand.map(cardStr).join(" ")} (**${dealerValue}**)`;
