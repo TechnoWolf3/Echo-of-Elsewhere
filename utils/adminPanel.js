@@ -14,6 +14,7 @@ const {
 const BOT_MASTER_ROLE_ID = '741251069002121236';
 const botGames = require('./botGames');
 const lottery = require('./lottery');
+const effectSystem = require('./effectSystem');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -27,6 +28,7 @@ const CATEGORIES = [
   { value: 'economy', label: 'Economy' },
   { value: 'moderation', label: 'Moderation' },
   { value: 'boards', label: 'Boards' },
+  { value: 'effects', label: 'Effects' },
   { value: 'patchboard', label: 'Patchboard' },
   { value: 'shop', label: 'Shop / Inventory' },
   { value: 'botgames', label: 'Bot Games' },
@@ -40,6 +42,12 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'economy:addserverbal', label: 'Add Server Bank', style: ButtonStyle.Primary, modal: true },
     { id: 'economy:serverbal', label: 'View Server Bank', style: ButtonStyle.Secondary, modal: false },
     { id: 'economy:powerballbuyers', label: 'Powerball Buyers', style: ButtonStyle.Secondary, modal: false },
+  ],
+  effects: [
+    { id: 'effects:give', label: 'Give Effect', style: ButtonStyle.Primary, modal: true },
+    { id: 'effects:view', label: 'View Active', style: ButtonStyle.Secondary, modal: true },
+    { id: 'effects:clear', label: 'Clear Effect', style: ButtonStyle.Danger, modal: true },
+    { id: 'effects:list', label: 'List Effects', style: ButtonStyle.Secondary, modal: false },
   ],
   moderation: [
     { id: 'moderation:purge', label: 'Purge Messages', style: ButtonStyle.Danger, modal: true },
@@ -289,6 +297,32 @@ function buildModal(actionId) {
   if (actionId === 'economy:addserverbal') {
     modal.setTitle('Add Server Bank');
     modal.addComponents(addInput('amount', 'Amount', TextInputStyle.Short, true, '5000'));
+    return modal;
+  }
+
+
+  // Effects
+  if (actionId === 'effects:give') {
+    modal.setTitle('Give Effect');
+    modal.addComponents(
+      addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'),
+      addInput('effect_id', 'Effect ID', TextInputStyle.Short, true, 'echo_blessing_minor_percent'),
+      addInput('duration_minutes', 'Duration minutes (blank = default/random)', TextInputStyle.Short, false, '30'),
+      addInput('uses', 'Uses (blank = default)', TextInputStyle.Short, false, '1'),
+      addInput('value', 'Value override (blank = default)', TextInputStyle.Short, false, '15')
+    );
+    return modal;
+  }
+
+  if (actionId === 'effects:view') {
+    modal.setTitle('View Active Effect');
+    modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'));
+    return modal;
+  }
+
+  if (actionId === 'effects:clear') {
+    modal.setTitle('Clear Active Effect');
+    modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'));
     return modal;
   }
 
@@ -620,6 +654,102 @@ async function runActionFromId({ interaction, actionId, fields }) {
     if (!raw) return null;
     return fetchRoleSafe(guild, raw);
   };
+
+
+  // EFFECTS
+  if (actionId.startsWith('effects:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'list') {
+      const defs = effectSystem.listEffectDefinitions();
+      const lines = defs.map((d) => `• \`${d.id}\` — **${d.name}** (${d.type}, ${d.target}, ${d.modifierMode})${d.enabled ? '' : ' [disabled]'}`);
+      const chunks = [];
+      let current = `🪄 **Available Effects**\n\n`;
+      for (const line of lines) {
+        if ((current + line + `\n`).length > 1900) {
+          chunks.push(current.trim());
+          current = '';
+        }
+        current += `${line}\n`;
+      }
+      if (current.trim()) chunks.push(current.trim());
+      if (!chunks.length) return safeReply('No effects are currently defined.');
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.reply({ content: chunks[0], flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.followUp({ content: chunks[0], flags: MessageFlags.Ephemeral });
+      }
+      for (let i = 1; i < chunks.length; i++) {
+        await interaction.followUp({ content: chunks[i], flags: MessageFlags.Ephemeral });
+      }
+      return true;
+    }
+
+    const target = await userFromField('user_id');
+    if (!target) return safeReply('❌ Could not resolve that user. Use a User ID or mention.');
+
+    if (sub === 'view') {
+      const active = await effectSystem.getActiveEffect(guild.id, target.id);
+      if (!active) return safeReply(`🪄 **${target.username}** has no active effect.`);
+      const def = effectSystem.getDefinition(active.effect_id);
+      const lines = [
+        `🪄 **Active Effect for ${target.username}**`,
+        `• Name: **${def?.name || active.effect_id}**`,
+        `• ID: \`${active.effect_id}\``,
+        `• Type: **${active.effect_type}**`,
+        `• Target: \`${active.target}\``,
+        `• Mode: \`${active.modifier_mode}\``,
+        `• Value: **${active.modifier_value}**`,
+        `• Duration: ${effectSystem.formatActiveEffectLine(active).replace(/^\*\*.*?\*\*\s+—\s+/, '')}`,
+      ];
+      if (active.expires_at) {
+        const ts = Math.floor(new Date(active.expires_at).getTime() / 1000);
+        lines.push(`• Expires: <t:${ts}:F> (<t:${ts}:R>)`);
+      }
+      if (active.uses_remaining !== null && active.uses_remaining !== undefined) {
+        lines.push(`• Uses left: **${active.uses_remaining}**`);
+      }
+      return safeReply(lines.join('\n'));
+    }
+
+    if (sub === 'clear') {
+      await effectSystem.clearActiveEffect(guild.id, target.id);
+      return safeReply(`🧹 Cleared any active effect from **${target.username}**.`);
+    }
+
+    if (sub === 'give') {
+      const effectId = String(fields.effect_id || '').trim();
+      const def = effectSystem.getDefinition(effectId);
+      if (!def) return safeReply('❌ Unknown effect ID. Use **List Effects** to see valid IDs.');
+      const award = { source: 'admin_panel' };
+      if (fields.duration_minutes?.trim()) {
+        award.useTime = true;
+        award.durationMinutes = Number(fields.duration_minutes.trim());
+      }
+      if (fields.uses?.trim()) {
+        award.useUses = true;
+        award.uses = Number(fields.uses.trim());
+      }
+      if (fields.value?.trim()) {
+        award.value = Number(fields.value.trim());
+      }
+      const result = await effectSystem.awardEffect(guild.id, target.id, effectId, award);
+      const notice = result?.notice ? `\n${result.notice}` : '';
+      if (result.status === 'awarded') {
+        return safeReply(`✅ Applied **${def.name}** to **${target.username}**.${notice}`);
+      }
+      if (result.status === 'refreshed') {
+        return safeReply(`🔄 Refreshed **${def.name}** on **${target.username}**.${notice}`);
+      }
+      if (result.status === 'rejected_same_curse') {
+        return safeReply(`⛔ **${target.username}** already has that curse active.${notice}`);
+      }
+      if (result.status === 'rejected_existing_other') {
+        return safeReply(`⛔ **${target.username}** already has a different active effect (\`${result.activeEffectId}\`).${notice}`);
+      }
+      return safeReply(`❌ Could not apply that effect to **${target.username}**.`);
+    }
+  }
 
   // ECONOMY
   if (actionId === 'economy:serverbal') {

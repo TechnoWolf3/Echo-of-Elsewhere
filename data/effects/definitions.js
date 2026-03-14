@@ -99,9 +99,9 @@ module.exports = {
       '💀 Echo won’t refresh the same curse twice. You are already carrying it.',
     ],
   },
-  echo_curse_verdict: {
+  echo_curse_comdemned: {
     id: 'echo_curse_verdict',
-    name: "Echo's Verdict",
+    name: "Echo's Condemned",
     type: 'curse',
     enabled: true,
     target: 'trigger_event',
@@ -111,15 +111,16 @@ module.exports = {
     allowUseDuration: true,
     defaultUseTime: true,
     defaultUseUses: true,
-    defaultDurationMinutesRange: [20, 60],
+    defaultDurationMinutesRange: [20, 90],
     defaultUses: 1,
     defaultAwardWeight: 1,
     triggers: ['crime_fail', 'casino_loss'],
-    jailMinutesRange: [5, 15],
+    jailMinutesRange: [5, 20],
     awardLines: [
       '⛓️ **{effectName}** shadows you until {expiresRelative}. Your next failed crime or casino loss will send you away.',
       '⚖️ Echo has passed judgement. Until {expiresRelative}, your next failed crime or casino loss means a cell door.',
       '🚨 **{effectName}** hangs over you until {expiresRelative}. One failed crime or casino loss and you are done.',
+      '🔮 The Council of the Veil is watching you until {expiresRelative}, failure is not an option! You are now part of **{effectName}**. Your next failure will result in jail!'
     ],
     rejectSameCurseLines: [
       '⛓️ **{effectName}** is already waiting for your next mistake. Echo will not refresh it.',

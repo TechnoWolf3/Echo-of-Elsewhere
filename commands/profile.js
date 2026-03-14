@@ -8,6 +8,7 @@ const {
 } = require('discord.js');
 const { pool } = require('../utils/db');
 const economy = require('../utils/economy');
+const effectSystem = require('../utils/effectSystem');
 
 function n0(v) {
   const x = Number(v);
@@ -111,6 +112,12 @@ module.exports = {
       achievementCount = achRes.rows[0]?.cnt ?? 0;
     } catch (_) {}
 
+    // Active Effect
+    let activeEffect = null;
+    try {
+      activeEffect = await effectSystem.getActiveEffect(guildId, user.id);
+    } catch (_) {}
+
     // Economy summary from transactions
     let earned = 0;
     let spent = 0;
@@ -144,6 +151,7 @@ module.exports = {
           { name: 'Wealth', value: money(snapshot.total), inline: true },
           { name: 'Lifetime Profit', value: moneySigned(profit), inline: true },
           { name: 'Achievements', value: fmtInt(achievementCount), inline: true },
+          { name: 'Active Effect', value: effectSystem.formatActiveEffectLine(activeEffect), inline: false },
           {
             name: 'Jobs',
             value: `Completed: **${fmtInt(totalJobs)}**\nLevel: **${fmtInt(jobLevel)}** (XP: ${fmtInt(jobXP)})`,
@@ -208,6 +216,42 @@ module.exports = {
         .setFooter({ text: 'Achievements • Snapshot' });
     };
 
+    const buildEffects = async () => {
+      const active = await effectSystem.getActiveEffect(guildId, user.id).catch(() => null);
+      const def = active ? effectSystem.getDefinition(active.effect_id) : null;
+      const embed = new EmbedBuilder()
+        .setAuthor({ name: `${user.username} • Effects`, iconURL: avatarUrl })
+        .setThumbnail(avatarUrl);
+
+      if (!active) {
+        return embed
+          .setDescription('No blessing or curse is currently active.')
+          .setFooter({ text: 'Effects • Echo is quiet for now' });
+      }
+
+      const lines = [
+        `**${def?.name || active.effect_id}**`,
+        `Type: **${active.effect_type}**`,
+        `Target: \`${active.target}\``,
+        `Mode: \`${active.modifier_mode}\``,
+      ];
+
+      if (String(active.target) === 'money_reward') {
+        lines.push(`Value: **${Number(active.modifier_value) > 0 ? '+' : ''}${active.modifier_value}**`);
+      }
+      if (active.expires_at) {
+        const ts = Math.floor(new Date(active.expires_at).getTime() / 1000);
+        lines.push(`Expires: <t:${ts}:F> (<t:${ts}:R>)`);
+      }
+      if (active.uses_remaining !== null && active.uses_remaining !== undefined) {
+        lines.push(`Uses left: **${active.uses_remaining}**`);
+      }
+
+      return embed
+        .setDescription(lines.join('\n'))
+        .setFooter({ text: 'Effects • Active blessing/curse' });
+    };
+
     const buildStatement = async () => {
       let rows = [];
       try {
@@ -251,6 +295,7 @@ module.exports = {
         { label: 'Jobs', value: 'jobs', description: 'Work progress & XP' },
         { label: 'Economy', value: 'economy', description: 'Earnings, spending, fees, profit' },
         { label: 'Achievements', value: 'achievements', description: 'Unlocked achievements snapshot' },
+        { label: 'Effects', value: 'effects', description: 'Active blessing or curse' },
         { label: 'Statement', value: 'statement', description: 'Recent transaction history' }
       );
 
@@ -308,6 +353,7 @@ module.exports = {
         else if (v === 'jobs') next = await buildJobs();
         else if (v === 'economy') next = await buildEconomy();
         else if (v === 'achievements') next = await buildAchievements();
+        else if (v === 'effects') next = await buildEffects();
         else if (v === 'statement') next = await buildStatement();
         else next = buildOverview();
 

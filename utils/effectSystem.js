@@ -494,6 +494,34 @@ async function bankPayoutWithEffects({ guildId, userId, amount, type, meta = {},
   return { ok: true, ...preview, payoutResult, awardResult };
 }
 
+
+function formatActiveEffectLine(active) {
+  if (!active) return 'None active';
+  const def = getDefinition(active.effect_id);
+  const name = def?.name || String(active.effect_id || 'Unknown effect');
+  const type = String(active.effect_type || '').toLowerCase();
+  const label = type ? `${name} • ${type}` : name;
+  const duration = describeDuration({
+    expiresAt: active.expires_at || active.expiresAt || null,
+    usesRemaining: active.uses_remaining ?? active.usesRemaining ?? null,
+  });
+  return `**${label}** — ${duration}`;
+}
+
+function listEffectDefinitions() {
+  return Object.values(definitions)
+    .filter(Boolean)
+    .map((def) => ({
+      id: String(def.id),
+      name: String(def.name || def.id),
+      type: String(def.type || 'effect'),
+      target: String(def.target || 'unknown'),
+      modifierMode: String(def.modifierMode || 'unknown'),
+      enabled: def.enabled !== false,
+    }))
+    .sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
+}
+
 module.exports = {
   DEFAULT_ACTIVITY_EFFECTS,
   normalizeActivityEffects,
@@ -509,4 +537,7 @@ module.exports = {
   bankPayoutWithEffects,
   buildEffectNotice,
   describeDuration,
+  getDefinition,
+  listEffectDefinitions,
+  formatActiveEffectLine,
 };
