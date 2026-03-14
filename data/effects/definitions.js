@@ -1,7 +1,7 @@
 module.exports = {
   echo_blessing_minor_percent: {
     id: 'echo_blessing_minor_percent',
-    name: "Echo's Blessing",
+    name: "Echo's Favour",
     type: 'blessing',
     enabled: true,
     target: 'money_reward',
@@ -15,23 +15,23 @@ module.exports = {
     defaultUses: 3,
     defaultAwardWeight: 10,
     awardLines: [
-      '✨ **{effectName}** lands softly on your balance. It will hold until {expiresRelative}.',
-      '💫 Echo tips the odds your way. **{effectName}** lingers until {expiresRelative}.',
-      '🌟 A brighter turn from Echo — **{effectName}** will stay with you until {expiresRelative}.',
+      '✨ **{effectName}** lands softly on your balance, you will receive a bonus 15% from rewards. The blessing ends {expiresRelative}.',
+      '💫 Echo tips the odds your way offering a 15% payrise. **{effectName}** lingers, ending {expiresRelative}.',
+      '🌟 A brighter turn from Echo, you have been deemed worthy of a 15% pay increase! — **{effectName}** will stay with you, dissolving {expiresRelative}.',
     ],
     refreshLines: [
-      '✨ **{effectName}** returns and now stretches to {expiresRelative}.',
-      '💫 Echo renews your fortune. **{effectName}** now lasts until {expiresRelative}.',
+      '✨ **{effectName}** returns and now stretches time, closing out {expiresRelative}.',
+      '💫 Echo renews your fortune. **{effectName}** will leave you {expiresRelative}.',
     ],
   },
   echo_blessing_minor_flat: {
     id: 'echo_blessing_minor_flat',
-    name: "Echo's Blessing",
+    name: "Echo's Tribute",
     type: 'blessing',
     enabled: true,
     target: 'money_reward',
     modifierMode: 'flat',
-    defaultValue: 500,
+    defaultValue: 2000,
     allowTimeDuration: true,
     allowUseDuration: true,
     defaultUseTime: true,
@@ -40,18 +40,18 @@ module.exports = {
     defaultUses: 3,
     defaultAwardWeight: 8,
     awardLines: [
-      '✨ **{effectName}** settles in. The extra shine lasts until {expiresRelative}.',
-      '💰 Echo drops a little luck in your pocket — **{effectName}** remains until {expiresRelative}.',
-      '🌠 Echo leaves a richer trail behind you. **{effectName}** lasts until {expiresRelative}.',
+      '✨ **{effectName}** settles in. The extra shine expires {expiresRelative}.',
+      '💰 Echo drops a little luck in your pocket — **{effectName}** fades {expiresRelative}.',
+      '🌠 Echo leaves a richer trail behind you. **{effectName}** becomes dull {expiresRelative}.',
     ],
     refreshLines: [
-      '✨ **{effectName}** is refreshed and now runs until {expiresRelative}.',
-      '💰 Echo refreshes your boost. **{effectName}** now lasts until {expiresRelative}.',
+      '✨ **{effectName}** is refreshed and will wear off {expiresRelative}.',
+      '💰 Echo refreshes your boost. **{effectName}** its glow fades {expiresRelative}.',
     ],
   },
   echo_curse_minor_percent: {
     id: 'echo_curse_minor_percent',
-    name: "Echo's Curse",
+    name: "Echo's Burden",
     type: 'curse',
     enabled: true,
     target: 'money_reward',
@@ -65,9 +65,9 @@ module.exports = {
     defaultUses: 3,
     defaultAwardWeight: 10,
     awardLines: [
-      '🕸️ **{effectName}** takes hold. Your luck sours until {expiresRelative}.',
-      '🌫️ Echo dims your next payouts — **{effectName}** lingers until {expiresRelative}.',
-      '🖤 A colder mood from Echo. **{effectName}** hangs on until {expiresRelative}.',
+      '🕸️ **{effectName}** takes hold. Your luck sours, you will be free {expiresRelative}.',
+      '🌫️ Echo dims your next payouts — **{effectName}** lingers, fading out {expiresRelative}.',
+      '🖤 A colder mood from Echo. **{effectName}** hangs on, expiring {expiresRelative}.',
     ],
     rejectSameCurseLines: [
       '🕸️ The same curse is already wrapped around you. Echo leaves it be.',
@@ -76,12 +76,12 @@ module.exports = {
   },
   echo_curse_minor_flat: {
     id: 'echo_curse_minor_flat',
-    name: "Echo's Curse",
+    name: "Echo's Tax",
     type: 'curse',
     enabled: true,
     target: 'money_reward',
     modifierMode: 'flat',
-    defaultValue: -500,
+    defaultValue: -1000,
     allowTimeDuration: true,
     allowUseDuration: true,
     defaultUseTime: true,
@@ -90,9 +90,9 @@ module.exports = {
     defaultUses: 3,
     defaultAwardWeight: 8,
     awardLines: [
-      '🕸️ **{effectName}** settles over your wallet until {expiresRelative}.',
-      '💀 Echo skims a little off the top. **{effectName}** remains until {expiresRelative}.',
-      '🌫️ A meaner edge from Echo — **{effectName}** lasts until {expiresRelative}.',
+      '🕸️ **{effectName}** settles over your wallet, your debt will finalise {expiresRelative}.',
+      '💀 Echo skims a little off the top. **{effectName}** remains for {expiresRelative}.',
+      '🌫️ A meaner edge from Echo — **{effectName}** takes hold, freeing you {expiresRelative}.',
     ],
     rejectSameCurseLines: [
       '🕸️ That curse is already active. Echo refuses to let it last forever.',
@@ -117,17 +117,17 @@ module.exports = {
     triggers: ['crime_fail', 'casino_loss'],
     jailMinutesRange: [5, 20],
     awardLines: [
-      '⛓️ **{effectName}** shadows you until {expiresRelative}. Your next failed crime or casino loss will send you away.',
-      '⚖️ Echo has passed judgement. Until {expiresRelative}, your next failed crime or casino loss means a cell door.',
-      '🚨 **{effectName}** hangs over you until {expiresRelative}. One failed crime or casino loss and you are done.',
-      '🔮 The Council of the Veil is watching you until {expiresRelative}, failure is not an option! You are now part of **{effectName}**. Your next failure will result in jail!'
+      '⛓️ **{effectName}** shadows you, they have somewhere to be {expiresRelative}. Your next failed crime or casino loss will send you away.',
+      '⚖️ Echo has passed judgement. keeping tabs, you pass judgment {expiresRelative}, your next failed crime or casino loss means a cell door.',
+      '🚨 **{effectName}** hangs over you, prove yourself {expiresRelative}. One failed crime or casino loss and you are done.',
+      '🔮 The Council of the Veil is watching you, show your skills {expiresRelative}, failure is not an option! You are now part of **{effectName}**. Your next failure will result in jail!'
     ],
     rejectSameCurseLines: [
       '⛓️ **{effectName}** is already waiting for your next mistake. Echo will not refresh it.',
       '⚖️ Echo has already spoken. The verdict stays exactly as it is.',
     ],
     triggerLines: [
-      '⛓️ **{effectName}** snaps shut. You are jailed for **{jailMinutes} minutes** — release {jailUntilRelative}.',
+      '⛓️ **{effectName}**s door snaps shut. You are jailed for **{jailMinutes} minutes** — release {jailUntilRelative}.',
       '⚖️ Echo cashes in the verdict. **{jailMinutes} minutes** in jail — out {jailUntilRelative}.',
       '🚔 The curse fires. Straight to jail for **{jailMinutes} minutes** — release {jailUntilRelative}.',
     ],

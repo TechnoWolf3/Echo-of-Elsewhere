@@ -114,9 +114,9 @@ module.exports = {
     blockedBlessings: [],
     blockedCurses: [],
     effectAwardPool: {
-      nothingWeight: 0,
-      blessingWeight: 0,
-      curseWeight: 100,
+      nothingWeight: 75,
+      blessingWeight: 25,
+      curseWeight: 0,
       blessingWeights: {},
       curseWeights: {},
     },
