@@ -71,6 +71,20 @@ const VALUABLE_MIN = 1200;
 const VALUABLE_MAX = 6500;
 
 // UX
+const ACTIVITY_EFFECTS = {
+  effectsApply: true,
+  canAwardEffects: true,
+  blockedBlessings: [],
+  blockedCurses: [],
+  effectAwardPool: {
+    nothingWeight: 100,
+    blessingWeight: 0,
+    curseWeight: 0,
+    blessingWeights: {},
+    curseWeights: {},
+  },
+};
+
 const RUN_TIMEOUT_MS = 6 * 60_000;
 const RESULTS_LINGER_MS = 25_000;
 
