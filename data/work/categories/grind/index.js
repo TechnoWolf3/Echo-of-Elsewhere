@@ -6,7 +6,7 @@ module.exports = {
     footer: "Fatigue is shared across all Grind jobs.",
   },
 
-  list: ["storeClerk", "warehousing", "fishing", "quarry"],
+  list: ["storeClerk", "warehousing", "fishing", "quarry", "taxiDriver"],
 
   jobs: {
     storeClerk: {
@@ -28,6 +28,11 @@ module.exports = {
       title: "🪨 Quarry",
       desc: "Prospect dig sites and go deeper for better finds (watch the cave-in risk).",
       buttonId: "grind:quarry",
+    },
+    taxiDriver: {
+      title: "🚕 Taxi Driver",
+      desc: "Work a five-fare shift, judge passengers, and memorise each route on the fly.",
+      buttonId: "grind:taxi",
     },
   },
 };

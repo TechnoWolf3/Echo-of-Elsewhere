@@ -45,6 +45,7 @@ const startStoreClerk = require("../data/work/categories/grind/storeClerk");
 const startWarehousing = require("../data/work/categories/grind/warehousing");
 const startFishing = require("../data/work/categories/grind/fishing");
 const startQuarry = require("../data/work/categories/grind/quarry");
+const startTaxiDriver = require("../data/work/categories/grind/taxiDriver");
 
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
@@ -1159,7 +1160,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
         // ✅ Ack once for safety (prevents "This interaction failed")
         // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
         const isClerkRuntime = actionId.startsWith("grind_clerk:");
-        if (isClerkRuntime) {
+        const isTaxiRuntime = actionId.startsWith("grind_taxi:");
+        if (isClerkRuntime || isTaxiRuntime) {
           resetInactivity();
           cancelAutoReturn();
           // keep the /job board alive while the grind module runs
@@ -1289,6 +1291,17 @@ function scheduleReturnToCategory(delayMs = 5000) {
           if (key === "quarry") {
             session.view = "grind_run";
             await startQuarry(btn, { pool, boardMsg: msg, guildId, userId });
+
+            await new Promise((r) => setTimeout(r, 1500));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+            session.view = "grind";
+            await redraw();
+            return;
+          }
+
+          if (key === "taxi") {
+            session.view = "grind_run";
+            await startTaxiDriver(btn, { pool, boardMsg: msg, guildId, userId });
 
             await new Promise((r) => setTimeout(r, 1500));
             collector.resetTimer({ time: BOARD_INACTIVITY_MS });
