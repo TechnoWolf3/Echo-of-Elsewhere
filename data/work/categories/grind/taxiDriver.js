@@ -201,7 +201,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
 
     function currentComponents() {
       if (state === "offer") return [offerControls(), bottomControls()];
-      if (state === "preview") return [routeControls({ disabled: true }), bottomControls()];
+      if (state === "preview") return [routeControls(), bottomControls()];
       if (state === "route") return [routeControls(), bottomControls()];
       return resultControls();
     }
@@ -241,7 +241,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
           "**Memorise this route:**",
           routeToText(passenger.route, passenger.route.length),
           "",
-          "The full list disappears after the first move.",
+          "Directions stay visible until you make the first turn.",
         ].join("\n");
       } else if (state === "route") {
         description = [
@@ -418,6 +418,8 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
       }
 
       const hardCapMs = Math.floor(MAX_FATIGUE_MS * OVERTIME_HARDCAP_MULT);
+      if (!String(i.customId || "").startsWith("grind_taxi:")) return;
+
       if (overtime && (lastTick?.fatigueMs || 0) >= hardCapMs) {
         await i.deferUpdate().catch(() => {});
         return endShift("💥 You nodded off behind the wheel and the shift ended in a hard burnout.", { forceLock: true });
@@ -443,7 +445,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
         await i.deferUpdate().catch(() => {});
         if (state !== "offer") return;
         clearPreviewTimer();
-        state = "route";
+        state = "preview";
         stepIndex = 0;
         return showState();
       }
@@ -460,7 +462,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
 
       if (i.customId.startsWith("grind_taxi:turn:")) {
         await i.deferUpdate().catch(() => {});
-        if (state !== "route") return;
+        if (state !== "preview" && state !== "route") return;
 
         const chosen = i.customId.split(":")[2];
         const normalized = chosen === "straight" ? "Straight" : chosen === "left" ? "Left" : "Right";
@@ -471,6 +473,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
         }
 
         stepIndex += 1;
+        if (state === "preview") state = "route";
         if (stepIndex >= passenger.route.length) {
           return resolveSuccessfulRide();
         }
