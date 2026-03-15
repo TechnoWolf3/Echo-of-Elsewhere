@@ -14,7 +14,6 @@ const JOB_COOLDOWN_SECONDS = 45;
 const SHIFT_TTL_MS = 7 * 60_000;
 const OVERTIME_HARDCAP_MULT = 1.5;
 const SHIFT_TARGET = 5;
-const PREVIEW_MS = 4200;
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -136,14 +135,37 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
     let stepIndex = 0;
     let previewTimer = null;
 
-    const acceptBtn = new ButtonBuilder().setCustomId("grind_taxi:accept").setLabel("Accept").setStyle(ButtonStyle.Success);
-    const declineBtn = new ButtonBuilder().setCustomId("grind_taxi:decline").setLabel("Decline").setStyle(ButtonStyle.Secondary);
-    const leftBtn = new ButtonBuilder().setCustomId("grind_taxi:turn:left").setLabel("⬅ Left").setStyle(ButtonStyle.Primary);
-    const straightBtn = new ButtonBuilder().setCustomId("grind_taxi:turn:straight").setLabel("⬆ Straight").setStyle(ButtonStyle.Primary);
-    const rightBtn = new ButtonBuilder().setCustomId("grind_taxi:turn:right").setLabel("Right ➡").setStyle(ButtonStyle.Primary);
-    const nextBtn = new ButtonBuilder().setCustomId("grind_taxi:next").setLabel("Next Fare").setStyle(ButtonStyle.Success);
-    const pushBtn = new ButtonBuilder().setCustomId("grind_taxi:push").setLabel("Push on").setStyle(ButtonStyle.Secondary);
-    const endBtn = new ButtonBuilder().setCustomId("grind_taxi:end").setLabel("End shift").setStyle(ButtonStyle.Danger);
+    function buildAcceptBtn() {
+      return new ButtonBuilder().setCustomId("grind_taxi:accept").setLabel("Accept").setStyle(ButtonStyle.Success);
+    }
+
+    function buildDeclineBtn() {
+      return new ButtonBuilder().setCustomId("grind_taxi:decline").setLabel("Decline").setStyle(ButtonStyle.Secondary);
+    }
+
+    function buildLeftBtn(disabled = false) {
+      return new ButtonBuilder().setCustomId("grind_taxi:turn:left").setLabel("⬅ Left").setStyle(ButtonStyle.Primary).setDisabled(disabled);
+    }
+
+    function buildStraightBtn(disabled = false) {
+      return new ButtonBuilder().setCustomId("grind_taxi:turn:straight").setLabel("⬆ Straight").setStyle(ButtonStyle.Primary).setDisabled(disabled);
+    }
+
+    function buildRightBtn(disabled = false) {
+      return new ButtonBuilder().setCustomId("grind_taxi:turn:right").setLabel("Right ➡").setStyle(ButtonStyle.Primary).setDisabled(disabled);
+    }
+
+    function buildNextBtn() {
+      return new ButtonBuilder().setCustomId("grind_taxi:next").setLabel("Next Fare").setStyle(ButtonStyle.Success);
+    }
+
+    function buildPushBtn() {
+      return new ButtonBuilder().setCustomId("grind_taxi:push").setLabel("Push on").setStyle(ButtonStyle.Secondary);
+    }
+
+    function buildEndBtn() {
+      return new ButtonBuilder().setCustomId("grind_taxi:end").setLabel("End shift").setStyle(ButtonStyle.Danger);
+    }
 
     function clearPreviewTimer() {
       if (previewTimer) clearTimeout(previewTimer);
@@ -155,27 +177,31 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
       return Math.max(0, Math.floor(baseAmount * (1 - pct / 100)));
     }
 
-    function routeControls() {
-      return new ActionRowBuilder().addComponents(leftBtn, straightBtn, rightBtn);
+    function routeControls({ disabled = false } = {}) {
+      return new ActionRowBuilder().addComponents(
+        buildLeftBtn(disabled),
+        buildStraightBtn(disabled),
+        buildRightBtn(disabled),
+      );
     }
 
     function offerControls() {
-      return new ActionRowBuilder().addComponents(acceptBtn, declineBtn);
+      return new ActionRowBuilder().addComponents(buildAcceptBtn(), buildDeclineBtn());
     }
 
     function bottomControls() {
-      const row = new ActionRowBuilder().addComponents(endBtn);
-      if (lastTick?.exhausted && !overtime) row.addComponents(pushBtn);
+      const row = new ActionRowBuilder().addComponents(buildEndBtn());
+      if (lastTick?.exhausted && !overtime) row.addComponents(buildPushBtn());
       return row;
     }
 
     function resultControls() {
-      return [new ActionRowBuilder().addComponents(nextBtn), bottomControls()];
+      return [new ActionRowBuilder().addComponents(buildNextBtn()), bottomControls()];
     }
 
     function currentComponents() {
       if (state === "offer") return [offerControls(), bottomControls()];
-      if (state === "preview") return [new ActionRowBuilder().addComponents(leftBtn.setDisabled(true), straightBtn.setDisabled(true), rightBtn.setDisabled(true)), bottomControls()];
+      if (state === "preview") return [routeControls({ disabled: true }), bottomControls()];
       if (state === "route") return [routeControls(), bottomControls()];
       return resultControls();
     }
@@ -341,10 +367,6 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
       clearPreviewTimer();
       state = "preview";
       stepIndex = 0;
-      previewTimer = setTimeout(async () => {
-        state = "route";
-        await showState();
-      }, PREVIEW_MS);
     }
 
     async function endShift(reason, { forceLock = false } = {}) {
@@ -421,6 +443,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
         await i.deferUpdate().catch(() => {});
         if (state !== "offer") return;
         startPreview();
+        state = "route";
         return showState();
       }
 
