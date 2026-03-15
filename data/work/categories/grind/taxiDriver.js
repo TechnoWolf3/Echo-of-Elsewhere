@@ -442,8 +442,9 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
       if (i.customId === "grind_taxi:accept") {
         await i.deferUpdate().catch(() => {});
         if (state !== "offer") return;
-        startPreview();
+        clearPreviewTimer();
         state = "route";
+        stepIndex = 0;
         return showState();
       }
 
