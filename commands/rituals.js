@@ -132,8 +132,9 @@ module.exports = {
       }
 
       if (cid === REFRESH_ID) {
+        await interaction.deferUpdate().catch(() => {});
         const refreshed = await buildHubPayload(interaction.guildId, interaction.user.id);
-        await interaction.update(refreshed).catch(() => {});
+        await interaction.editReply(refreshed).catch(() => {});
         return true;
       }
 
@@ -146,12 +147,15 @@ module.exports = {
 
       const ritual = ritualId ? getRitual(ritualId) : null;
       if (!ritual) {
+        await interaction.deferUpdate().catch(() => {});
         const refreshed = await buildHubPayload(interaction.guildId, interaction.user.id, "⚠️ That ritual could not be found.");
-        await interaction.update(refreshed).catch(() => {});
+        await interaction.editReply(refreshed).catch(() => {});
         return true;
       }
 
       if (await guardNotJailed(interaction)) return true;
+
+      await interaction.deferUpdate().catch(() => {});
 
       const result = await claimRitual({
         guildId: interaction.guildId,
@@ -160,7 +164,7 @@ module.exports = {
       });
 
       const refreshed = await buildHubPayload(interaction.guildId, interaction.user.id, result.message);
-      await interaction.update(refreshed).catch(() => {});
+      await interaction.editReply(refreshed).catch(() => {});
       return true;
     } catch (err) {
       console.error("[RITUALS] interaction failed:", err);
