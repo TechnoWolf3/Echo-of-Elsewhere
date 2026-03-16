@@ -32,6 +32,7 @@ const nineToFiveIndex = require("../data/work/categories/nineToFive/index");
 const contractCfg = require("../data/work/categories/nineToFive/transportContract");
 const skillCfg = require("../data/work/categories/nineToFive/skillCheck");
 const shiftCfg = require("../data/work/categories/nineToFive/shift");
+const truckerCfg = require("../data/work/categories/nineToFive/trucker");
 
 const nightWalker = require("../data/work/categories/nightwalker/index");
 
@@ -46,13 +47,14 @@ const startWarehousing = require("../data/work/categories/grind/warehousing");
 const startFishing = require("../data/work/categories/grind/fishing");
 const startQuarry = require("../data/work/categories/grind/quarry");
 const startTaxiDriver = require("../data/work/categories/grind/taxiDriver");
+const { renderProgressBar } = require("../utils/progressBar");
 
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
 
 const JOB_COOLDOWN_SECONDS = 45;
-const BOARD_INACTIVITY_MS = 10 * 60_000;
+const BOARD_INACTIVITY_MS = 25 * 60_000;
 
 // Legendary (kept in command for now)
 const LEGENDARY_CHANCE = 0.012;
@@ -98,9 +100,8 @@ function randInt(min, max) {
 function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
-function progressBar(pct, size = 12) {
-  const filled = Math.max(0, Math.min(size, Math.round((pct / 100) * size)));
-  return "▰".repeat(filled) + "▱".repeat(size - filled);
+function progressBar(pct, size = 16) {
+  return renderProgressBar(pct, 100, { length: size });
 }
 function clamp(n, a, b) {
   return Math.max(a, Math.min(b, n));
@@ -131,10 +132,8 @@ function toUnix(date) {
 }
 
 // ✅ Heat bar helpers
-function heatBar(value, size = 12) {
-  const v = clamp(Number(value) || 0, 0, 100);
-  const filled = Math.round((v / 100) * size);
-  return "▰".repeat(filled) + "▱".repeat(size - filled);
+function heatBar(value, size = 16) {
+  return renderProgressBar(value, 100, { length: size });
 }
 function unixFromDate(d) {
   if (!d) return null;
@@ -853,21 +852,126 @@ function buildShiftEmbed(startMs, durationMs) {
     .setFooter({ text: shiftCfg.footer || "Stay on the board. Collect when ready." });
 }
 
-function buildShiftButtons({ canCollect, disabled = false }) {
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("job_shift_collect")
-      .setLabel("💵 Collect Pay")
-      .setStyle(ButtonStyle.Success)
-      .setDisabled(disabled || !canCollect)
-  );
+function formatRoutePlace(place) {
+  return `${place.city}, ${place.state}`;
+}
 
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
-  );
+function durationMinutesForRoute(distanceKm) {
+  const tiers = Array.isArray(truckerCfg.durationTiers) ? truckerCfg.durationTiers : [];
+  const km = Math.max(1, Math.round(Number(distanceKm) || 1));
+  for (const tier of tiers) {
+    if (km <= Number(tier.maxKm)) return Math.max(1, Math.round(Number(tier.minutes) || 1));
+  }
+  return 5;
+}
 
-  return [row, row2];
+function generateTruckerManifest() {
+  const route = pick(truckerCfg.routes || []);
+  const freight = pick(truckerCfg.cargoPool || []) || "General Freight";
+  const truckType = pick(truckerCfg.truckTypes || []) || "Semi Trailer";
+  const flavorLine = pick(truckerCfg.manifestLines || []) || "";
+  const distanceKm = Math.max(1, Math.round(Number(route?.distanceKm) || randInt(120, 1200)));
+  const durationMinutes = durationMinutesForRoute(distanceKm);
+  const perKm = (Math.random() * ((truckerCfg.payout?.perKmMax ?? 2.4) - (truckerCfg.payout?.perKmMin ?? 1.7))) + (truckerCfg.payout?.perKmMin ?? 1.7);
+  const longHaulBonus = randInt(
+    truckerCfg.payout?.longHaulBonusMin ?? 0,
+    Math.max(truckerCfg.payout?.longHaulBonusMin ?? 0, Math.min(truckerCfg.payout?.longHaulBonusMax ?? 500, Math.floor(distanceKm / 6)))
+  );
+  const payoutBase = Math.max(100, Math.round(distanceKm * perKm + longHaulBonus));
+
+  return {
+    freight,
+    truckType,
+    flavorLine,
+    route,
+    distanceKm,
+    durationMinutes,
+    payoutBase,
+  };
+}
+
+function truckerProgressState(run = {}) {
+  const durationMs = Math.max(1, Number(run.durationMs || 0));
+  const started = Math.max(0, Number(run.startMs || 0));
+  const elapsedMs = run.ready ? durationMs : Math.max(0, Date.now() - started);
+  const clampedElapsed = Math.min(durationMs, elapsedMs);
+  const remainingMs = Math.max(0, durationMs - clampedElapsed);
+  const pct = Math.max(0, Math.min(100, Math.round((clampedElapsed / durationMs) * 100)));
+  const kmDone = Math.round((Number(run.manifest?.distanceKm || 0) * pct) / 100);
+  const kmRemaining = Math.max(0, Math.round(Number(run.manifest?.distanceKm || 0) - kmDone));
+  return { pct, remainingMs, kmRemaining };
+}
+
+function buildTruckerEmbed(run, { completed = false } = {}) {
+  const manifest = run?.manifest || generateTruckerManifest();
+  const started = Boolean(run?.startMs);
+  const ready = Boolean(run?.ready);
+  const title = completed
+    ? (truckerCfg.completeTitle || "✅ Delivery Complete")
+    : started
+      ? (truckerCfg.inProgressTitle || "🚛 Long Haul In Progress")
+      : (truckerCfg.manifestTitle || "🚛 Freight Manifest");
+
+  const progress = truckerProgressState(run);
+  const doneAtUnix = started ? Math.floor((run.startMs + run.durationMs) / 1000) : null;
+  const lines = [
+    manifest.flavorLine,
+    "",
+    `**Freight:** ${manifest.freight}`,
+    `**Truck:** ${manifest.truckType}`,
+    `**Route:** ${formatRoutePlace(manifest.route.from)} → ${formatRoutePlace(manifest.route.to)}`,
+    `**Distance:** ${manifest.distanceKm.toLocaleString()} km`,
+    `**ETA:** ${manifest.durationMinutes} minute${manifest.durationMinutes === 1 ? "" : "s"}`,
+    `**Payout:** $${Number(manifest.payoutBase || 0).toLocaleString()}`,
+  ];
+
+  if (started) {
+    lines.push(
+      "",
+      `**Progress**`,
+      `${progressBar(progress.pct)} **${progress.pct}%**`,
+      ready || completed
+        ? "✅ Delivery complete. Press **Collect Pay**."
+        : `⏳ Arrival: <t:${doneAtUnix}:R>`,
+      ready || completed ? `**Distance Remaining:** 0 km` : `**Distance Remaining:** ${progress.kmRemaining.toLocaleString()} km`
+    );
+  }
+
+  return new EmbedBuilder()
+    .setTitle(title)
+    .setDescription(lines.filter(Boolean).join("\n"))
+    .setFooter({ text: truckerCfg.footer || "Start the run, let the kilometres roll, then collect the cheque." });
+}
+
+function buildTruckerButtons(run = {}) {
+  const started = Boolean(run?.startMs);
+  const ready = Boolean(run?.ready);
+
+  if (!started) {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("job_trucker_start").setLabel("🚛 Start Job").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId("job_trucker_refresh").setLabel("🔁 New Manifest").setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger)
+      ),
+    ];
+  }
+
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("job_trucker_collect")
+        .setLabel("💵 Collect Pay")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!ready)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger)
+    ),
+  ];
 }
 
 /* ============================================================
@@ -957,6 +1061,9 @@ module.exports = {
       shiftDurationMs: (shiftCfg.durationSeconds || 45) * 1000,
       shiftReady: false,
 
+      // Trucker state
+      trucker: null,
+
       // Night Walker state
       nw: null,
     };
@@ -994,6 +1101,10 @@ function scheduleReturnToCategory(delayMs = 5000) {
       if (session.shiftInterval) {
         clearInterval(session.shiftInterval);
         session.shiftInterval = null;
+      }
+      if (session.trucker?.interval) {
+        clearInterval(session.trucker.interval);
+        session.trucker.interval = null;
       }
       try {
         await msg.edit({ components: buildHubComponents(true) });
@@ -1100,6 +1211,15 @@ function scheduleReturnToCategory(delayMs = 5000) {
           .edit({
             embeds: [buildNightWalkerEmbed(interaction.user, p, cd)],
             components: buildNightWalkerComponents(false),
+          })
+          .catch(() => {});
+      }
+
+      if (session.view === "trucker" && session.trucker) {
+        return msg
+          .edit({
+            embeds: [buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
+            components: buildTruckerButtons(session.trucker),
           })
           .catch(() => {});
       }
@@ -1486,6 +1606,28 @@ function scheduleReturnToCategory(delayMs = 5000) {
             return;
           }
 
+          if (mode === "trucker") {
+            session.view = "trucker";
+            if (session.trucker?.interval) {
+              clearInterval(session.trucker.interval);
+            }
+            session.trucker = {
+              manifest: generateTruckerManifest(),
+              startMs: 0,
+              durationMs: 0,
+              ready: false,
+              interval: null,
+            };
+
+            await msg
+              .edit({
+                embeds: [buildTruckerEmbed(session.trucker)],
+                components: buildTruckerButtons(session.trucker),
+              })
+              .catch(() => {});
+            return;
+          }
+
           if (mode === "legendary") {
             if (!session.legendaryAvailable) return;
 
@@ -1503,6 +1645,116 @@ function scheduleReturnToCategory(delayMs = 5000) {
               .catch(() => {});
             return;
           }
+        }
+
+        if (actionId === "job_trucker_refresh") {
+          if (!session.trucker || session.trucker.startMs) return;
+          session.trucker.manifest = generateTruckerManifest();
+          await msg
+            .edit({
+              embeds: [buildTruckerEmbed(session.trucker)],
+              components: buildTruckerButtons(session.trucker),
+            })
+            .catch(() => {});
+          return;
+        }
+
+        if (actionId === "job_trucker_start") {
+          if (await checkCooldownOrTell(btn)) return;
+          if (!session.trucker) {
+            session.trucker = { manifest: generateTruckerManifest(), startMs: 0, durationMs: 0, ready: false, interval: null };
+          }
+          if (session.trucker.interval) clearInterval(session.trucker.interval);
+
+          session.view = "trucker";
+          session.trucker.startMs = Date.now();
+          session.trucker.durationMs = session.trucker.manifest.durationMinutes * 60_000;
+          session.trucker.ready = false;
+
+          await msg
+            .edit({
+              embeds: [buildTruckerEmbed(session.trucker)],
+              components: buildTruckerButtons(session.trucker),
+            })
+            .catch(() => {});
+
+          const tickMs = Math.max(5_000, (truckerCfg.updateEverySeconds || 30) * 1000);
+          session.trucker.interval = setInterval(async () => {
+            try {
+              const done = Date.now() - session.trucker.startMs >= session.trucker.durationMs;
+              if (done) session.trucker.ready = true;
+
+              await msg
+                .edit({
+                  embeds: [buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
+                  components: buildTruckerButtons(session.trucker),
+                })
+                .catch(() => {});
+
+              if (done) {
+                clearInterval(session.trucker.interval);
+                session.trucker.interval = null;
+              }
+            } catch {}
+          }, tickMs);
+
+          return;
+        }
+
+        if (actionId === "job_trucker_collect") {
+          if (!session.trucker?.ready) return;
+
+          const manifest = session.trucker.manifest;
+          const paid = await payUser(
+            manifest.payoutBase,
+            "job_95_trucker",
+            truckerCfg.xp?.success ?? 0,
+            {
+              freight: manifest.freight,
+              truckType: manifest.truckType,
+              from: formatRoutePlace(manifest.route.from),
+              to: formatRoutePlace(manifest.route.to),
+              distanceKm: manifest.distanceKm,
+              durationMinutes: manifest.durationMinutes,
+            },
+            { countJob: true, allowLegendarySpawn: true, activityEffects: truckerCfg.activityEffects }
+          );
+
+          if (session.trucker?.interval) {
+            clearInterval(session.trucker.interval);
+            session.trucker.interval = null;
+          }
+
+          const embed = new EmbedBuilder()
+            .setTitle(truckerCfg.completeTitle || "✅ Delivery Complete")
+            .setDescription(
+              [
+                `**Freight:** ${manifest.freight}`,
+                `**Truck:** ${manifest.truckType}`,
+                `**Route:** ${formatRoutePlace(manifest.route.from)} → ${formatRoutePlace(manifest.route.to)}`,
+                `**Distance:** ${manifest.distanceKm.toLocaleString()} km`,
+                "",
+                `✅ Paid: **$${paid.amount.toLocaleString()}**`,
+                `⏳ Next payout: <t:${toUnix(paid.nextClaim)}:R>`,
+                paid.prog.leveledUp ? `🎉 Level up! You are now **Level ${paid.prog.level}**` : "",
+                "",
+                "Back to Work a 9–5.",
+              ]
+                .filter(Boolean)
+                .join("\n")
+            )
+            .setColor(0x22aa55);
+
+          session.view = "95";
+          session.trucker = null;
+          await msg
+            .edit({
+              embeds: [embed],
+              components: buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+            })
+            .catch(() => {});
+          scheduleReturnToCategory(5000);
+          return;
         }
 
         // Contract clicks
@@ -1908,6 +2160,10 @@ function scheduleReturnToCategory(delayMs = 5000) {
       if (session.shiftInterval) {
         clearInterval(session.shiftInterval);
         session.shiftInterval = null;
+      }
+      if (session.trucker?.interval) {
+        clearInterval(session.trucker.interval);
+        session.trucker.interval = null;
       }
       try {
         await msg.edit({ components: buildHubComponents(true) });

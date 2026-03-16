@@ -12,6 +12,7 @@
 //
 // Implementation notes:
 // - We store fatigue_ms as "work-time accumulated" toward MAX_FATIGUE_MS.
+const { renderProgressBar } = require("./progressBar");
 // - While grinding: fatigue_ms += real elapsed time.
 // - While idle: fatigue_ms -= real elapsed time * (MAX_FATIGUE_MS / RECOVERY_MS).
 // - We treat long gaps between ticks as idle recovery (to avoid insta-fatigue from stale updated_at).
@@ -186,11 +187,9 @@ async function applyGrindLock(db, guildId, userId, { minSeconds = 10 * 60, maxSe
   return { lockedUntil: until };
 }
 
-function fatigueBar(fatigueMs) {
+function fatigueBar(fatigueMs, length = 16) {
   const pct = clamp((Number(fatigueMs || 0) / MAX_FATIGUE_MS) * 100, 0, 100);
-  const blocks = 10;
-  const filled = Math.round((pct / 100) * blocks);
-  const bar = "█".repeat(filled) + "░".repeat(blocks - filled);
+  const bar = renderProgressBar(pct, 100, { length });
   return { pct: Math.round(pct), bar };
 }
 

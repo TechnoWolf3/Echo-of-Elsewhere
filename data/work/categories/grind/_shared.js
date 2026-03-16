@@ -3,6 +3,7 @@
 
 const { EmbedBuilder } = require("discord.js");
 const { creditUserWithEffects } = require("../../../../utils/effectSystem");
+const { renderProgressBar } = require("../../../../utils/progressBar");
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
@@ -14,11 +15,9 @@ function clamp(n, a, b) {
   return Math.max(a, Math.min(b, x));
 }
 
-function bar10(pct) {
+function bar10(pct, length = 16) {
   const p = clamp(pct, 0, 100);
-  const blocks = 10;
-  const filled = Math.round((p / 100) * blocks);
-  return "█".repeat(filled) + "░".repeat(blocks - filled);
+  return renderProgressBar(p, 100, { length });
 }
 
 async function mintUser(db, guildId, userId, amount, type, meta = {}, options = {}) {

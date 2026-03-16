@@ -8,15 +8,12 @@ const {
   ButtonStyle,
 } = require("discord.js");
 
+const { renderProgressBar } = require("../utils/progressBar");
+
 const PAGE_SIZE = 12;
 
-// Heat-style bar (same vibe as your heat UI)
 function renderBar(current, target, width = 16) {
-  const c = Math.max(0, Number(current || 0));
-  const t = Math.max(1, Number(target || 1));
-  const ratio = Math.max(0, Math.min(1, c / t));
-  const filled = Math.round(ratio * width);
-  return "■".repeat(filled) + "□".repeat(width - filled);
+  return renderProgressBar(current, target, { length: width });
 }
 
 module.exports = {

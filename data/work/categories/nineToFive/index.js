@@ -27,6 +27,12 @@ module.exports = {
       desc: "Wait it out, then Collect Pay.",
       button: { id: "job_95:shift", label: "🕒 Shift" },
     },
+    {
+      key: "trucker",
+      title: "🚛 Trucker",
+      desc: "Random freight manifest. Long haul, bigger pay.",
+      button: { id: "job_95:trucker", label: "🚛 Trucker" },
+    },
   ],
 
   // Optional: if you want Legendary to appear as part of this category

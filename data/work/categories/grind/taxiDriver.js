@@ -8,6 +8,7 @@ const {
 
 const { canGrind, tickFatigue, fatigueBar, MAX_FATIGUE_MS, applyGrindLock } = require("../../../../utils/grindFatigue");
 const { money, mintUser, setJobCooldownSeconds } = require("./_shared");
+const { renderProgressBar } = require("../../../../utils/progressBar");
 const SCENARIOS = require("./taxiDriver.scenarios");
 
 const JOB_COOLDOWN_SECONDS = 45;
@@ -250,7 +251,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
           `Turn **${stepIndex + 1}/${passenger.route.length}**`,
           `Expected direction is hidden — trust your memory.`,
           "",
-          `Progress: ${"▰".repeat(stepIndex)}${"▱".repeat(passenger.route.length - stepIndex)}`,
+          `Progress: ${renderProgressBar(stepIndex, passenger.route.length, { length: 16 })} ${Math.round((stepIndex / Math.max(1, passenger.route.length)) * 100)}%`,
         ].join("\n");
       } else {
         description = feedback || extraFeedback || "Fare resolved.";

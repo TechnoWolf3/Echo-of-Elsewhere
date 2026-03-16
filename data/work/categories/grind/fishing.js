@@ -15,6 +15,7 @@ const {
 
 const { canGrind, tickFatigue, fatigueBar, MAX_FATIGUE_MS, applyGrindLock } = require("../../../../utils/grindFatigue");
 const { money, mintUser, setJobCooldownSeconds, postUltraToPlayground, ultraEmbed } = require("./_shared");
+const { renderProgressBar } = require("../../../../utils/progressBar");
 
 const JOB_COOLDOWN_SECONDS = 45;
 const SHIFT_TTL_MS = 5 * 60_000;
@@ -93,11 +94,9 @@ function rollCatch({ overtime = false } = {}) {
   return { tier: "common", item: pickWeighted(DEFAULT_TABLE.common) };
 }
 
-function tensionBar(pct) {
+function tensionBar(pct, length = 16) {
   const p = clamp(pct, 0, 100);
-  const blocks = 10;
-  const filled = Math.round((p / 100) * blocks);
-  return "▰".repeat(filled) + "▱".repeat(blocks - filled);
+  return renderProgressBar(p, 100, { length });
 }
 
 module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } = {}) {
