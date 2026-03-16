@@ -191,7 +191,7 @@ async function ensureAchievementTables(db) {
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
       heat     INT  NOT NULL DEFAULT 0,
-      expires_at TIMESTAMPTZ NOT NULL,
+      next_claim_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id)
     );
 
@@ -275,12 +275,12 @@ async function ensureEconomyTables(db) {
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
       key      TEXT NOT NULL,
-      expires_at TIMESTAMPTZ NOT NULL,
+      next_claim_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id, key)
     );
 
     ALTER TABLE IF EXISTS cooldowns
-    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+    ADD COLUMN IF NOT EXISTS next_claim_at TIMESTAMPTZ;
 
     DO $$
     BEGIN
@@ -289,9 +289,9 @@ async function ensureEconomyTables(db) {
         WHERE table_name='cooldowns' AND column_name='expires'
       ) AND NOT EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires_at'
+        WHERE table_name='cooldowns' AND column_name='next_claim_at'
       ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expires TO expires_at;
+        ALTER TABLE cooldowns RENAME COLUMN expires TO next_claim_at;
       END IF;
 
       IF EXISTS (
@@ -299,9 +299,9 @@ async function ensureEconomyTables(db) {
         WHERE table_name='cooldowns' AND column_name='expiry'
       ) AND NOT EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires_at'
+        WHERE table_name='cooldowns' AND column_name='next_claim_at'
       ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expiry TO expires_at;
+        ALTER TABLE cooldowns RENAME COLUMN expiry TO next_claim_at;
       END IF;
 
       IF EXISTS (
@@ -309,9 +309,9 @@ async function ensureEconomyTables(db) {
         WHERE table_name='cooldowns' AND column_name='expires_on'
       ) AND NOT EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires_at'
+        WHERE table_name='cooldowns' AND column_name='next_claim_at'
       ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expires_on TO expires_at;
+        ALTER TABLE cooldowns RENAME COLUMN expires_on TO next_claim_at;
       END IF;
     END $$;
 

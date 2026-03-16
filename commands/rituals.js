@@ -9,7 +9,8 @@ const {
 } = require("discord.js");
 
 const { guardNotJailed } = require("../utils/jail");
-const { getPrimaryRituals, getOtherRituals, getRitual } = require("../data/rituals");
+const ritualsRegistry = require("../data/rituals");
+const { getPrimaryRituals, getOtherRituals, getRitual } = ritualsRegistry;
 const { getRitualStatus, claimRitual, buildStatusLine } = require("../utils/rituals");
 
 const BTN_PREFIX = "rituals:claim:";
@@ -114,6 +115,24 @@ module.exports = {
 
   async handleInteraction(interaction) {
     const cid = String(interaction.customId || "");
+
+    for (const ritual of ritualsRegistry.rituals || []) {
+      if (typeof ritual.handleInteraction === "function") {
+        try {
+          const handled = await ritual.handleInteraction(interaction, { buildHubPayload });
+          if (handled) return true;
+        } catch (err) {
+          console.error(`[RITUALS:${ritual.id}] interaction failed:`, err);
+          if (interaction.deferred || interaction.replied) {
+            await interaction.editReply({ content: "❌ Something went wrong while handling that ritual.", embeds: [], components: [] }).catch(() => {});
+          } else {
+            await interaction.reply({ content: "❌ Something went wrong while handling that ritual.", flags: MessageFlags.Ephemeral }).catch(() => {});
+          }
+          return true;
+        }
+      }
+    }
+
     const isRelevant =
       (interaction.isButton?.() && (cid.startsWith(BTN_PREFIX) || cid === REFRESH_ID || cid === CLOSE_ID)) ||
       (interaction.isStringSelectMenu?.() && cid === SELECT_ID);
@@ -154,6 +173,10 @@ module.exports = {
       }
 
       if (await guardNotJailed(interaction)) return true;
+
+      if (ritual.interactive && typeof ritual.begin === "function") {
+        return !!(await ritual.begin(interaction, { buildHubPayload }));
+      }
 
       await interaction.deferUpdate().catch(() => {});
 

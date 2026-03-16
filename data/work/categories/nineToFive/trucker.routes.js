@@ -24,7 +24,7 @@ const BASE_ROUTES = [
   { from: ["Sydney", "New South Wales"], to: ["Coffs Harbour", "New South Wales"], distanceKm: 540 },
   { from: ["Sydney", "New South Wales"], to: ["Albury", "New South Wales"], distanceKm: 553 },
   { from: ["Sydney", "New South Wales"], to: ["Adelaide", "South Australia"], distanceKm: 1375 },
-  { from: ["Sydney", "New South Wales"], to: ["Brisbane", "Queensland"], distanceKm: 917, bidirectional: false },
+  { from: ["Sydney", "New South Wales"], to: ["Brisbane", "Queensland"], distanceKm: 917, bidirectional: true },
 
   { from: ["Melbourne", "Victoria"], to: ["Geelong", "Victoria"], distanceKm: 75 },
   { from: ["Melbourne", "Victoria"], to: ["Ballarat", "Victoria"], distanceKm: 115 },
@@ -58,14 +58,14 @@ const BASE_ROUTES = [
   { from: ["Perth", "Western Australia"], to: ["Karratha", "Western Australia"], distanceKm: 1535 },
   { from: ["Perth", "Western Australia"], to: ["Port Hedland", "Western Australia"], distanceKm: 1624 },
   { from: ["Perth", "Western Australia"], to: ["Broome", "Western Australia"], distanceKm: 2225 },
-  { from: ["Perth", "Western Australia"], to: ["Adelaide", "South Australia"], distanceKm: 2697, bidirectional: false },
+  { from: ["Perth", "Western Australia"], to: ["Adelaide", "South Australia"], distanceKm: 2697, bidirectional: true },
 
   { from: ["Darwin", "Northern Territory"], to: ["Katherine", "Northern Territory"], distanceKm: 317 },
   { from: ["Darwin", "Northern Territory"], to: ["Tennant Creek", "Northern Territory"], distanceKm: 989 },
   { from: ["Darwin", "Northern Territory"], to: ["Alice Springs", "Northern Territory"], distanceKm: 1498 },
   { from: ["Darwin", "Northern Territory"], to: ["Mount Isa", "Queensland"], distanceKm: 1702 },
   { from: ["Darwin", "Northern Territory"], to: ["Townsville", "Queensland"], distanceKm: 2810 },
-  { from: ["Darwin", "Northern Territory"], to: ["Adelaide", "South Australia"], distanceKm: 3025, bidirectional: false },
+  { from: ["Darwin", "Northern Territory"], to: ["Adelaide", "South Australia"], distanceKm: 3025, bidirectional: true },
   { from: ["Darwin", "Northern Territory"], to: ["Perth", "Western Australia"], distanceKm: 4027 },
 
   { from: ["Canberra", "ACT"], to: ["Wagga Wagga", "New South Wales"], distanceKm: 244 },
