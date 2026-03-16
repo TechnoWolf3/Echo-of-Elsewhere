@@ -1,6 +1,6 @@
-const daily = require('./daily');
-const weekly = require('./weekly');
-const monthly = require('./monthly');
+const daily = require("./daily");
+const weekly = require("./weekly");
+const monthly = require("./monthly");
 
 const rituals = [daily, weekly, monthly];
 
@@ -9,11 +9,11 @@ function getRitual(id) {
 }
 
 function getPrimaryRituals() {
-  return rituals.filter((ritual) => ritual.placement !== 'other');
+  return rituals.filter((ritual) => ritual.placement === "primary");
 }
 
 function getOtherRituals() {
-  return rituals.filter((ritual) => ritual.placement === 'other');
+  return rituals.filter((ritual) => ritual.placement === "other");
 }
 
 module.exports = {

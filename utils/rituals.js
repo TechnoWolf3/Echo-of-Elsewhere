@@ -70,6 +70,7 @@ async function getCooldownRow(guildId, userId, cooldownKey) {
 }
 
 async function getRitualStatus(guildId, userId, ritual) {
+  await ensureUser(guildId, userId);
   const row = await getCooldownRow(guildId, userId, ritual.cooldownKey);
   const now = new Date();
   const nextClaimAt = row?.next_claim_at ? new Date(row.next_claim_at) : null;
@@ -136,9 +137,9 @@ async function claimRitual({ guildId, userId, ritual }) {
 
 function buildStatusLine(ritual, status) {
   if (status?.available) {
-    return `${ritual.emoji || '✨'} **${ritual.name}** — Ready now`;
+    return `✨ **${ritual.name}** — Ready now`;
   }
-  return `${ritual.emoji || '✨'} **${ritual.name}** — Available <t:${status.unix}:R>`;
+  return `✨ **${ritual.name}** — Available <t:${status.unix}:R>`;
 }
 
 module.exports = {

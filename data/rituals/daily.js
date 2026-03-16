@@ -1,22 +1,18 @@
-const { nextSydneyMidnightUTC } = require('../../utils/rituals');
+const { nextSydneyMidnightUTC } = require("../../utils/rituals");
 
 module.exports = {
-  id: 'daily',
-  name: 'Daily Ritual',
-  shortName: 'Daily',
-  description: 'A modest daily rite for those who like their coin with a touch of ceremony.',
-  placement: 'primary',
-  emoji: '🎁',
-  cooldownKey: 'daily',
-  type: 'daily',
-  awardSource: 'daily',
-  payout: {
-    min: 2500,
-    max: 5000,
-  },
+  id: "daily",
+  placement: "primary",
+  type: "daily",
+  awardSource: "daily",
+  cooldownKey: "daily",
+  name: "Daily Ritual",
+  shortName: "Daily Ritual",
+  description: "A smaller rite performed once each Sydney day.",
+  payout: { min: 2500, max: 5000 },
   nextClaimAt: nextSydneyMidnightUTC,
-  cooldownText: ({ unix }) => `⏳ Your daily ritual has already been completed. Return <t:${unix}:R>.`,
-  claimText: ({ amount }) => `🎁 Daily Ritual completed: **$${Number(amount || 0).toLocaleString()}** has been placed in your hands.`,
+  claimText: ({ amount }) => `🕯️ Your **Daily Ritual** is complete. Echo places **$${Number(amount).toLocaleString()}** in your hands.`,
+  cooldownText: ({ unix }) => `⏳ Your **Daily Ritual** is already complete. Return <t:${unix}:R>.`,
   activityEffects: {
     effectsApply: true,
     canAwardEffects: true,

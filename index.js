@@ -11,6 +11,7 @@ const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
 const bankCommand = require("./commands/bank");
+const ritualsCommand = require("./commands/rituals");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -270,66 +271,56 @@ async function ensureEconomyTables(db) {
       PRIMARY KEY (guild_id, user_id)
     );
 
-CREATE TABLE IF NOT EXISTS cooldowns (
-  guild_id TEXT NOT NULL,
-  user_id  TEXT NOT NULL,
-  key      TEXT NOT NULL,
-  next_claim_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (guild_id, user_id, key)
-);
+    CREATE TABLE IF NOT EXISTS cooldowns (
+      guild_id TEXT NOT NULL,
+      user_id  TEXT NOT NULL,
+      key      TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (guild_id, user_id, key)
+    );
 
-ALTER TABLE IF EXISTS cooldowns
-ADD COLUMN IF NOT EXISTS next_claim_at TIMESTAMPTZ;
+    ALTER TABLE IF EXISTS cooldowns
+    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='expires_at'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='next_claim_at'
-  ) THEN
-    ALTER TABLE cooldowns RENAME COLUMN expires_at TO next_claim_at;
-  END IF;
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_at'
+      ) THEN
+        ALTER TABLE cooldowns RENAME COLUMN expires TO expires_at;
+      END IF;
 
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='expires'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='next_claim_at'
-  ) THEN
-    ALTER TABLE cooldowns RENAME COLUMN expires TO next_claim_at;
-  END IF;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expiry'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_at'
+      ) THEN
+        ALTER TABLE cooldowns RENAME COLUMN expiry TO expires_at;
+      END IF;
 
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='expiry'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='next_claim_at'
-  ) THEN
-    ALTER TABLE cooldowns RENAME COLUMN expiry TO next_claim_at;
-  END IF;
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_on'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_at'
+      ) THEN
+        ALTER TABLE cooldowns RENAME COLUMN expires_on TO expires_at;
+      END IF;
+    END $$;
 
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='expires_on'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name='cooldowns' AND column_name='next_claim_at'
-  ) THEN
-    ALTER TABLE cooldowns RENAME COLUMN expires_on TO next_claim_at;
-  END IF;
-END $$;
+    UPDATE cooldowns SET expires_at = NOW() WHERE expires_at IS NULL;
+    ALTER TABLE cooldowns ALTER COLUMN expires_at SET NOT NULL;
+    ALTER TABLE cooldowns ALTER COLUMN expires_at SET DEFAULT NOW();
 
-UPDATE cooldowns SET next_claim_at = NOW() WHERE next_claim_at IS NULL;
-ALTER TABLE cooldowns ALTER COLUMN next_claim_at SET NOT NULL;
-ALTER TABLE cooldowns ALTER COLUMN next_claim_at SET DEFAULT NOW();
-
-CREATE INDEX IF NOT EXISTS idx_cooldowns_next_claim
-ON cooldowns (next_claim_at);
+    CREATE INDEX IF NOT EXISTS idx_cooldowns_expires
+    ON cooldowns (expires_at);
 
     CREATE TABLE IF NOT EXISTS transactions (
       id BIGSERIAL PRIMARY KEY,
@@ -824,6 +815,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[BANK] handler failed:", e);
+  }
+
+
+  // 🕯️ Ritual hub interactions
+  try {
+    const handled = await ritualsCommand.handleInteraction?.(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[RITUALS] handler failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ Echo dropped the ritual. Try again.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ Echo dropped the ritual. Try again.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
   }
 
   // 🩸 Blood Tax (Pay Tribute / Serve Time) buttons
