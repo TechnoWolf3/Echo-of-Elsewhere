@@ -867,8 +867,14 @@ function durationMinutesForRoute(distanceKm) {
 
 function generateTruckerManifest() {
   const route = pick(truckerCfg.routes || []);
-  const freight = pick(truckerCfg.cargoPool || []) || "General Freight";
-  const truckType = pick(truckerCfg.truckTypes || []) || "Semi Trailer";
+  const freightEntry = pick(truckerCfg.freightPool || []);
+  const freightName = typeof freightEntry === "string" ? freightEntry : (freightEntry?.name || "General Freight");
+  const freightCategory = typeof freightEntry === "string" ? "generalPalletised" : (freightEntry?.category || "generalPalletised");
+  const payoutModifier = Math.max(0.5, Number(freightEntry?.payoutModifier ?? 1));
+  const compatibleTrailers = Array.isArray(truckerCfg.trailerConfigs?.[freightCategory])
+    ? truckerCfg.trailerConfigs[freightCategory]
+    : [];
+  const truckType = pick(compatibleTrailers) || pick(truckerCfg.truckTypes || []) || "Semi Trailer";
   const flavorLine = pick(truckerCfg.manifestLines || []) || "";
   const distanceKm = Math.max(1, Math.round(Number(route?.distanceKm) || randInt(120, 1200)));
   const durationMinutes = durationMinutesForRoute(distanceKm);
@@ -877,10 +883,11 @@ function generateTruckerManifest() {
     truckerCfg.payout?.longHaulBonusMin ?? 0,
     Math.max(truckerCfg.payout?.longHaulBonusMin ?? 0, Math.min(truckerCfg.payout?.longHaulBonusMax ?? 500, Math.floor(distanceKm / 6)))
   );
-  const payoutBase = Math.max(100, Math.round(distanceKm * perKm + longHaulBonus));
+  const payoutBase = Math.max(100, Math.round((distanceKm * perKm + longHaulBonus) * payoutModifier));
 
   return {
-    freight,
+    freight: freightName,
+    freightCategory,
     truckType,
     flavorLine,
     route,
@@ -918,7 +925,7 @@ function buildTruckerEmbed(run, { completed = false } = {}) {
     manifest.flavorLine,
     "",
     `**Freight:** ${manifest.freight}`,
-    `**Truck:** ${manifest.truckType}`,
+    `**Trailer Config:** ${manifest.truckType}`,
     `**Route:** ${formatRoutePlace(manifest.route.from)} → ${formatRoutePlace(manifest.route.to)}`,
     `**Distance:** ${manifest.distanceKm.toLocaleString()} km`,
     `**ETA:** ${manifest.durationMinutes} minute${manifest.durationMinutes === 1 ? "" : "s"}`,
@@ -1730,7 +1737,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             .setDescription(
               [
                 `**Freight:** ${manifest.freight}`,
-                `**Truck:** ${manifest.truckType}`,
+                `**Trailer Config:** ${manifest.truckType}`,
                 `**Route:** ${formatRoutePlace(manifest.route.from)} → ${formatRoutePlace(manifest.route.to)}`,
                 `**Distance:** ${manifest.distanceKm.toLocaleString()} km`,
                 "",

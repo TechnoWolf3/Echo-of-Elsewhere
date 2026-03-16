@@ -1,5 +1,10 @@
 const routes = require("./trucker.routes");
-const { cargoPool, truckTypes, manifestLines } = require("./trucker.freight");
+const {
+  freightPool,
+  trailerConfigs,
+  truckTypes,
+  manifestLines,
+} = require("./trucker.freight");
 
 module.exports = {
   title: "🚛 Trucker",
@@ -34,7 +39,11 @@ module.exports = {
   ],
 
   routes,
-  cargoPool,
+  // Cargo items are objects: { name, category, payoutModifier }
+  freightPool,
+  // Trailer compatibility keyed by freight category.
+  trailerConfigs,
+  // Flat fallback list for safety / compatibility.
   truckTypes,
   manifestLines,
 
