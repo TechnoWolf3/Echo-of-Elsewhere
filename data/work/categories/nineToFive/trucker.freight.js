@@ -71,7 +71,6 @@ const freightByCategory = {
     "Refrigerated Flowers",
     "Pharmacy Stock",
     "Medical Supplies",
-    "Hospital Linen",
     "Palletised Groceries",
   ],
   livestock: [
@@ -127,6 +126,7 @@ const freightByCategory = {
     "Fire Safety Equipment",
     "Emergency Rations",
     "Event Staging Gear",
+    "Medical Linen",
   ],
   machineryHeavy: [
     "Mining Equipment",

@@ -256,6 +256,9 @@ async function ensureEconomyTables(db) {
 
     ALTER TABLE IF EXISTS user_balances ADD COLUMN IF NOT EXISTS bank_balance BIGINT NOT NULL DEFAULT 0;
     ALTER TABLE IF EXISTS user_balances ADD COLUMN IF NOT EXISTS account_number TEXT NULL;
+    ALTER TABLE IF EXISTS user_balances ADD COLUMN IF NOT EXISTS last_daily TIMESTAMPTZ;
+    ALTER TABLE IF EXISTS user_balances ADD COLUMN IF NOT EXISTS last_weekly TIMESTAMPTZ;
+    ALTER TABLE IF EXISTS user_balances ADD COLUMN IF NOT EXISTS last_monthly TIMESTAMPTZ;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_balances_account_number ON user_balances (account_number) WHERE account_number IS NOT NULL;
 
     CREATE TABLE IF NOT EXISTS robbery_protection (
@@ -267,56 +270,66 @@ async function ensureEconomyTables(db) {
       PRIMARY KEY (guild_id, user_id)
     );
 
-    CREATE TABLE IF NOT EXISTS cooldowns (
-      guild_id TEXT NOT NULL,
-      user_id  TEXT NOT NULL,
-      key      TEXT NOT NULL,
-      expires_at TIMESTAMPTZ NOT NULL,
-      PRIMARY KEY (guild_id, user_id, key)
-    );
+CREATE TABLE IF NOT EXISTS cooldowns (
+  guild_id TEXT NOT NULL,
+  user_id  TEXT NOT NULL,
+  key      TEXT NOT NULL,
+  next_claim_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (guild_id, user_id, key)
+);
 
-    ALTER TABLE IF EXISTS cooldowns
-    ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE IF EXISTS cooldowns
+ADD COLUMN IF NOT EXISTS next_claim_at TIMESTAMPTZ;
 
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires'
-      ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires_at'
-      ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expires TO expires_at;
-      END IF;
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='expires_at'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='next_claim_at'
+  ) THEN
+    ALTER TABLE cooldowns RENAME COLUMN expires_at TO next_claim_at;
+  END IF;
 
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expiry'
-      ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires_at'
-      ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expiry TO expires_at;
-      END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='expires'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='next_claim_at'
+  ) THEN
+    ALTER TABLE cooldowns RENAME COLUMN expires TO next_claim_at;
+  END IF;
 
-      IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires_on'
-      ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='expires_at'
-      ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expires_on TO expires_at;
-      END IF;
-    END $$;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='expiry'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='next_claim_at'
+  ) THEN
+    ALTER TABLE cooldowns RENAME COLUMN expiry TO next_claim_at;
+  END IF;
 
-    UPDATE cooldowns SET expires_at = NOW() WHERE expires_at IS NULL;
-    ALTER TABLE cooldowns ALTER COLUMN expires_at SET NOT NULL;
-    ALTER TABLE cooldowns ALTER COLUMN expires_at SET DEFAULT NOW();
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='expires_on'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='cooldowns' AND column_name='next_claim_at'
+  ) THEN
+    ALTER TABLE cooldowns RENAME COLUMN expires_on TO next_claim_at;
+  END IF;
+END $$;
 
-    CREATE INDEX IF NOT EXISTS idx_cooldowns_expires
-    ON cooldowns (expires_at);
+UPDATE cooldowns SET next_claim_at = NOW() WHERE next_claim_at IS NULL;
+ALTER TABLE cooldowns ALTER COLUMN next_claim_at SET NOT NULL;
+ALTER TABLE cooldowns ALTER COLUMN next_claim_at SET DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_cooldowns_next_claim
+ON cooldowns (next_claim_at);
 
     CREATE TABLE IF NOT EXISTS transactions (
       id BIGSERIAL PRIMARY KEY,
