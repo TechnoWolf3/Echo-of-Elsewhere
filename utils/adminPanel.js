@@ -12,9 +12,9 @@ const {
 } = require('discord.js');
 
 const BOT_MASTER_ROLE_ID = '741251069002121236';
-const botGames = require('./utils/botGames');
-const lottery = require('./utils/lottery');
-const effectSystem = require('./utils/effectSystem');
+const botGames = require('./botGames');
+const lottery = require('./lottery');
+const effectSystem = require('./effectSystem');
 const {
   getStockAdminView,
   setStockCurrentPrice,
@@ -22,7 +22,7 @@ const {
   setStockFloor,
   clearStockFloor,
   resetStockToLaunch,
-} = require('./utils/ese/engine');
+} = require('./ese/engine');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
