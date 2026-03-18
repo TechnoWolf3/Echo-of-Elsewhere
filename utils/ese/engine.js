@@ -1384,4 +1384,10 @@ module.exports = {
   getTradeCooldown,
   applyBuy,
   applySell,
+  getStockAdminView,
+  setStockCurrentPrice,
+  setStockNextTickPrice,
+  setStockFloor,
+  clearStockFloor,
+  resetStockToLaunch,
 };
