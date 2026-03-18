@@ -7,6 +7,7 @@ const newsTemplates = require("../../data/ese/newsTemplates");
 const rumorTemplates = require("../../data/ese/rumors");
 
 let schemaReady = false;
+const companiesBySymbol = new Map(companies.map((c) => [String(c.symbol).toUpperCase(), c]));
 
 function clamp(num, min, max) {
   return Math.max(min, Math.min(max, num));
@@ -242,6 +243,16 @@ async function ensureSchema() {
       payout_rate NUMERIC(18,6) NOT NULL,
       payout_total BIGINT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS ese_admin_overrides (
+      symbol TEXT PRIMARY KEY,
+      next_tick_price NUMERIC(18,2) NULL,
+      price_floor NUMERIC(18,2) NULL,
+      pending_headline TEXT NULL,
+      pending_kind TEXT NULL,
+      created_by TEXT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 
@@ -563,6 +574,244 @@ async function getRumorBoard() {
   return rebuildRumorBoard();
 }
 
+
+async function getAdminOverrides() {
+  await ensureSchema();
+  const res = await pool.query(
+    `
+    SELECT symbol, next_tick_price AS "nextTickPrice", price_floor AS "priceFloor",
+           pending_headline AS "pendingHeadline", pending_kind AS "pendingKind",
+           created_by AS "createdBy", updated_at AS "updatedAt"
+    FROM ese_admin_overrides
+    `
+  );
+
+  return new Map(
+    (res.rows || []).map((row) => [String(row.symbol).toUpperCase(), {
+      symbol: String(row.symbol).toUpperCase(),
+      nextTickPrice: row.nextTickPrice == null ? null : Number(row.nextTickPrice),
+      priceFloor: row.priceFloor == null ? null : Number(row.priceFloor),
+      pendingHeadline: row.pendingHeadline || null,
+      pendingKind: row.pendingKind || null,
+      createdBy: row.createdBy || null,
+      updatedAt: row.updatedAt || null,
+    }])
+  );
+}
+
+function buildDefaultAdminHeadline(kind, symbol, value) {
+  switch (kind) {
+    case "set_current_price":
+      return `${symbol} has been manually rebalanced to ${Number(value || 0).toFixed(2)}.`;
+    case "set_next_tick_price":
+      return `${symbol} has been queued for a manual price adjustment on the next tick.`;
+    case "set_floor":
+      return `${symbol} now has a protective floor set at ${Number(value || 0).toFixed(2)}.`;
+    case "clear_floor":
+      return `${symbol} no longer has a protective floor in place.`;
+    case "reset_stock":
+      return `${symbol} has been reset to a healthier baseline.`;
+    default:
+      return `${symbol} has been manually adjusted.`;
+  }
+}
+
+async function upsertAdminOverride(symbol, patch = {}) {
+  await ensureSchema();
+  const sym = String(symbol).toUpperCase();
+  await pool.query(
+    `
+    INSERT INTO ese_admin_overrides (
+      symbol, next_tick_price, price_floor, pending_headline, pending_kind, created_by, updated_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    ON CONFLICT (symbol) DO UPDATE SET
+      next_tick_price = COALESCE(EXCLUDED.next_tick_price, ese_admin_overrides.next_tick_price),
+      price_floor = CASE
+        WHEN EXCLUDED.pending_kind = 'clear_floor' THEN NULL
+        ELSE COALESCE(EXCLUDED.price_floor, ese_admin_overrides.price_floor)
+      END,
+      pending_headline = COALESCE(EXCLUDED.pending_headline, ese_admin_overrides.pending_headline),
+      pending_kind = COALESCE(EXCLUDED.pending_kind, ese_admin_overrides.pending_kind),
+      created_by = COALESCE(EXCLUDED.created_by, ese_admin_overrides.created_by),
+      updated_at = NOW()
+    `,
+    [
+      sym,
+      patch.nextTickPrice == null ? null : patch.nextTickPrice,
+      patch.priceFloor == null ? null : patch.priceFloor,
+      patch.pendingHeadline || null,
+      patch.pendingKind || null,
+      patch.createdBy || null,
+    ]
+  );
+}
+
+async function clearAdminOverrideFields(symbol, fields = []) {
+  await ensureSchema();
+  const assigns = [];
+  const allowed = new Set(["next_tick_price", "pending_headline", "pending_kind"]);
+  for (const field of fields) {
+    if (allowed.has(field)) assigns.push(`${field} = NULL`);
+  }
+  if (!assigns.length) return;
+
+  await pool.query(
+    `UPDATE ese_admin_overrides SET ${assigns.join(", ")}, updated_at = NOW() WHERE symbol = $1`,
+    [String(symbol).toUpperCase()]
+  );
+}
+
+async function getAdminOverride(symbol) {
+  const overrides = await getAdminOverrides();
+  return overrides.get(String(symbol).toUpperCase()) || null;
+}
+
+async function reseedHistory(symbol, basePrice) {
+  await ensureSchema();
+  const sym = String(symbol).toUpperCase();
+  await pool.query(`DELETE FROM ese_history WHERE symbol = $1`, [sym]);
+  const now = Date.now();
+  for (let i = 12; i >= 1; i--) {
+    const seedPrice = Math.max(
+      0.1,
+      Number((Number(basePrice) * (1 + rand(-0.012, 0.012))).toFixed(2))
+    );
+    const ts = new Date(now - i * 10 * 60 * 1000);
+    await pool.query(
+      `INSERT INTO ese_history (symbol, ts, price) VALUES ($1, $2, $3)`,
+      [sym, ts, seedPrice]
+    );
+  }
+  await pool.query(
+    `INSERT INTO ese_history (symbol, ts, price) VALUES ($1, NOW(), $2)`,
+    [sym, Number(basePrice)]
+  );
+}
+
+async function setStockCurrentPrice(symbol, price, customHeadline = "", actorId = null) {
+  await ensureSchema();
+  const sym = String(symbol).toUpperCase();
+  const value = Number(price);
+  if (!Number.isFinite(value) || value <= 0) throw new Error("INVALID_PRICE");
+
+  const company = await getCompany(sym);
+  if (!company) throw new Error("UNKNOWN_STOCK");
+
+  await pool.query(
+    `
+    UPDATE ese_companies
+    SET price = $2,
+        open = $2,
+        previous_close = $2,
+        high = $2,
+        low = $2,
+        day_change_percent = 0,
+        sentiment = 0,
+        buy_pressure = 0,
+        sell_pressure = 0,
+        updated_at = NOW()
+    WHERE symbol = $1
+    `,
+    [sym, value]
+  );
+
+  await reseedHistory(sym, value);
+
+  await upsertAdminOverride(sym, {
+    pendingHeadline: String(customHeadline || "").trim() || buildDefaultAdminHeadline("set_current_price", sym, value),
+    pendingKind: "set_current_price",
+    createdBy: actorId ? String(actorId) : null,
+  });
+
+  return await getCompany(sym);
+}
+
+async function setStockNextTickPrice(symbol, price, customHeadline = "", actorId = null) {
+  await ensureSchema();
+  const sym = String(symbol).toUpperCase();
+  const value = Number(price);
+  if (!Number.isFinite(value) || value <= 0) throw new Error("INVALID_PRICE");
+
+  const company = await getCompany(sym);
+  if (!company) throw new Error("UNKNOWN_STOCK");
+
+  await upsertAdminOverride(sym, {
+    nextTickPrice: value,
+    pendingHeadline: String(customHeadline || "").trim() || buildDefaultAdminHeadline("set_next_tick_price", sym, value),
+    pendingKind: "set_next_tick_price",
+    createdBy: actorId ? String(actorId) : null,
+  });
+
+  return { symbol: sym, nextTickPrice: value };
+}
+
+async function setStockFloor(symbol, floor, customHeadline = "", actorId = null) {
+  await ensureSchema();
+  const sym = String(symbol).toUpperCase();
+  const value = Number(floor);
+  if (!Number.isFinite(value) || value <= 0) throw new Error("INVALID_FLOOR");
+
+  const company = await getCompany(sym);
+  if (!company) throw new Error("UNKNOWN_STOCK");
+
+  await upsertAdminOverride(sym, {
+    priceFloor: value,
+    pendingHeadline: String(customHeadline || "").trim() || buildDefaultAdminHeadline("set_floor", sym, value),
+    pendingKind: "set_floor",
+    createdBy: actorId ? String(actorId) : null,
+  });
+
+  return { symbol: sym, priceFloor: value };
+}
+
+async function clearStockFloor(symbol, customHeadline = "", actorId = null) {
+  await ensureSchema();
+  const sym = String(symbol).toUpperCase();
+  const company = await getCompany(sym);
+  if (!company) throw new Error("UNKNOWN_STOCK");
+
+  await pool.query(
+    `
+    INSERT INTO ese_admin_overrides (symbol, next_tick_price, price_floor, pending_headline, pending_kind, created_by, updated_at)
+    VALUES ($1, NULL, NULL, $2, 'clear_floor', $3, NOW())
+    ON CONFLICT (symbol) DO UPDATE SET
+      price_floor = NULL,
+      pending_headline = EXCLUDED.pending_headline,
+      pending_kind = EXCLUDED.pending_kind,
+      created_by = EXCLUDED.created_by,
+      updated_at = NOW()
+    `,
+    [
+      sym,
+      String(customHeadline || "").trim() || buildDefaultAdminHeadline("clear_floor", sym),
+      actorId ? String(actorId) : null,
+    ]
+  );
+
+  return { symbol: sym };
+}
+
+async function resetStockToLaunch(symbol, customHeadline = "", actorId = null) {
+  await ensureSchema();
+  const sym = String(symbol).toUpperCase();
+  const seed = companiesBySymbol.get(sym);
+  if (!seed) throw new Error("UNKNOWN_STOCK");
+  return setStockCurrentPrice(sym, Number(seed.price || 1), String(customHeadline || "").trim() || buildDefaultAdminHeadline("reset_stock", sym), actorId);
+}
+
+async function getStockAdminView(symbol) {
+  await ensureSchema();
+  const company = await getCompany(symbol);
+  if (!company) return null;
+  const override = await getAdminOverride(symbol);
+  return {
+    company,
+    override,
+    launchPrice: Number(companiesBySymbol.get(String(symbol).toUpperCase())?.price || company.price),
+  };
+}
+
 async function processDividends(companiesForTick, tickCount) {
   const announcements = [];
 
@@ -690,9 +939,11 @@ async function tickMarket(activity = {}) {
     FROM ese_companies
     ORDER BY symbol
   `);
+  const adminOverrides = await getAdminOverrides();
 
   const client = await pool.connect();
   const moves = [];
+  const adminNewsLines = [];
   const updatedCompanies = [];
 
   try {
@@ -700,6 +951,7 @@ async function tickMarket(activity = {}) {
 
     for (const raw of companiesRes.rows) {
       const company = normalizeCompanyRow(raw);
+      const adminOverride = adminOverrides.get(company.symbol) || null;
 
       const marketBias = getMarketBias(marketState);
       const sectorBias = getSectorBias(company, activity);
@@ -717,10 +969,17 @@ async function tickMarket(activity = {}) {
       );
 
       const oldPrice = Number(company.price || 1);
-      const newPrice = Math.max(
+      let newPrice = Math.max(
         0.1,
         Number((oldPrice * (1 + totalMove)).toFixed(2))
       );
+
+      if (adminOverride?.nextTickPrice != null) {
+        newPrice = Number(adminOverride.nextTickPrice);
+      }
+      if (adminOverride?.priceFloor != null && newPrice < Number(adminOverride.priceFloor)) {
+        newPrice = Number(adminOverride.priceFloor);
+      }
 
       const high = Math.max(Number(company.high || newPrice), newPrice);
       const low = Math.min(Number(company.low || newPrice), newPrice);
@@ -812,6 +1071,28 @@ async function tickMarket(activity = {}) {
         sentiment,
         dayChangePercent,
       });
+
+      if (adminOverride?.nextTickPrice != null || adminOverride?.pendingHeadline) {
+        const adminHeadline = String(adminOverride?.pendingHeadline || "").trim() || buildDefaultAdminHeadline(adminOverride?.pendingKind || "admin_adjust", company.symbol, newPrice);
+        await pool.query(
+          `
+          UPDATE ese_companies
+          SET last_headline = $2,
+              updated_at = NOW()
+          WHERE symbol = $1
+          `,
+          [company.symbol, adminHeadline]
+        );
+        await addNews("admin", company.symbol, adminHeadline);
+        adminNewsLines.push({
+          symbol: company.symbol,
+          headline: adminHeadline,
+          percent: Number((((newPrice - oldPrice) / oldPrice) * 100).toFixed(2)),
+          newPrice,
+          forced: true,
+        });
+        await clearAdminOverrideFields(company.symbol, ["next_tick_price", "pending_headline", "pending_kind"]);
+      }
     }
 
     await client.query("COMMIT");
@@ -824,13 +1105,13 @@ async function tickMarket(activity = {}) {
 
   const breakingThreshold = Number(config.breakingNewsThreshold || 5);
 
-const strongMoves = moves.filter(
-  (m) => Math.abs(Number(m.percent || 0)) >= breakingThreshold
-);
+  const strongMoves = moves.filter(
+    (m) => Math.abs(Number(m.percent || 0)) >= breakingThreshold
+  );
 
-const newsLines = [];
+  const newsLines = [...adminNewsLines];
 
-for (const move of strongMoves.slice(0, 2)) {
+  for (const move of strongMoves.slice(0, 2)) {
   const bucket =
     move.percent >= 0
       ? newsTemplates.bullish?.[move.sector] || newsTemplates.bullish.default
@@ -856,7 +1137,7 @@ for (const move of strongMoves.slice(0, 2)) {
     percent: Number(move.percent || 0),
     newPrice: Number(move.newPrice || 0),
   });
-}
+  }
 
   const dividendAnnouncements = await processDividends(updatedCompanies, tickCount);
   await rebuildRumorBoard();
