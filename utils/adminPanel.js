@@ -12,9 +12,17 @@ const {
 } = require('discord.js');
 
 const BOT_MASTER_ROLE_ID = '741251069002121236';
-const botGames = require('./botGames');
-const lottery = require('./lottery');
-const effectSystem = require('./effectSystem');
+const botGames = require('./utils/botGames');
+const lottery = require('./utils/lottery');
+const effectSystem = require('./utils/effectSystem');
+const {
+  getStockAdminView,
+  setStockCurrentPrice,
+  setStockNextTickPrice,
+  setStockFloor,
+  clearStockFloor,
+  resetStockToLaunch,
+} = require('./utils/ese/engine');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -33,6 +41,7 @@ const CATEGORIES = [
   { value: 'shop', label: 'Shop / Inventory' },
   { value: 'botgames', label: 'Bot Games' },
   { value: 'rift', label: 'Echo Rift' },
+  { value: 'ese', label: 'Echo Stock Exchange' },
   { value: 'misc', label: 'Misc' },
 ];
 
@@ -96,6 +105,14 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'rift:schedule', label: 'Schedule', style: ButtonStyle.Secondary, modal: true },
     { id: 'rift:chance', label: 'Chance', style: ButtonStyle.Secondary, modal: true },
     { id: 'rift:tax', label: 'Blood Tax', style: ButtonStyle.Secondary, modal: true },
+  ],
+  ese: [
+    { id: 'ese:view', label: 'View Stock', style: ButtonStyle.Secondary, modal: true },
+    { id: 'ese:setnow', label: 'Set Price Now', style: ButtonStyle.Primary, modal: true },
+    { id: 'ese:setnext', label: 'Set Next Tick', style: ButtonStyle.Primary, modal: true },
+    { id: 'ese:setfloor', label: 'Set Floor', style: ButtonStyle.Secondary, modal: true },
+    { id: 'ese:clearfloor', label: 'Clear Floor', style: ButtonStyle.Secondary, modal: true },
+    { id: 'ese:reset', label: 'Reset Stock', style: ButtonStyle.Danger, modal: true },
   ],
   misc: [
     { id: 'misc:ping', label: 'Ping', style: ButtonStyle.Secondary, modal: false },
@@ -476,6 +493,42 @@ function buildModal(actionId) {
       addInput('extras', 'Optional settings (key=value per line)', TextInputStyle.Paragraph, false, 'kind=item\nstackable=true\nsell_enabled=false')
     );
     return modal;
+  }
+
+  // Echo Stock Exchange
+  if (actionId.startsWith('ese:')) {
+    const sub = actionId.split(':')[1];
+    modal.setTitle(`ESE: ${sub}`);
+
+    if (sub === 'view') {
+      modal.addComponents(addInput('symbol', 'Stock symbol', TextInputStyle.Short, true, 'LOE'));
+      return modal;
+    }
+
+    if (sub === 'clearfloor') {
+      modal.addComponents(
+        addInput('symbol', 'Stock symbol', TextInputStyle.Short, true, 'MMR'),
+        addInput('headline', 'Custom news headline (blank = default)', TextInputStyle.Paragraph, false, 'MMR has exited protective floor status.')
+      );
+      return modal;
+    }
+
+    if (sub === 'reset') {
+      modal.addComponents(
+        addInput('symbol', 'Stock symbol', TextInputStyle.Short, true, 'IQC'),
+        addInput('headline', 'Custom news headline (blank = default)', TextInputStyle.Paragraph, false, 'IQC has been reset to a healthier trading baseline.')
+      );
+      return modal;
+    }
+
+    if (sub === 'setnow' || sub === 'setnext' || sub === 'setfloor') {
+      modal.addComponents(
+        addInput('symbol', 'Stock symbol', TextInputStyle.Short, true, 'MMR'),
+        addInput('price', sub === 'setfloor' ? 'Floor price' : 'Target price', TextInputStyle.Short, true, '90'),
+        addInput('headline', 'Custom news headline (blank = default)', TextInputStyle.Paragraph, false, sub === 'setnext' ? 'MMR has been queued for a manual price adjustment on the next tick.' : 'MMR has been manually rebalanced.')
+      );
+      return modal;
+    }
   }
 
   // Rift
@@ -1011,6 +1064,67 @@ async function runActionFromId({ interaction, actionId, fields }) {
         values: { item_id: fields.item_id, wipe_inventory: wipe },
       });
     }
+  }
+
+  // ESE
+  if (actionId.startsWith('ese:')) {
+    const sub = actionId.split(':')[1];
+    const symbol = String(fields.symbol || '').trim().toUpperCase();
+    const headline = String(fields.headline || '').trim();
+
+    if (!symbol) return safeReply('❌ Enter a stock symbol.');
+
+    if (sub === 'view') {
+      const view = await getStockAdminView(symbol);
+      if (!view) return safeReply(`❌ Stock \`${symbol}\` was not found.`);
+      const override = view.override || {};
+      const lines = [
+        `📈 **${view.company.symbol} — ${view.company.name}**`,
+        `• Sector: **${view.company.sector}**`,
+        `• Current: **$${Number(view.company.price).toFixed(2)}**`,
+        `• Open: **$${Number(view.company.open).toFixed(2)}**`,
+        `• High / Low: **$${Number(view.company.high).toFixed(2)}** / **$${Number(view.company.low).toFixed(2)}**`,
+        `• 24H: **${Number(view.company.dayChangePercent).toFixed(2)}%**`,
+        `• Launch Price: **$${Number(view.launchPrice).toFixed(2)}**`,
+        `• Floor: **${override.priceFloor != null ? `$${Number(override.priceFloor).toFixed(2)}` : 'None'}**`,
+        `• Next Tick Override: **${override.nextTickPrice != null ? `$${Number(override.nextTickPrice).toFixed(2)}` : 'None'}**`,
+        `• Pending Headline: ${override.pendingHeadline ? `\`${override.pendingHeadline}\`` : 'None'}`,
+      ];
+      return safeReply(lines.join('\n'));
+    }
+
+    if (sub === 'setnow') {
+      const value = Number(fields.price);
+      if (!Number.isFinite(value) || value <= 0) return safeReply('❌ Enter a valid price greater than 0.');
+      const result = await setStockCurrentPrice(symbol, value, headline, interaction.user.id);
+      return safeReply(`✅ **${result.symbol}** was set to **$${Number(result.price).toFixed(2)}** immediately.\n📰 Next tick headline: ${headline || 'default auto headline'}`);
+    }
+
+    if (sub === 'setnext') {
+      const value = Number(fields.price);
+      if (!Number.isFinite(value) || value <= 0) return safeReply('❌ Enter a valid target price greater than 0.');
+      const result = await setStockNextTickPrice(symbol, value, headline, interaction.user.id);
+      return safeReply(`✅ **${result.symbol}** will move to **$${Number(result.nextTickPrice).toFixed(2)}** on the next tick.\n📰 Next tick headline: ${headline || 'default auto headline'}`);
+    }
+
+    if (sub === 'setfloor') {
+      const value = Number(fields.price);
+      if (!Number.isFinite(value) || value <= 0) return safeReply('❌ Enter a valid floor price greater than 0.');
+      const result = await setStockFloor(symbol, value, headline, interaction.user.id);
+      return safeReply(`🛡️ **${result.symbol}** now has a floor at **$${Number(result.priceFloor).toFixed(2)}**.\n📰 Next tick headline: ${headline || 'default auto headline'}`);
+    }
+
+    if (sub === 'clearfloor') {
+      const result = await clearStockFloor(symbol, headline, interaction.user.id);
+      return safeReply(`🧹 Cleared the protective floor for **${result.symbol}**.\n📰 Next tick headline: ${headline || 'default auto headline'}`);
+    }
+
+    if (sub === 'reset') {
+      const result = await resetStockToLaunch(symbol, headline, interaction.user.id);
+      return safeReply(`♻️ **${result.symbol}** was reset to **$${Number(result.price).toFixed(2)}**.\n📰 Next tick headline: ${headline || 'default auto headline'}`);
+    }
+
+    return safeReply('❌ Unknown ESE admin action.');
   }
 
   // RIFT
