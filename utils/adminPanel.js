@@ -558,6 +558,32 @@ function buildModal(actionId) {
   return null;
 }
 
+async function execute(interaction) {
+  if (!interaction.inGuild?.() || !interaction.guild) {
+    await interaction.reply({
+      content: "❌ Server only.",
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    return;
+  }
+
+  const isBotMaster = hasBotMaster(interaction.member);
+  if (!isBotMaster) {
+    await interaction.reply({
+      content: "😇 Nope. Bot Master toys are off-limits — don’t be naughty.",
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    return;
+  }
+
+  const payload = buildPanelMessage({ category: "economy" });
+
+  await interaction.reply({
+    ...payload,
+    flags: MessageFlags.Ephemeral,
+  }).catch(() => {});
+}
+
 async function handleInteraction(interaction) {
   // Only handle our custom IDs
   const cid = interaction.customId;
@@ -1173,6 +1199,7 @@ async function runActionFromId({ interaction, actionId, fields }) {
 }
 
 module.exports = {
+  execute,
   buildPanelMessage,
   handleInteraction,
 };
