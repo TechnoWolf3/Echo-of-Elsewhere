@@ -53,6 +53,18 @@ module.exports = {
     },
 
     {
+      id: "scratchcards",
+      name: "Scratch Cards",
+      emoji: "🎟️",
+      description: "Pick a card • fixed price • fast scratchie hits",
+      run: async (interaction, ctx = {}) => {
+        const scratch = require("../scratchcards");
+        return scratch.startFromHub(interaction, ctx);
+      },
+    },
+
+
+    {
       id: "bullshit",
       name: "Bullshit",
       emoji: "💩",
