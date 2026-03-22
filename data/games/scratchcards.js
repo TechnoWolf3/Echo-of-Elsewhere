@@ -34,6 +34,7 @@ const ACTIVITY_EFFECTS = {
 
 const SESSION_IDLE_MS = 30 * 60 * 1000;
 const TILE_COUNT = 9;
+const HIDDEN_TILE = '░░░';
 
 const CARD_DEFS = {
   pocket: {
@@ -277,7 +278,7 @@ function buildCardHubEmbed(session) {
     .setColor(selected.color)
     .setTitle('🎟️ Scratch Cards')
     .setDescription(
-      'Pick a card below, check the vibe, then buy it and let the house do something deeply unhelpful.\n\n' +
+      'Pick a card below, check the vibe, then buy it and start scratching. You can peel it back one scratch at a time or just reveal the whole thing if patience is not your ministry.\n\n' +
       `**Selected:** ${selected.emoji} **${selected.name}**\n${cardSummary(selected)}`
     )
     .addFields(cardFields)
@@ -323,12 +324,108 @@ function buildHubComponents(session) {
   ];
 }
 
-function buildResultEmbed(session, card, result, finalPayout) {
+function getProgressLine(session) {
+  const round = session.currentRound;
+  if (!round) return '';
+
+  const revealedSymbols = round.revealed
+    .map((isOpen, index) => (isOpen ? round.result.board[index] : null))
+    .filter(Boolean);
+
+  const seenCounts = new Map();
+  for (const symbol of revealedSymbols) {
+    seenCounts.set(symbol, (seenCounts.get(symbol) || 0) + 1);
+  }
+
+  const bestSeen = [...seenCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (!bestSeen) {
+    return 'Fresh card. Nothing revealed yet.';
+  }
+
+  return `Best seen so far: **${bestSeen[1]}x ${bestSeen[0]}** • ${round.revealedCount}/${TILE_COUNT} scratched`;
+}
+
+function buildScratchEmbed(session) {
+  const round = session.currentRound;
+  const card = round.card;
+  const left = TILE_COUNT - round.revealedCount;
+  const line = left > 0
+    ? left === TILE_COUNT
+      ? 'The foil is still intact. Start scratching.'
+      : `Silver flakes everywhere. **${left}** spot${left === 1 ? '' : 's'} left.`
+    : 'Card fully uncovered.';
+
+  return new EmbedBuilder()
+    .setColor(card.color)
+    .setTitle(`🎟️ ${card.name}`)
+    .setDescription(
+      `**Cost:** ${money(card.cost)}\n` +
+      `**Rule:** Match **3 or more** of the same symbol to win.\n\n` +
+      `${line}\n${getProgressLine(session)}`
+    )
+    .setFooter({ text: 'Use Scratch to reveal one panel, or Reveal All to flip the whole card.' });
+}
+
+function buildScratchComponents(session) {
+  const round = session.currentRound;
+  const rows = [];
+
+  for (let row = 0; row < 3; row += 1) {
+    const actionRow = new ActionRowBuilder();
+    for (let col = 0; col < 3; col += 1) {
+      const index = row * 3 + col;
+      const isOpen = !!round.revealed[index];
+      actionRow.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`scratch:${session.id}:tile:${index}`)
+          .setLabel(isOpen ? round.result.board[index] : HIDDEN_TILE)
+          .setStyle(isOpen ? ButtonStyle.Secondary : ButtonStyle.Primary)
+          .setDisabled(true)
+      );
+    }
+    rows.push(actionRow);
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`scratch:${session.id}:scratch`)
+        .setLabel('Scratch')
+        .setEmoji('🪙')
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(round.revealedCount >= TILE_COUNT),
+      new ButtonBuilder()
+        .setCustomId(`scratch:${session.id}:reveal`)
+        .setLabel('Reveal All')
+        .setEmoji('👀')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(round.revealedCount >= TILE_COUNT),
+      new ButtonBuilder()
+        .setCustomId(`scratch:${session.id}:hub`)
+        .setLabel('Cards Hub')
+        .setEmoji('🎟️')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`scratch:${session.id}:casino`)
+        .setLabel('Casino')
+        .setEmoji('🎰')
+        .setStyle(ButtonStyle.Secondary),
+    )
+  );
+
+  return rows;
+}
+
+function buildResultEmbed(session, card, result, finalPayout, options = {}) {
   const title = result.win ? '🎉 Scratchcard Winner' : '💀 Scratchcard Dud';
   const desc = [];
   desc.push(`**Card:** ${card.emoji} ${card.name}`);
   desc.push(`**Cost:** ${money(card.cost)}`);
   desc.push(`**Board:**\n${boardLines(result.board)}`);
+
+  if (options.autoRevealReason) {
+    desc.push(`\n_${options.autoRevealReason}_`);
+  }
 
   if (result.win && result.best) {
     desc.push(`\nMatched **${result.counts.get(result.best.symbol)}x ${result.best.symbol}** for **${money(finalPayout)}**.`);
@@ -447,7 +544,85 @@ async function sendEphemeral(interaction, content) {
   } catch {}
 }
 
-async function playSelectedCard(interaction, session) {
+function createRound(card) {
+  return {
+    card,
+    result: resolveCard(card),
+    revealed: Array(TILE_COUNT).fill(false),
+    revealedCount: 0,
+    settled: false,
+  };
+}
+
+function revealRandomTile(round) {
+  const hidden = [];
+  for (let i = 0; i < TILE_COUNT; i += 1) {
+    if (!round.revealed[i]) hidden.push(i);
+  }
+  if (!hidden.length) return null;
+  const pick = hidden[Math.floor(Math.random() * hidden.length)];
+  round.revealed[pick] = true;
+  round.revealedCount += 1;
+  return pick;
+}
+
+async function settleRound(interaction, session, options = {}) {
+  const round = session.currentRound;
+  if (!round || round.settled) return;
+
+  round.revealed = Array(TILE_COUNT).fill(true);
+  round.revealedCount = TILE_COUNT;
+  round.settled = true;
+
+  let finalPayout = 0;
+  let payoutNote = null;
+
+  if (round.result.payout > 0) {
+    const payout = await bankPayoutWithEffects({
+      guildId: session.guildId,
+      userId: session.hostId,
+      amount: round.result.payout,
+      type: 'scratchcard_payout',
+      meta: {
+        channelId: session.channelId,
+        cardId: round.card.id,
+        cardName: round.card.name,
+        payoutWanted: round.result.payout,
+      },
+      activityEffects: ACTIVITY_EFFECTS,
+      awardSource: 'scratchcards',
+    });
+
+    if (payout?.ok) {
+      finalPayout = Number(payout.finalAmount || round.result.payout);
+    } else {
+      payoutNote = '⚠️ The server bank could not cover the win, so the card pays out nothing this time.';
+      finalPayout = 0;
+    }
+  } else {
+    const triggerJail = await handleTriggeredEffectEvent({
+      guildId: session.guildId,
+      userId: session.hostId,
+      eventKey: 'casino_loss',
+      context: { source: 'scratchcards', cardId: round.card.id },
+    }).catch(() => null);
+    if (triggerJail?.triggered && triggerJail.notice) {
+      payoutNote = triggerJail.notice;
+    }
+  }
+
+  session.lastMode = 'result';
+  await session.message.edit({
+    embeds: [buildResultEmbed(session, round.card, round.result, finalPayout, options)],
+    components: buildResultComponents(session),
+  }).catch(() => {});
+
+  if (interaction && payoutNote) {
+    await sendEphemeral(interaction, payoutNote);
+  }
+}
+
+async function startScratchRound(interaction, session) {
   if (await guardGamesComponent(interaction)) return;
   if (await guardNotJailedComponent(interaction)) return;
 
@@ -463,53 +638,32 @@ async function playSelectedCard(interaction, session) {
     return;
   }
 
-  const result = resolveCard(card);
-  let finalPayout = 0;
-  let payoutNote = null;
+  session.currentRound = createRound(card);
+  session.lastMode = 'scratching';
+  activeGames.set(session.channelId, { type: 'scratchcards', state: 'scratching', hostId: session.hostId });
+  setActiveGame(session.channelId, { type: 'scratchcards', state: 'scratching', tableId: session.id });
 
-  if (result.payout > 0) {
-    const payout = await bankPayoutWithEffects({
-      guildId: session.guildId,
-      userId: interaction.user.id,
-      amount: result.payout,
-      type: 'scratchcard_payout',
-      meta: {
-        channelId: session.channelId,
-        cardId: card.id,
-        cardName: card.name,
-        payoutWanted: result.payout,
-      },
-      activityEffects: ACTIVITY_EFFECTS,
-      awardSource: 'scratchcards',
-    });
-
-    if (payout?.ok) {
-      finalPayout = Number(payout.finalAmount || result.payout);
-    } else {
-      payoutNote = '⚠️ The server bank could not cover the win, so the card pays out nothing this time.';
-      finalPayout = 0;
-    }
-  } else {
-    const triggerJail = await handleTriggeredEffectEvent({
-      guildId: session.guildId,
-      userId: interaction.user.id,
-      eventKey: 'casino_loss',
-      context: { source: 'scratchcards', cardId: card.id },
-    }).catch(() => null);
-    if (triggerJail?.triggered && triggerJail.notice) {
-      payoutNote = triggerJail.notice;
-    }
-  }
-
-  session.lastMode = 'result';
-  session.message.edit({
-    embeds: [buildResultEmbed(session, card, result, finalPayout)],
-    components: buildResultComponents(session),
+  await session.message.edit({
+    embeds: [buildScratchEmbed(session)],
+    components: buildScratchComponents(session),
   }).catch(() => {});
+}
 
-  if (payoutNote) {
-    await sendEphemeral(interaction, payoutNote);
+async function scratchOnce(interaction, session) {
+  const round = session.currentRound;
+  if (!round || round.settled) return;
+
+  revealRandomTile(round);
+
+  if (round.revealedCount >= TILE_COUNT) {
+    await settleRound(interaction, session);
+    return;
   }
+
+  await session.message.edit({
+    embeds: [buildScratchEmbed(session)],
+    components: buildScratchComponents(session),
+  }).catch(() => {});
 }
 
 async function startFromHub(interaction, ctx = {}) {
@@ -540,6 +694,7 @@ async function startFromHub(interaction, ctx = {}) {
     selectedCardId: 'pocket',
     lastMode: 'hub',
     collector: null,
+    currentRound: null,
   };
 
   activeGames.set(channelId, { type: 'scratchcards', state: 'hub', hostId: session.hostId });
@@ -583,11 +738,22 @@ async function startFromHub(interaction, ctx = {}) {
       }
 
       if (action === 'buy' || action === 'again') {
-        await playSelectedCard(i, session);
+        await startScratchRound(i, session);
+        return;
+      }
+
+      if (action === 'scratch') {
+        await scratchOnce(i, session);
+        return;
+      }
+
+      if (action === 'reveal') {
+        await settleRound(i, session, { autoRevealReason: 'You gave up on the gentle art of scratching and ripped the whole thing open.' });
         return;
       }
 
       if (action === 'hub') {
+        session.currentRound = null;
         session.lastMode = 'hub';
         setActiveGame(channelId, { type: 'scratchcards', state: 'hub', tableId: session.id });
         activeGames.set(channelId, { type: 'scratchcards', state: 'hub', hostId: session.hostId });
@@ -619,12 +785,20 @@ async function startFromHub(interaction, ctx = {}) {
   });
 
   collector.on('end', async (_collected, reason) => {
-    activeGames.delete(channelId);
-    clearActiveGame(channelId);
-
-    if (reason === 'casino' || reason === 'closed') return;
+    if (reason === 'casino' || reason === 'closed') {
+      activeGames.delete(channelId);
+      clearActiveGame(channelId);
+      return;
+    }
 
     try {
+      if (session.currentRound && !session.currentRound.settled) {
+        await settleRound(null, session, { autoRevealReason: 'The card timed out, so Echo peeled the rest back for you.' });
+      }
+
+      activeGames.delete(channelId);
+      clearActiveGame(channelId);
+
       await message.edit({
         embeds: [buildCasinoEmbed(channelId)],
         components: buildCasinoComponents(),
