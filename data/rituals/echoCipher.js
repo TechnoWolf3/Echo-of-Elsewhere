@@ -40,32 +40,42 @@ function pruneSessions() {
 }
 
 function randomCode(length = CODE_LENGTH) {
-  const digits = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
-  for (let i = digits.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [digits[i], digits[j]] = [digits[j], digits[i]];
+  let out = "";
+  for (let i = 0; i < length; i += 1) {
+    out += String(Math.floor(Math.random() * 10));
   }
-  return digits.slice(0, length).join("");
+  return out;
 }
 
 function buildFeedback(secret, guess) {
-  const exact = [];
+  const markers = new Array(guess.length).fill("⬛");
+  const secretCounts = new Map();
   let correctSpot = 0;
   let wrongSpot = 0;
+
   for (let i = 0; i < guess.length; i += 1) {
-    const digit = guess[i];
-    if (secret[i] === digit) {
-      exact.push("🟩");
+    if (guess[i] === secret[i]) {
+      markers[i] = "🟩";
       correctSpot += 1;
-    } else if (secret.includes(digit)) {
-      exact.push("🟨");
-      wrongSpot += 1;
     } else {
-      exact.push("⬛");
+      const digit = secret[i];
+      secretCounts.set(digit, (secretCounts.get(digit) || 0) + 1);
     }
   }
+
+  for (let i = 0; i < guess.length; i += 1) {
+    if (markers[i] === "🟩") continue;
+    const digit = guess[i];
+    const remaining = secretCounts.get(digit) || 0;
+    if (remaining > 0) {
+      markers[i] = "🟨";
+      wrongSpot += 1;
+      secretCounts.set(digit, remaining - 1);
+    }
+  }
+
   return {
-    markers: exact.join(""),
+    markers: markers.join(""),
     correctSpot,
     wrongSpot,
   };
@@ -96,7 +106,7 @@ function buildEmbed(session, latestMessage = null) {
     .setColor(0x7a2bff)
     .setTitle("🔐 Echo Cipher")
     .setDescription(
-      "A five-digit lock sits in front of you. Crack the sequence in **6 attempts**.\n\nDigits do **not** repeat."
+      "A five-digit lock sits in front of you. Crack the sequence in **6 attempts**.\n\nDigits **can repeat**."
     )
     .addFields(
       { name: "Attempts", value: `Used: **${attemptsUsed}/${MAX_ATTEMPTS}**\nRemaining: **${attemptsRemaining}**`, inline: true },
@@ -104,7 +114,7 @@ function buildEmbed(session, latestMessage = null) {
       { name: "Failure", value: "Miss the code and Echo may answer with **jail**, a **curse**, or both.", inline: false },
       { name: "Attempt History", value: formatHistory(session.history) }
     )
-    .setFooter({ text: "Enter a 5-digit code with no repeated digits." });
+    .setFooter({ text: "Enter a 5-digit code. Repeated digits are allowed." });
 
   if (latestMessage) {
     embed.addFields({ name: "Latest Result", value: String(latestMessage).slice(0, 1024) });
@@ -249,7 +259,7 @@ module.exports = {
   cooldownKey: "echo_cipher",
   name: "Echo Cipher",
   shortName: "Echo Cipher",
-  description: "Crack a five-digit lock once per day before Echo decides you belong in a cell.",
+  description: "Crack a five-digit lock once per day before Echo decides you belong in a cell. Digits may repeat.",
   nextClaimAt: nextSydneyMidnightUTC,
   claimText: () => "",
   cooldownText: ({ unix }) => `⏳ **Echo Cipher** has already been completed. Return <t:${unix}:R>.`,
@@ -355,14 +365,6 @@ module.exports = {
       if (!/^\d{5}$/.test(rawGuess)) {
         await interaction.reply({
           content: "❌ Enter exactly **5 digits**.",
-          flags: MessageFlags.Ephemeral,
-        }).catch(() => {});
-        return true;
-      }
-
-      if (new Set(rawGuess.split("")).size !== CODE_LENGTH) {
-        await interaction.reply({
-          content: "❌ Each digit must be unique. Repeated digits are not allowed.",
           flags: MessageFlags.Ephemeral,
         }).catch(() => {});
         return true;
