@@ -284,6 +284,28 @@ async function runLegacyCommand({ interaction, commandFile, subcommand = null, v
   // For role/permission checks
   interaction.memberPermissions = elevatePermsForBotMaster(interaction);
 
+  if (!interaction.__adminPanelReplyShimApplied) {
+    interaction.__adminPanelReplyShimApplied = true;
+    const origReply = interaction.reply?.bind(interaction);
+    const origEditReply = interaction.editReply?.bind(interaction);
+    const origFollowUp = interaction.followUp?.bind(interaction);
+
+    if (origReply && origEditReply) {
+      interaction.reply = async (payload) => {
+        if (interaction.deferred) return origEditReply(payload);
+        if (interaction.replied) return origFollowUp ? origFollowUp(payload) : origEditReply(payload);
+        return origReply(payload);
+      };
+    }
+
+    if (origEditReply && origReply) {
+      interaction.editReply = async (payload) => {
+        if (!interaction.deferred && !interaction.replied) return origReply(payload);
+        return origEditReply(payload);
+      };
+    }
+  }
+
   return cmd.execute(interaction);
 }
 
@@ -620,6 +642,7 @@ async function handleInteraction(interaction) {
       }
 
       // No modal: run action now
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
       await runActionFromId({ interaction, actionId, fields: {} });
       return true;
     }
@@ -632,6 +655,7 @@ async function handleInteraction(interaction) {
         fields[k] = v?.value;
       }
 
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
       await runActionFromId({ interaction, actionId, fields });
       return true;
     }
@@ -661,10 +685,14 @@ async function runActionFromId({ interaction, actionId, fields }) {
   const safeReply = async (content) => {
     const payload = { content, flags: MessageFlags.Ephemeral };
     try {
-      if (interaction.deferred || interaction.replied) return await interaction.followUp(payload);
+      if (interaction.deferred) return await interaction.editReply(payload);
+      if (interaction.replied) return await interaction.followUp(payload);
       return await interaction.reply(payload);
     } catch (_) {
-      try { return await interaction.followUp(payload); } catch (_) {}
+      try {
+        if (interaction.deferred) return await interaction.editReply(payload);
+        return await interaction.followUp(payload);
+      } catch (_) {}
     }
   };
 

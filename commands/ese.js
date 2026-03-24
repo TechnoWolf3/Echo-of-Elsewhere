@@ -361,9 +361,10 @@ module.exports = {
     .setDescription("Open the Echo Stock Exchange hub."),
 
   async execute(interaction) {
+    await interaction.deferReply().catch(() => {});
     await ensureUser(interaction.guildId, interaction.user.id);
 
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [await buildOverviewEmbed(interaction)],
       components: [await buildMenu(), buildOverviewButtons()],
     });

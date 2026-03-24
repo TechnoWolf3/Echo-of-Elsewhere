@@ -153,8 +153,8 @@ async function setMeta(key, value) {
   );
 }
 
-async function addNews(kind, symbol, headline) {
-  await pool.query(
+async function addNews(kind, symbol, headline, db = pool) {
+  await db.query(
     `
     INSERT INTO ese_news (kind, symbol, headline)
     VALUES ($1, $2, $3)
@@ -1074,7 +1074,7 @@ async function tickMarket(activity = {}) {
 
       if (adminOverride?.nextTickPrice != null || adminOverride?.pendingHeadline) {
         const adminHeadline = String(adminOverride?.pendingHeadline || "").trim() || buildDefaultAdminHeadline(adminOverride?.pendingKind || "admin_adjust", company.symbol, newPrice);
-        await pool.query(
+        await client.query(
           `
           UPDATE ese_companies
           SET last_headline = $2,
@@ -1083,7 +1083,7 @@ async function tickMarket(activity = {}) {
           `,
           [company.symbol, adminHeadline]
         );
-        await addNews("admin", company.symbol, adminHeadline);
+        await addNews("admin", company.symbol, adminHeadline, client);
         adminNewsLines.push({
           symbol: company.symbol,
           headline: adminHeadline,

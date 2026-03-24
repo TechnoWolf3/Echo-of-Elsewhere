@@ -109,8 +109,9 @@ module.exports = {
 
     if (await guardNotJailed(interaction)) return;
 
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
     const payload = await buildHubPayload(interaction.guildId, interaction.user.id);
-    return interaction.reply({ ...payload, flags: MessageFlags.Ephemeral }).catch(() => {});
+    return interaction.editReply(payload).catch(() => {});
   },
 
   async handleInteraction(interaction) {
