@@ -406,7 +406,7 @@ async function finalize(interaction, state, reason, context = {}) {
       { name: "🧾 Identified?", value: identified ? "Likely" : "Not obviously", inline: true },
       { name: "🎯 Target Read", value: target.id.replace(/_/g, " "), inline: true }
     )
-    .setFooter({ text: "Tweak dialogue, target types, weighting, and event pools in scamCall.data.js" });
+    .setFooter({ text: "Things may become more obvious when you read into them" });
 
   await interaction.editReply({ content: null, embeds: [embed], components: [] }).catch(() => {});
   return { outcome, finalHeat, identified };
