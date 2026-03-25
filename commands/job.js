@@ -39,6 +39,7 @@ const nightWalker = require("../data/work/categories/nightwalker/index");
 // ✅ Crime
 const startStoreRobbery = require("../data/work/categories/crime/storeRobbery");
 const startHeist = require("../data/work/categories/crime/heist");
+const startScamCall = require("../data/work/categories/crime/scamCall");
 
 // ✅ Grind (NEW)
 const grindIndex = require("../data/work/categories/grind/index");
@@ -78,6 +79,7 @@ const CRIME_KEYS = {
   drugs: "crime_drugs",
   heist: "crime_heist",
   major: "crime_heist_major",
+  scam: "crime_scam",
 };
 
 /* ============================================================
@@ -633,10 +635,12 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
   const effStore = effectiveCooldown(cooldowns?.store, cooldowns?.crimeGlobal);
   const effHeist = effectiveCooldown(cooldowns?.heist, cooldowns?.crimeGlobal);
   const effMajor = effectiveCooldown(cooldowns?.major, cooldowns?.crimeGlobal);
+  const effScam = effectiveCooldown(cooldowns?.scam, cooldowns?.crimeGlobal);
 
   const cdLines = [
     cdLine("Crime lockout", cooldowns?.crimeGlobal),
     cdLine("Store Robbery", effStore),
+    cdLine("Scam Call", effScam),
     cdLine("Heist", effHeist),
     cdLine("Major Heist", effMajor),
   ].join("\n");
@@ -680,6 +684,7 @@ function buildCrimeComponents(disabled = false) {
         { label: "Store Robbery", value: "crime:store", emoji: "🏪", description: safeDesc("Risky grab-and-go.") },
         { label: "Car Chase", value: "crime:chase", emoji: "🚗", description: safeDesc("Coming soon.") },
         { label: "Drug Pushing", value: "crime:drugs", emoji: "💊", description: safeDesc("Coming soon.") },
+        { label: "Scam Call", value: "crime:scam", emoji: "☎️", description: safeDesc("Manipulate the mark and time your push.") },
         { label: "Heist", value: "crime:heist", emoji: "🏦", description: safeDesc("Big job, big heat.") },
         { label: "Major Heist", value: "crime:major", emoji: "💎", description: safeDesc("High stakes.") }
       )
@@ -1249,6 +1254,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         const cooldowns = {
           crimeGlobal: await getCooldownUnixIfActive(guildId, userId, CRIME_GLOBAL_KEY),
           store: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.store),
+          scam: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.scam),
           heist: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.heist),
           major: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.major),
         };
@@ -1458,6 +1464,29 @@ function scheduleReturnToCategory(delayMs = 5000) {
             await startStoreRobbery(boardAdapter, {
               lingeringHeat,
               onStoreRobberyComplete: async ({ outcome, finalHeat, identified }) => {
+                if (!finalHeat || finalHeat <= 0) return;
+                const ttlMins = heatTTLMinutesForOutcome(outcome, { identified });
+                await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
+              },
+            });
+
+            await new Promise((r) => setTimeout(r, 5_000));
+            collector.resetTimer({ time: BOARD_INACTIVITY_MS });
+
+            session.view = "crime";
+            await redraw();
+            return;
+          }
+
+          if (key === "scam") {
+            if (await checkCrimeCooldownOrTell(btn, guildId, userId, CRIME_KEYS.scam, "Scam Call")) return;
+
+            const lingeringHeat = await getCrimeHeat(guildId, userId);
+            session.view = "crime_run";
+
+            await startScamCall(boardAdapter, {
+              lingeringHeat,
+              onScamCallComplete: async ({ outcome, finalHeat, identified }) => {
                 if (!finalHeat || finalHeat <= 0) return;
                 const ttlMins = heatTTLMinutesForOutcome(outcome, { identified });
                 await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
