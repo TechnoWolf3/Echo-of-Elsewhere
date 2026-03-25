@@ -436,7 +436,7 @@ async function resolveSpin({ interaction, session }) {
 
 module.exports = {
   id: 'echo_wheel',
-  placement: 'primary',
+  placement: 'other',
   interactive: true,
   type: 'echo_wheel',
   awardSource: 'echo_wheel',
