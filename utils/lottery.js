@@ -348,6 +348,56 @@ async function countTickets(guildId, drawKey) {
   return res.rows[0]?.c ?? 0;
 }
 
+async function grantQuickPickTickets(guildId, userId, count = 1, meta = {}) {
+  await ensureTables();
+
+  const drawUtc = nextDrawUtcMs();
+  const drawKey = drawKeyFromDrawUtc(drawUtc);
+  const closeUtc = salesCloseUtcMs(drawUtc);
+
+  if (Date.now() >= closeUtc) {
+    return { ok: false, reason: 'sales_closed', granted: 0, drawUtc, drawKey };
+  }
+
+  const current = await countUserTickets(guildId, userId, drawKey);
+  const remaining = Math.max(0, config.maxTicketsPerUser - current);
+  const toGrant = Math.max(0, Math.min(Number(count || 1), remaining));
+
+  if (toGrant <= 0) {
+    return { ok: false, reason: 'ticket_cap', granted: 0, drawUtc, drawKey };
+  }
+
+  await getDrawRow(guildId, drawKey, drawUtc, closeUtc);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (let i = 0; i < toGrant; i += 1) {
+      await client.query(
+        `INSERT INTO lottery_tickets (guild_id, user_id, draw_key, numbers)
+         VALUES ($1,$2,$3,$4)`,
+        [guildId, userId, drawKey, quickPick()]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+
+  const ticketsSold = await countTickets(guildId, drawKey);
+  await pool.query(
+    `UPDATE lottery_draws
+     SET tickets_sold=$3
+     WHERE guild_id=$1 AND draw_key=$2`,
+    [guildId, drawKey, ticketsSold]
+  );
+
+  return { ok: true, granted: toGrant, drawUtc, drawKey, meta };
+}
+
 async function countUserTickets(guildId, userId, drawKey) {
   const res = await pool.query(
     `SELECT COUNT(*)::int AS c FROM lottery_tickets WHERE guild_id=$1 AND user_id=$2 AND draw_key=$3`,
@@ -890,6 +940,7 @@ module.exports = {
   drawKeyFromDrawUtc,
   salesCloseUtcMs,
   countTickets,
+  grantQuickPickTickets,
   countUserTickets,
   listUserTickets,
   listTicketBuyers,

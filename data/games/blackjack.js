@@ -607,7 +607,7 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
           guildId,
           userId: p.userId,
           eventKey: 'casino_loss',
-          context: { source: 'blackjack' },
+          context: { source: 'blackjack', refundAmount: Number(B || 0) },
         }).catch(() => null);
         if (triggerJail?.triggered && triggerJail.notice) {
           jailNote = triggerJail.notice;

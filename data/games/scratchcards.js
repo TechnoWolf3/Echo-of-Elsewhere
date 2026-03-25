@@ -604,7 +604,7 @@ async function settleRound(interaction, session, options = {}) {
       guildId: session.guildId,
       userId: session.hostId,
       eventKey: 'casino_loss',
-      context: { source: 'scratchcards', cardId: round.card.id },
+      context: { source: 'scratchcards', cardId: round.card.id, refundAmount: Number(round.card.cost || 0) },
     }).catch(() => null);
     if (triggerJail?.triggered && triggerJail.notice) {
       payoutNote = triggerJail.notice;

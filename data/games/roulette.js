@@ -585,7 +585,7 @@ async function spinRound({ interaction, table }) {
         guildId,
         userId: p.userId,
         eventKey: 'casino_loss',
-        context: { source: 'roulette' },
+        context: { source: 'roulette', refundAmount: Number(stake || 0) },
       }).catch(() => null);
       if (triggerJail?.triggered && triggerJail.notice) {
         lossJailNote = triggerJail.notice;

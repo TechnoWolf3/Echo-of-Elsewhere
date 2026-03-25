@@ -514,7 +514,7 @@ async function endGame(table, winId) {
       guildId: table.guildId,
       userId: playerId,
       eventKey: 'casino_loss',
-      context: { source: 'bullshit' },
+      context: { source: 'bullshit', refundAmount: Number(table.players.get(playerId)?.buyIn || 0) },
     }).catch(() => null);
     if (triggerJail?.triggered && triggerJail.notice) {
       await table.channel.send(`↳ <@${playerId}> ${triggerJail.notice}`).catch(() => {});

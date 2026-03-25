@@ -444,6 +444,32 @@ async function handleTriggeredEffectEvent({ guildId, userId, eventKey, context =
     };
   }
 
+  if (String(active.modifier_mode) === 'refund_on_loss') {
+    const refundAmount = Math.max(0, Math.floor(Number(context.refundAmount || awardedMeta.refundAmount || 0)));
+    if (refundAmount <= 0) return { triggered: false };
+
+    const economy = require('./economy');
+    await economy.creditUser(guildId, userId, refundAmount, 'casino_loss_refund', {
+      source: context.source || 'casino',
+      effectId: String(active.effect_id),
+      refundedByVoucher: true,
+    });
+    await clearActiveEffect(guildId, userId);
+    return {
+      triggered: true,
+      action: 'refund',
+      refundAmount,
+      effectId: String(active.effect_id),
+      notice: buildEffectNotice(def, 'triggered', {
+        effectId: String(active.effect_id),
+        awardedMeta,
+      }, {
+        ...context,
+        refundAmount,
+      }),
+    };
+  }
+
   return { triggered: false };
 }
 

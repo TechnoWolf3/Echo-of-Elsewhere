@@ -483,7 +483,7 @@ async function processResults(session) {
           guildId: session.guildId,
           userId,
           eventKey: 'casino_loss',
-          context: { source: 'keno' },
+          context: { source: 'keno', refundAmount: Number(bet.amount || 0) },
         }).catch(() => null);
         if (triggerJail?.triggered && triggerJail.notice) {
           lossNotices.push(`• <@${userId}> ${triggerJail.notice}`);
@@ -518,7 +518,7 @@ async function processResults(session) {
           guildId: session.guildId,
           userId,
           eventKey: 'casino_loss',
-          context: { source: 'keno' },
+          context: { source: 'keno', refundAmount: Number(bet.amount || 0) },
         }).catch(() => null);
         if (triggerJail?.triggered && triggerJail.notice) {
           lossNotices.push(`• <@${userId}> ${triggerJail.notice}`);

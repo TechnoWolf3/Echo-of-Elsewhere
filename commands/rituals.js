@@ -54,16 +54,23 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
     embed.addFields({ name: "Latest Result", value: latestMessage.slice(0, 1024) });
   }
 
-  const buttonStyles = [ButtonStyle.Primary, ButtonStyle.Secondary, ButtonStyle.Success];
-  const primaryButtons = new ActionRowBuilder().addComponents(
-    primary.slice(0, 3).map((ritual, idx) => {
-      const status = statuses.get(ritual.id);
-      return new ButtonBuilder()
-        .setCustomId(`${BTN_PREFIX}${ritual.id}`)
-        .setLabel(ritual.shortName || ritual.name)
-        .setStyle(status?.available ? buttonStyles[idx] ?? ButtonStyle.Primary : ButtonStyle.Secondary);
-    })
-  );
+  const buttonStyles = [ButtonStyle.Primary, ButtonStyle.Secondary, ButtonStyle.Success, ButtonStyle.Primary, ButtonStyle.Secondary];
+  const primaryRows = [];
+  for (let start = 0; start < primary.length; start += 5) {
+    const slice = primary.slice(start, start + 5);
+    if (!slice.length) continue;
+    primaryRows.push(
+      new ActionRowBuilder().addComponents(
+        slice.map((ritual, idx) => {
+          const status = statuses.get(ritual.id);
+          return new ButtonBuilder()
+            .setCustomId(`${BTN_PREFIX}${ritual.id}`)
+            .setLabel(ritual.shortName || ritual.name)
+            .setStyle(status?.available ? buttonStyles[(start + idx) % buttonStyles.length] ?? ButtonStyle.Primary : ButtonStyle.Secondary);
+        })
+      )
+    );
+  }
 
   const otherMenu = new StringSelectMenuBuilder()
     .setCustomId(SELECT_ID)
@@ -91,7 +98,7 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
     new ButtonBuilder().setCustomId(CLOSE_ID).setLabel("Close").setStyle(ButtonStyle.Danger)
   );
 
-  return { embeds: [embed], components: [primaryButtons, menuRow, utilityRow] };
+  return { embeds: [embed], components: [...primaryRows, menuRow, utilityRow] };
 }
 
 module.exports = {

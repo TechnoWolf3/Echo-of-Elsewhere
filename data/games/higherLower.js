@@ -410,7 +410,7 @@ async function resolveRound(table) {
         guildId: table.guildId,
         userId: p.userId,
         eventKey: 'casino_loss',
-        context: { source: 'higherlower' },
+        context: { source: 'higherlower', refundAmount: Number(p.betAmount || 0) },
       }).catch(() => null);
       if (triggerJail?.triggered && triggerJail.notice) {
         await table.channel.send(`↳ <@${p.userId}> ${triggerJail.notice}`).catch(() => {});
