@@ -340,6 +340,7 @@ function buildHubEmbed(user, progress, cooldownUnix) {
           "🧠 **Night Walker** — Work to please the night",
           "🕒 **Grind** — Jobs that take time",
           "🕶️ **Crime** — High risk, heat & jail",
+          "🏭 **Enterprises** — Long-term business systems"
         ].join("\n"),
       },
       {
@@ -359,7 +360,8 @@ function buildHubComponents(disabled = false) {
         { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
-        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
       )
       .setDisabled(disabled)
   );
@@ -371,6 +373,69 @@ function buildHubComponents(disabled = false) {
   return [catRow, navRow];
 }
 
+function buildEnterprisesEmbed({ cooldownUnix } = {}) {
+  return new EmbedBuilder()
+    .setTitle("🏭 Enterprises")
+    .setDescription(
+      [
+        statusLineFromCooldown(cooldownUnix),
+        "",
+        "Build long-term operations that grow over time.",
+        "",
+        "🌾 **Farming** — Fields, machinery, contracts, and produce markets.",
+        "⛏️ **Mining** — Coming later.",
+        "🏭 **Manufacturing** — Coming later.",
+      ].join("\n")
+    )
+    .setColor(0x2b2d31);
+}
+
+function buildEnterprisesComponents(disabled = false) {
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
+        { label: "🏭 Enterprises", value: "job_cat:enterprises", emoji: "🏭", default: true }
+      )
+      .setDisabled(disabled)
+  );
+
+  const enterpriseRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:job")
+      .setPlaceholder("Choose an enterprise...")
+      .addOptions(
+        {
+          label: "Farming",
+          value: "enterprise:farming",
+          emoji: "🌾"
+        }
+      )
+      .setDisabled(disabled)
+  );
+
+  return [catRow, enterpriseRow];
+}
+
+function buildFarmingPlaceholderEmbed() {
+  return new EmbedBuilder()
+    .setTitle("🌾 Echo Farming")
+    .setDescription(
+      "Farming system is being prepared.\n\n" +
+      "This will include:\n" +
+      "• Fields\n" +
+      "• Machines\n" +
+      "• Contracts\n" +
+      "• Market\n\n" +
+      "Coming very soon..."
+    )
+    .setColor(0x0875AF);
+}
 
 function buildNineToFiveEmbed(user, progress, cooldownUnix) {
   const need = xpToNext(progress.level);
@@ -400,7 +465,8 @@ function buildNineToFiveComponents({ disabled = false, legendary = false } = {})
         { label: "Work a 9–5", value: "job_cat:95", emoji: "📦", default: true },
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
-        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
       )
       .setDisabled(disabled)
   );
@@ -473,7 +539,8 @@ function buildNightWalkerComponents(disabled = false) {
         { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠", default: true },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
-        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
       )
       .setDisabled(disabled)
   );
@@ -568,7 +635,8 @@ function buildGrindComponents(disabled = false) {
         { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒", default: true },
-        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" }
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
       )
       .setDisabled(disabled)
   );
@@ -671,7 +739,8 @@ function buildCrimeComponents(disabled = false) {
         { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
-        { label: "Crime", value: "job_cat:crime", emoji: "🕶️", default: true }
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️", default: true },
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
       )
       .setDisabled(disabled)
   );
@@ -1247,6 +1316,20 @@ function scheduleReturnToCategory(delayMs = 5000) {
           .catch(() => {});
       }
 
+      if (session.view === "enterprises") {
+        return msg.edit({
+          embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
+          components: buildEnterprisesComponents(false),
+        }).catch(() => {});
+      }
+
+      if (session.view === "farming_placeholder") {
+        return msg.edit({
+          embeds: [buildFarmingPlaceholderEmbed()],
+          components: buildEnterprisesComponents(false),
+        }).catch(() => {});
+      }
+
       // ✅ UPDATED: Crime view includes heat bar + timers
       if (session.view === "crime") {
         const heatInfo = await getCrimeHeatInfo(guildId, userId);
@@ -1366,6 +1449,18 @@ function scheduleReturnToCategory(delayMs = 5000) {
         if (actionId === "job_cat:crime") {
           session.view = "crime";
           session.lastCategory = "crime";
+          await redraw();
+          return;
+        }
+        if (actionId === "job_cat:enterprises") {
+          session.view = "enterprises";
+          session.lastCategory = "enterprises";
+          await redraw();
+          return;
+        }
+        if (actionId = "enterprise:farming") {
+          session.view = "farming_placeholder";
+          session.lastCategory = "enterprises";
           await redraw();
           return;
         }
