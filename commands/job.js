@@ -1458,7 +1458,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           await redraw();
           return;
         }
-        if (actionId = "enterprise:farming") {
+        if (actionId === "enterprise:farming") {
           session.view = "farming_placeholder";
           session.lastCategory = "enterprises";
           await redraw();
