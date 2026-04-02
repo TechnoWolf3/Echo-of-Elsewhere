@@ -1384,7 +1384,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           return;            // modal safety: the grind module will handle/ack as needed
         }
 
-        ensureAck(btn);
+        await ensureAck(btn);
         resetInactivity();
         cancelAutoReturn();
 
@@ -2305,7 +2305,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);
