@@ -676,7 +676,7 @@ function buildGrindComponents(disabled = false) {
 function buildFarmingComponents(farm) {
   const rows = [];
 
-  if (farm.fields.length === 0) {
+  if ((farm.fields || []).length === 0) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -706,7 +706,7 @@ function buildFarmingComponents(farm) {
         .setStyle(ButtonStyle.Secondary)
     )
   );
-  
+
   return rows;
 }
 
@@ -1513,6 +1513,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
         if (actionId === "enterprise:farming") {
           session.view = "farming";
+          session.lastCategory = "enterprises";
           await redraw();
           return;
         }
@@ -2385,7 +2386,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder", "farming"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);
