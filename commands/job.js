@@ -2089,7 +2089,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             );
 
             if ((bal.rows[0]?.balance || 0) < cost) {
-              return i.followUp({
+              return btn.followUp({
                 content: `❌ You need $${cost.toLocaleString()}`,
                 ephemeral: true
               });
