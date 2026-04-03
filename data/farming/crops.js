@@ -32,7 +32,7 @@ module.exports = {
     level: 1,
     growthHours: 3,
     yield: [2, 5],
-    seasons: ["spring", "Winter"],
+    seasons: ["spring", "winter"],
     regrow: true,
   },
 // Level 2 Crops
