@@ -1508,10 +1508,12 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
         if (actionId === "job_cat:enterprises") {
           session.view = "enterprises";
+          session.lastCategory = "enterprises";
           await redraw();
           return;
         }
         if (actionId === "enterprise:farming") {
+          console.log("FARMING CLICKHIT", actionId);
           session.view = "farming";
           session.lastCategory = "enterprises";
           await redraw();
