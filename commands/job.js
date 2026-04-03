@@ -1298,6 +1298,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     }
 
     async function redraw() {
+      console.log("REDRAW VIEW", session.view)
       const p = await getJobProgress(guildId, userId);
       session.level = p.level;
 
@@ -1306,7 +1307,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       const cd = await getCooldownUnixIfActive(guildId, userId, "job");
-
+      console.log("REDRAW VIEW", session.view);
+      
       if (session.view === "hub") {
         return msg
           .edit({
@@ -1526,8 +1528,13 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
         if (actionId === "enterprise:farming") {
           console.log("FARMING CLICKHIT", actionId);
+          console.log("SESSION VIEW BEFORE SET", session.view);
+
           session.view = "farming";
           session.lastCategory = "enterprises";
+
+          console.log("SESSION VIEW AFTER SET", session.view);
+
           await redraw();
           return;
         }
