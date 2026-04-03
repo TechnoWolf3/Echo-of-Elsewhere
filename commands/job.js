@@ -1528,7 +1528,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           return;
         }
         if (actionId === "enterprise:farming") {
-          console.log("FARMING CLICKHIT", actionId);
+          console.log("FARMING CLICKHIT", actionId, "SESSION VIEW BEFORE SET", session.view);
           console.log("SESSION VIEW BEFORE SET", session.view);
 
           session.view = "farming";
