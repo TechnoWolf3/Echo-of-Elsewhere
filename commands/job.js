@@ -1390,19 +1390,31 @@ function scheduleReturnToCategory(delayMs = 5000) {
     }
 
       if (session.view === "farming") {
-        const farm = await farming.ensureFarm(guildId, userId);
-        await farming.applySeasonRollover(guildId, userId, farm);
+        try {
+          console.log("FARMING REDRAW START", session.view);
 
-        return msg.edit({
-          embeds: [
-            new EmbedBuilder()
-              .setTitle("🌾 Farming")
-              .setDescription(
-                `🌾 Fields: ${farm.fields.length}\nSeason: ${farming.getCurrentSeason()}`
-              )
-          ],
-          components: buildFarmingComponents(farm)
-        });
+          const farm = await farming.ensureFarm(guildId, userId);
+          console.log("FARMING FARM DATA", JSON.stringify(farm));
+
+          await farming.applySeasonRollover(guildId, userId, farm);
+          console.log("FARMING SEASON", farming.getCurrentSeason());
+
+          const components = buildFarmingComponents(farm);
+          console.log("FARMING COMPONENT ROWS", components.length);
+
+          return await msg.edit({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle("🌾 Farming")
+                .setDescription(
+                  `🌾 Fields: ${(farm.fields || []).length}\nSeason: ${farming.getCurrentSeason()}`
+                )
+            ],
+            components
+          });
+        } catch (err) {
+          console.error("FARMING REDRAW ERROR", err);
+        }
       }
 
     // Adapter so Crime minigames (which use interaction.editReply/fetchReply) work on our board message
