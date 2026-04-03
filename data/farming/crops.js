@@ -1,6 +1,7 @@
 module.exports = {
   // Level 1 Crops
   wheat: {
+    id: "wheat",
     name: "Wheat",
     level: 1,
     growthHours: 4,
@@ -10,6 +11,7 @@ module.exports = {
   },
 
   barley: {
+    id: "barley",
     name: "Barley",
     level: 1,
     growthHours: 4,
@@ -19,6 +21,7 @@ module.exports = {
   },
 
   oats: {
+    id: "oats",
     name: "Oats",
     level: 1,
     growthHours: 3,
@@ -28,6 +31,7 @@ module.exports = {
   },
 
   spinach: {
+    id: "spinach",
     name: "Spinach",
     level: 1,
     growthHours: 0.1,
@@ -37,6 +41,7 @@ module.exports = {
   },
 // Level 2 Crops
   potatoes: {
+    id: "potatoes",
     name: "Potatoes",
     level: 2,
     growthHours: 6,
@@ -46,6 +51,7 @@ module.exports = {
   },
 
   canola: {
+    id: "canola",
     name: "Canola",
     level: 2,
     growthHours: 7,
@@ -55,6 +61,7 @@ module.exports = {
   },
 // Level 3 Crops
   corn: {
+    id: "corn",
     name: "Corn",
     level: 3,
     growthHours: 8,
@@ -65,6 +72,7 @@ module.exports = {
   },
 
   soybeans: {
+    id: "soybeans",
     name: "Soybeans",
     level: 3,
     growthHours: 7,
@@ -74,6 +82,7 @@ module.exports = {
   },
 // Level 4 Crops
   carrots: {
+    id: "carrots",
     name: "Carrots",
     level: 4,
     growthHours: 9,

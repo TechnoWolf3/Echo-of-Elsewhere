@@ -52,7 +52,7 @@ const { renderProgressBar } = require("../utils/progressBar");
 
 // ✅ Farming
 const farming = require("../utils/farming/engine");
-
+const config = require("../data/farming/config");
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
@@ -802,7 +802,7 @@ function buildFieldComponents(farm, fieldIndex) {
     );
   }
 
-  if (field.state === "empty" && field.cultivated && (field.level || 1) < 4) {
+  if (field.state === "empty" && field.cultivated && (field.level || 1) < config.MAX_FIELD_LEVEL) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -1499,6 +1499,16 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
       }
 
+      if (session.view === "farm_field") {
+        const farm = await farming.ensureFarm(guildId, userId);
+        await farming.applySeasonRollover(guildId, userId, farm);
+
+        return msg.edit({
+          embeds: [buildFieldEmbed(farm, session.fieldIndex)],
+          components: buildFieldComponents(farm, session.fieldIndex),
+        }).catch(() => {});
+      }
+
       if (session.view === "enterprises") {
         return msg.edit({
           embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
@@ -2111,6 +2121,9 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const farm = await farming.ensureFarm(guildId, userId);
             await farming.applySeasonRollover(guildId, userId, farm);
 
+            session.view = "farm_field";
+            session.fieldIndex = fieldIndex;
+
             await msg.edit({
               embeds: [buildFieldEmbed(farm, fieldIndex)],
               components: buildFieldComponents(farm, fieldIndex),
@@ -2120,6 +2133,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
           if (actionId === "farm_back") {
             session.view = "farming";
+            session.fieldIndex = null;
             await redraw();
             return;
           }
@@ -2657,7 +2671,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder", "farming"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder", "farming", "farm_field"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);
