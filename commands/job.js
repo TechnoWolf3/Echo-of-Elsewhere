@@ -711,6 +711,121 @@ function buildFarmingComponents(farm) {
 }
 
 /* ============================================================
+   Farming UI builders
+   ============================================================ */
+function buildFieldEmbed(farm, fieldIndex) {
+  const field = (farm.fields || [])[fieldIndex];
+  if (!field) {
+    return new EmbedBuilder()
+      .setTitle("🌾 Field")
+      .setDescription("That field does not exist.")
+      .setColor(0xaa0000);
+  }
+
+  let stateText = "Empty";
+  if (field.state === "growing") stateText = "Growing";
+  if (field.state === "ready") stateText = "Ready to Harvest";
+  if (field.state === "spoiled") stateText = "Spoiled";
+
+  const readyLine =
+    field.state === "growing" && field.readyAt
+      ? `\nReady: <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`
+      : "";
+
+  return new EmbedBuilder()
+    .setTitle(`🌾 Field ${fieldIndex + 1}`)
+    .setDescription(
+      [
+        `Level: **${field.level || 1}**`,
+        `State: **${stateText}**`,
+        `Crop: **${field.cropId || "None"}**`,
+        readyLine,
+      ].filter(Boolean).join("\n")
+    )
+    .setColor(0x0875AF);
+}
+
+function buildFieldComponents(farm, fieldIndex) {
+  const field = (farm.fields || [])[fieldIndex];
+  const rows = [];
+
+  if (!field) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_back")
+          .setLabel("⬅ Back")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    );
+    return rows;
+  }
+
+  if (field.state === "spoiled" || !field.cultivated) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_cultivate:${fieldIndex}`)
+          .setLabel("🧹 Cultivate")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    );
+  }
+
+  if (field.state === "empty" && field.cultivated) {
+    const cropOptions = farming.getAvailableCrops(field.level || 1);
+
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`farm_plant_select:${fieldIndex}`)
+          .setPlaceholder("Choose a crop...")
+          .addOptions(
+            cropOptions.map((crop) => ({
+              label: crop.name,
+              value: `farm_plant:${fieldIndex}:${crop.key}`,
+              description: `Level ${crop.level} • ${crop.growthHours}h growth`,
+            }))
+          )
+      )
+    );
+  }
+
+  if (field.state === "ready") {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_harvest:${fieldIndex}`)
+          .setLabel("🌾 Harvest")
+          .setStyle(ButtonStyle.Success)
+      )
+    );
+  }
+
+  if (field.state === "empty" && field.cultivated && (field.level || 1) < 4) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_upgrade:${fieldIndex}`)
+          .setLabel("⬆ Upgrade Field")
+          .setStyle(ButtonStyle.Primary)
+      )
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_back")
+        .setLabel("⬅ Back")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
+
+  return rows;
+}
+
+/* ============================================================
    Crime UI builders
    ============================================================ */
 function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
@@ -1988,6 +2103,140 @@ function scheduleReturnToCategory(delayMs = 5000) {
             await farming.buyField(guildId, userId, farm);
 
             await redraw();
+            return;
+          }
+
+          if (actionId.startsWith("farm_select:")) {
+            const fieldIndex = Number(actionId.split(":")[1]);
+            const farm = await farming.ensureFarm(guildId, userId);
+            await farming.applySeasonRollover(guildId, userId, farm);
+
+            await msg.edit({
+              embeds: [buildFieldEmbed(farm, fieldIndex)],
+              components: buildFieldComponents(farm, fieldIndex),
+            });
+            return;
+          }
+
+          if (actionId === "farm_back") {
+            session.view = "farming";
+            await redraw();
+            return;
+          }
+
+          if (actionId.startsWith("farm_cultivate:")) {
+            const fieldIndex = Number(actionId.split(":")[1]);
+            const farm = await farming.ensureFarm(guildId, userId);
+
+            const result = await farming.cultivateField(guildId, userId, farm, fieldIndex);
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
+            const updatedFarm = await farming.ensureFarm(guildId, userId);
+
+            await msg.edit({
+              embeds: [buildFieldEmbed(updatedFarm, fieldIndex)],
+              components: buildFieldComponents(updatedFarm, fieldIndex),
+            });
+            return;
+          }
+
+          if (actionId.startsWith("farm_upgrade:")) {
+            const fieldIndex = Number(actionId.split(":")[1]);
+            const farm = await farming.ensureFarm(guildId, userId);
+
+            const cost = farming.getUpgradeCost((farm.fields?.[fieldIndex]?.level || 1));
+
+            const bal = await pool.query(
+              `SELECT balance FROM user_balances WHERE user_id=$1 AND guild_id=$2`,
+              [userId, guildId]
+            );
+
+            if ((bal.rows[0]?.balance || 0) < cost) {
+              await btn.followUp({
+                content: `❌ You need $${cost.toLocaleString()} to upgrade this field.`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
+            const result = await farming.upgradeField(guildId, userId, farm, fieldIndex);
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
+            await pool.query(
+              `UPDATE user_balances SET balance = balance - $1 WHERE user_id=$2 AND guild_id=$3`,
+              [cost, userId, guildId]
+            );
+
+            const updatedFarm = await farming.ensureFarm(guildId, userId);
+
+            await msg.edit({
+              embeds: [buildFieldEmbed(updatedFarm, fieldIndex)],
+              components: buildFieldComponents(updatedFarm, fieldIndex),
+            });
+            return;
+          }
+
+          if (actionId.startsWith("farm_plant:")) {
+            const [, fieldIndexRaw, cropId] = actionId.split(":");
+            const fieldIndex = Number(fieldIndexRaw);
+
+            const farm = await farming.ensureFarm(guildId, userId);
+            const result = await farming.plantCrop(guildId, userId, farm, fieldIndex, cropId);
+
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
+            const updatedFarm = await farming.ensureFarm(guildId, userId);
+
+            await msg.edit({
+              embeds: [buildFieldEmbed(updatedFarm, fieldIndex)],
+              components: buildFieldComponents(updatedFarm, fieldIndex),
+            });
+            return;
+          }
+
+          if (actionId.startsWith("farm_harvest:")) {
+            const fieldIndex = Number(actionId.split(":")[1]);
+
+            const farm = await farming.ensureFarm(guildId, userId);
+            const result = await farming.harvestField(guildId, userId, farm, fieldIndex);
+
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
+            const updatedFarm = await farming.ensureFarm(guildId, userId);
+
+            await btn.followUp({
+              content: `✅ Harvested ${result.qty}x ${result.cropName}.`,
+              ephemeral: true,
+            }).catch(() => {});
+
+            await msg.edit({
+              embeds: [buildFieldEmbed(updatedFarm, fieldIndex)],
+              components: buildFieldComponents(updatedFarm, fieldIndex),
+            });
             return;
           }
 
