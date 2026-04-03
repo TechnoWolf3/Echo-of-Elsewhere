@@ -50,6 +50,9 @@ const startQuarry = require("../data/work/categories/grind/quarry");
 const startTaxiDriver = require("../data/work/categories/grind/taxiDriver");
 const { renderProgressBar } = require("../utils/progressBar");
 
+// ✅ Farming
+const farming = require("../utils/farming/engine");
+
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
@@ -670,7 +673,42 @@ function buildGrindComponents(disabled = false) {
   return [catRow, jobRow, navRow];
 }
 
+function buildFarmingComponents(farm) {
+  const rows = [];
 
+  if (farm.fields.length === 0) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_buy")
+          .setLabel("Buy Field")
+          .setStyle(ButtonStyle.Success)
+      )
+    );
+  }
+
+  (farm.fields || []).forEach((f, i) => {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_select:${i}`)
+          .setLabel(`Field ${i + 1}`)
+          .setStyle(ButtonStyle.Primary)
+      )
+    );
+  });
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("job_back:hub")
+        .setLabel("⬅ Back")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
+  
+  return rows;
+}
 
 /* ============================================================
    Crime UI builders
@@ -1351,6 +1389,22 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
     }
 
+      if (session.view === "farming") {
+        const farm = await farming.ensureFarm(guildId, userId);
+        await farming.applySeasonRollover(guildId, userId, farm);
+
+        return msg.edit({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle("🌾 Farming")
+              .setDescription(
+                `🌾 Fields: ${farm.fields.length}\nSeason: ${farming.getCurrentSeason()}`
+              )
+          ],
+          components: buildFarmingComponents(farm)
+        });
+      }
+
     // Adapter so Crime minigames (which use interaction.editReply/fetchReply) work on our board message
     const boardAdapter = {
       guildId,
@@ -1454,13 +1508,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
         if (actionId === "job_cat:enterprises") {
           session.view = "enterprises";
-          session.lastCategory = "enterprises";
           await redraw();
           return;
         }
         if (actionId === "enterprise:farming") {
-          session.view = "farming_placeholder";
-          session.lastCategory = "enterprises";
+          session.view = "farming";
           await redraw();
           return;
         }
@@ -1887,6 +1939,34 @@ function scheduleReturnToCategory(delayMs = 5000) {
           scheduleReturnToCategory(5000);
           return;
         }
+
+          if (actionId === "farm_buy") {
+            let farm = await farming.ensureFarm(guildId, userId);
+
+            const cost = farming.getNextFieldCost(farm.fields.length);
+
+            const bal = await pool.query(
+              `SELECT balance FROM user_balances WHERE user_id=$1 AND guild_id=$2`,
+              [userId, guildId]
+            );
+
+            if ((bal.rows[0]?.balance || 0) < cost) {
+              return i.followUp({
+                content: `❌ You need $${cost.toLocaleString()}`,
+                ephemeral: true
+              });
+            }
+
+            await pool.query(
+              `UPDATE user_balances SET balance = balance - $1 WHERE user_id=$2 AND guild_id=$3`,
+              [cost, userId, guildId]
+            );
+
+            await farming.buyField(guildId, userId, farm);
+
+            await redraw();
+            return;
+          }
 
         // Contract clicks
         if (actionId.startsWith("job_contract:")) {

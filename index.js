@@ -976,11 +976,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
   // 🎮 Games UI routing (ephemeral select menus + modals)
   // Buttons are handled by the per-game message collectors; ephemeral selects/modals must be routed here.
   if (!interaction.isChatInputCommand()) {
-    if (interaction.isAnySelectMenu?.() || interaction.isModalSubmit?.()) {
-      // Let message-collector based hubs handle themselves
-      const _cid = String(interaction.customId || "");
-      if (_cid.startsWith("games:")) return;
-      if (_cid.startsWith("job_select:") || _cid.startsWith("job_") || _cid.startsWith("job_back:")) return;
+  if (interaction.isAnySelectMenu?.() || interaction.isModalSubmit?.()) {
+    // Let message-collector based hubs handle themselves
+    const _cid = String(interaction.customId || "");
+    if (_cid.startsWith("games:")) return;
+    if (_cid.startsWith("job_select:") || _cid.startsWith("job_") || _cid.startsWith("farm_") || _cid.startsWith("enterprise:")) return;
 
       try {
         if (typeof rouletteGame.handleInteraction === "function") {

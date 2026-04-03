@@ -1,47 +1,75 @@
 module.exports = {
+  // Level 1 Crops
   wheat: {
     name: "Wheat",
-    tier: 0,
-    growthHours: 6,
+    level: 1,
+    growthHours: 4,
+    yield: [3, 6],
+    seasons: ["spring", "summer"],
     regrow: false,
-    baseYield: { min: 18, max: 26 },
-    basePrice: 45,
-    seasons: {
-      spring: "good",
-      summer: "best",
-      autumn: "ok",
-      winter: "invalid",
-    }
   },
 
+  barley: {
+    name: "Barley",
+    level: 1,
+    growthHours: 4,
+    yield: [3, 6],
+    seasons: ["spring", "summer"],
+    regrow: false,
+  },
+
+  oats: {
+    name: "Oats",
+    level: 1,
+    growthHours: 3,
+    yield: [2, 5],
+    seasons: ["spring"],
+    regrow: false,
+  },
+// Level 2 Crops
+  potatoes: {
+    name: "Potatoes",
+    level: 2,
+    growthHours: 6,
+    yield: [5, 9],
+    seasons: ["spring", "autumn"],
+    regrow: false,
+  },
+
+  canola: {
+    name: "Canola",
+    level: 2,
+    growthHours: 7,
+    yield: [6, 10],
+    seasons: ["summer"],
+    regrow: false,
+  },
+// Level 3 Crops
   corn: {
     name: "Corn",
-    tier: 2,
-    growthHours: 16,
+    level: 3,
+    growthHours: 8,
+    yield: [6, 12],
+    seasons: ["summer", "autumn"],
     regrow: true,
-    regrowHours: 8,
-    baseYield: { min: 10, max: 16 },
-    basePrice: 135,
-    seasons: {
-      spring: "ok",
-      summer: "best",
-      autumn: "good",
-      winter: "invalid",
-    }
+    regrowHours: 5,
   },
 
-  timber: {
-    name: "Timber",
-    tier: 5,
-    growthHours: 48,
+  soybeans: {
+    name: "Soybeans",
+    level: 3,
+    growthHours: 7,
+    yield: [6, 11],
+    seasons: ["summer"],
     regrow: false,
-    baseYield: { min: 6, max: 10 },
-    basePrice: 520,
-    seasons: {
-      spring: "good",
-      summer: "good",
-      autumn: "good",
-      winter: "good",
-    }
-  }
+  },
+// Level 4 Crops
+  carrots: {
+    name: "Carrots",
+    level: 4,
+    growthHours: 9,
+    yield: [8, 14],
+    seasons: ["autumn"],
+    regrow: false,
+  },
 };
