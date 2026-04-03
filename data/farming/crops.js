@@ -26,6 +26,15 @@ module.exports = {
     seasons: ["spring"],
     regrow: false,
   },
+
+  spinach: {
+    name: "Spinach",
+    level: 1,
+    growthHours: 3,
+    yield: [2, 5],
+    seasons: ["spring", "Winter"],
+    regrow: true,
+  },
 // Level 2 Crops
   potatoes: {
     name: "Potatoes",
