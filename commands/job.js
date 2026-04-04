@@ -437,10 +437,11 @@ function buildFarmMarketEmbed(items) {
           "Harvest produce from your fields, then come back here.",
         ].join("\n")
       )
+      .setColor(0x0875AF);
   }
 
   const lines = items.map((item) =>
-    `**${item.name}** - ${item.qty} in stock\n$${items.unitPrice.toLocaleString()} each • Total: $${item.totalValue.toLocaleString()}`
+    `**${item.name}** — ${item.qty} in stock\n$${item.unitPrice.toLocaleString()} each • Total: $${item.totalValue.toLocaleString()}`
   );
 
   return new EmbedBuilder()
