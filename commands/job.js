@@ -450,15 +450,36 @@ function buildFarmMarketEmbed(items) {
     .setColor(0x0875AF);
 }
 
-function buildFarmMarketComponents() {
-  return [
+function buildFarmMarketComponents(items) {
+  const rows = [];
+
+  if (items && items.length > 0) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("farm_market_select")
+          .setPlaceholder("Choose a crop to sell...")
+          .addOptions(
+            items.map((item) => ({
+              label: `${item.name} (${item.qty})`,
+              value: `farm_sell:${item.itemId}`,
+              description: `Sell all for $${item.totalValue.toLocaleString()}`,
+            }))
+          )
+      )
+    );
+  }
+
+  rows.push(
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("farm_back")
         .setLabel("⬅ Back")
         .setStyle(ButtonStyle.Secondary)
     )
-  ];
+  );
+
+  return rows;
 }
 
 function buildFarmingPlaceholderEmbed() {
