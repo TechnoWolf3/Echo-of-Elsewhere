@@ -700,16 +700,18 @@ function buildGrindComponents(disabled = false) {
 function buildFarmingComponents(farm) {
   const rows = [];
 
-  if ((farm.fields || []).length === 0) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId("farm_buy")
-          .setLabel("Buy Field")
-          .setStyle(ButtonStyle.Success)
-      )
-    );
-  }
+  if ((farm.fields || []).length < config.MAX_FIELDS) {
+  const nextCost = farming.getNextFieldCost((farm.fields || []).length);
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_buy")
+        .setLabel(`Buy Field ($${nextCost.toLocaleString()})`)
+        .setStyle(ButtonStyle.Success)
+    )
+  );
+}
 
   (farm.fields || []).forEach((f, i) => {
     rows.push(
