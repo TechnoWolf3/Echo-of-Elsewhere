@@ -850,6 +850,100 @@ function buildFieldEmbed(farm, fieldIndex) {
     .setColor(0x0875AF);
 }
 
+function buildFieldComponents(farm, fieldIndex) {
+  const field = (farm.fields || [])[fieldIndex];
+  const rows = [];
+
+  if (!field) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_back")
+          .setLabel("⬅ Back")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    );
+    return rows;
+  }
+
+  const currentSeason = farming.getCurrentSeason();
+  const cropOptions = farming
+    .getAvailableCrops(field.level || 1)
+    .filter((crop) => Array.isArray(crop.seasons) && crop.seasons.includes(currentSeason));
+
+  if (field.state === "spoiled" || !field.cultivated) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_cultivate:${fieldIndex}`)
+          .setLabel("🧹 Cultivate")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    );
+  }
+
+  if (field.state === "empty" && field.cultivated && cropOptions.length > 0) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`farm_plant_select:${fieldIndex}`)
+          .setPlaceholder("Choose a crop...")
+          .addOptions(
+            cropOptions.map((crop) => ({
+              label: crop.name,
+              value: `farm_plant:${fieldIndex}:${crop.key}`,
+              description: `Level ${crop.level} • ${crop.growthHours}h growth`,
+            }))
+          )
+      )
+    );
+  }
+
+  if (field.state === "empty" && field.cultivated && cropOptions.length === 0) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_no_crops")
+          .setLabel("No Seasonal Crops Available")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      )
+    );
+  }
+
+  if (field.state === "ready") {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_harvest:${fieldIndex}`)
+          .setLabel("🌾 Harvest")
+          .setStyle(ButtonStyle.Success)
+      )
+    );
+  }
+
+  if (field.state === "empty" && field.cultivated && (field.level || 1) < config.MAX_FIELD_LEVEL) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_upgrade:${fieldIndex}`)
+          .setLabel("⬆ Upgrade Field")
+          .setStyle(ButtonStyle.Primary)
+      )
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_back")
+        .setLabel("⬅ Back")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
+
+  return rows;
+}
 /* ============================================================
    Crime UI builders
    ============================================================ */
@@ -1438,7 +1532,6 @@ function scheduleReturnToCategory(delayMs = 5000) {
     }
 
     async function redraw() {
-      console.log("REDRAW VIEW", session.view)
       const p = await getJobProgress(guildId, userId);
       session.level = p.level;
 
@@ -1447,7 +1540,6 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       const cd = await getCooldownUnixIfActive(guildId, userId, "job");
-      console.log("REDRAW VIEW", session.view);
 
       if (session.view === "hub") {
         return msg
@@ -1498,16 +1590,12 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "farming") {
         try {
-          console.log("FARMING REDRAW START", session.view);
 
           const farm = await farming.ensureFarm(guildId, userId);
-          console.log("FARMING FARM DATA", JSON.stringify(farm));
 
           await farming.applySeasonRollover(guildId, userId, farm);
-          console.log("FARMING SEASON", farming.getCurrentSeason());
 
           const components = buildFarmingComponents(farm);
-          console.log("FARMING COMPONENT ROWS", components.length);
 
           return await msg.edit({
             embeds: [
@@ -1520,7 +1608,6 @@ function scheduleReturnToCategory(delayMs = 5000) {
             components
           });
         } catch (err) {
-          console.error("FARMING REDRAW ERROR", err);
         }
       }
 
@@ -1687,13 +1774,9 @@ function scheduleReturnToCategory(delayMs = 5000) {
           return;
         }
         if (actionId === "enterprise:farming") {
-          console.log("FARMING CLICKHIT", actionId, "SESSION VIEW BEFORE SET", session.view);
-          console.log("SESSION VIEW BEFORE SET", session.view);
 
           session.view = "farming";
           session.lastCategory = "enterprises";
-
-          console.log("SESSION VIEW AFTER SET", session.view);
 
           await redraw();
           return;
