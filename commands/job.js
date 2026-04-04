@@ -441,8 +441,8 @@ function buildFarmMarketEmbed(items) {
   }
 
   const lines = items.map((item) =>
-    `**${item.name}** - ${item.qty} in stock\n$${item.unitPrice.toLocale()} each • Total: $${item.totalValue.toLocaleString()}`
-  );
+  `**${item.name}** — ${item.qty} in stock\n$${item.unitPrice.toLocaleString()} each • Total: $${item.totalValue.toLocaleString()}`
+);
 
   return new EmbedBuilder()
     .setTitle("💰 Farm Market")
