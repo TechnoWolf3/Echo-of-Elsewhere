@@ -425,6 +425,30 @@ function buildEnterprisesComponents(disabled = false) {
   return [catRow, enterpriseRow];
 }
 
+function buildFarmMarketEmbed() {
+  return new EmbedBuilder()
+    .setTitle("💰 Farm Market")
+    .setDescription(
+      [
+        "Sell your harvested produce here.",
+        "",
+        "Market selling UI coming next.",
+      ].join("\n")
+    )
+    .setColor(0x0875AF);
+}
+
+function buildFarmMarketComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_back")
+        .setLabel("⬅ Back")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  ];
+}
+
 function buildFarmingPlaceholderEmbed() {
   return new EmbedBuilder()
     .setTitle("🌾 Echo Farming")
@@ -701,6 +725,15 @@ function buildFarmingComponents(farm) {
   rows.push(
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
+      .setCustomId("farm_market")
+      .setLabel("💰 Market")
+      .setStyle(ButtonStyle.Primary)
+    )
+  );
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
         .setCustomId("job_back:hub")
         .setLabel("⬅ Back")
         .setStyle(ButtonStyle.Secondary)
@@ -710,11 +743,46 @@ function buildFarmingComponents(farm) {
   return rows;
 }
 
+function renderFieldVisual(field) {
+  if (!field) return "";
+
+  if (field.state === "spoiled") {
+    return [
+      "⬛🟫⬛",
+      "🟫⬛🟫",
+      "⬛🟫⬛",
+    ].join("\n");
+  }
+
+  if (field.state === "ready") {
+    return [
+      "🟨🟨🟨",
+      "🟨🟨🟨",
+      "🟨🟨🟨",
+    ].join("\n");
+  }
+
+  if (field.state === "growing") {
+    return [
+      "🟩🟩🟩",
+      "🟩🟩🟩",
+      "🟩🟩🟩",
+    ].join("\n");
+  }
+
+  return [
+    "🟫🟫🟫",
+    "🟫🟫🟫",
+    "🟫🟫🟫",
+  ].join("\n");
+}
+
 /* ============================================================
    Farming UI builders
    ============================================================ */
 function buildFieldEmbed(farm, fieldIndex) {
   const field = (farm.fields || [])[fieldIndex];
+  const visual = renderFieldVisual(field);
   if (!field) {
     return new EmbedBuilder()
       .setTitle("🌾 Field")
@@ -736,6 +804,8 @@ function buildFieldEmbed(farm, fieldIndex) {
     .setTitle(`🌾 Field ${fieldIndex + 1}`)
     .setDescription(
       [
+        visual,
+        "",
         `Level: **${field.level || 1}**`,
         `State: **${stateText}**`,
         `Crop: **${field.cropId || "None"}**`,
@@ -773,7 +843,10 @@ function buildFieldComponents(farm, fieldIndex) {
   }
 
   if (field.state === "empty" && field.cultivated) {
-    const cropOptions = farming.getAvailableCrops(field.level || 1);
+    const currentSeason = farming.getCurrentSeason();
+    const cropOptions = farming.getAvailableCrops(field.level || 1)
+      .getAvailableCrops(field.level || 1)
+      .filter((crop) => Array.isArray(crop.seasons) && crop.seasons.includes(currentSeason));
 
     rows.push(
       new ActionRowBuilder().addComponents(
@@ -791,6 +864,20 @@ function buildFieldComponents(farm, fieldIndex) {
     );
   }
 
+  if (cropOptions.length === 0) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_no_crops")
+          .setLabel("No Seasonal Crops Available")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      )
+    );
+  }
+
+  if (field.state === "empty" && field.cultivated && cropOptions.length > 0)
+  
   if (field.state === "ready") {
     rows.push(
       new ActionRowBuilder().addComponents(
@@ -1509,6 +1596,13 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }).catch(() => {});
       }
 
+      if (session.view === "farm_market") {
+        return msg.edit({
+          embeds: [buildFarmMarketEmbed()],
+          components: buildFarmMarketComponents(),
+        }).catch(() => {});
+      }
+
       if (session.view === "enterprises") {
         return msg.edit({
           embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
@@ -1661,6 +1755,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
           console.log("SESSION VIEW AFTER SET", session.view);
 
+          await redraw();
+          return;
+        }
+        if (actionId === "farm_market") {
+          session.view = "farm_market";
           await redraw();
           return;
         }
@@ -2671,7 +2770,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder", "farming", "farm_field"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder", "farming", "farm_field", "farm_market"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);
