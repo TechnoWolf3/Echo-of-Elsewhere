@@ -53,6 +53,7 @@ const { renderProgressBar } = require("../utils/progressBar");
 // ✅ Farming
 const farming = require("../utils/farming/engine");
 const config = require("../data/farming/config");
+const market = require("../utils/farming/market");
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
@@ -425,16 +426,27 @@ function buildEnterprisesComponents(disabled = false) {
   return [catRow, enterpriseRow];
 }
 
-function buildFarmMarketEmbed() {
+function buildFarmMarketEmbed(items) {
+  if (!items || items.length === 0) {
+    return new EmbedBuilder()
+      .setTitle("💰 Farm Market")
+      .setDescription(
+        [
+          "You have no harvested crops to sell.",
+          "",
+          "Harvest produce from your fields, then come back here.",
+        ].join("\n")
+      )
+      .setColor(0x0875AF);
+  }
+
+  const lines = items.map((item) =>
+    `**${item.name}** - ${item.qty} in stock\n$${item.unitPrice.toLocale()} each • Total: $${item.totalValue.toLocaleString()}`
+  );
+
   return new EmbedBuilder()
     .setTitle("💰 Farm Market")
-    .setDescription(
-      [
-        "Sell your harvested produce here.",
-        "",
-        "Market selling UI coming next.",
-      ].join("\n")
-    )
+    .setDescription(lines.join("\n\n"))
     .setColor(0x0875AF);
 }
 
@@ -1599,9 +1611,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "farm_market") {
+        const items = await market.getSellableFarmItems(guildId, userId);
+
         return msg.edit({
-          embeds: [buildFarmMarketEmbed()],
-          components: buildFarmMarketComponents(),
+          embeds: [buildFarmMarketEmbed(items)],
+          components: buildFarmMarketComponents(items),
         }).catch(() => {});
       }
 
@@ -2352,6 +2366,30 @@ function scheduleReturnToCategory(delayMs = 5000) {
               embeds: [buildFieldEmbed(updatedFarm, fieldIndex)],
               components: buildFieldComponents(updatedFarm, fieldIndex),
             });
+            return;
+          }
+
+          if (actionId.startsWith("farm_sell:")) {
+            const itemId = actionId.split(":")[1];
+
+            const result = await market.sellCrop(guildId, userId, itemId);
+
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
+            session.view = "farm_market";
+
+            await btn.followUp({
+              content: `✅ Sold ${result.qty}x ${result.name} for $${result.totalValue.toLocaleString()}.`,
+              ephemeral: true,
+            }).catch(() => {});
+
+            await redraw();
             return;
           }
 
