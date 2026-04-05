@@ -34,7 +34,7 @@ module.exports = {
     id: "spinach",
     name: "Spinach",
     level: 1,
-    growthHours: 0.1,
+    growthHours: 3,
     yield: [2, 5],
     seasons: ["spring", "winter"],
     regrow: true,
