@@ -54,6 +54,7 @@ const { renderProgressBar } = require("../utils/progressBar");
 const farming = require("../utils/farming/engine");
 const config = require("../data/farming/config");
 const market = require("../utils/farming/market");
+const machineEngine = require("../utils/farming/machineEngine");
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
@@ -482,6 +483,59 @@ function buildFarmMarketComponents(items) {
   return rows;
 }
 
+function buildMachineShedEmbed(state) {
+  const machines = machineEngine.listMachines();
+
+  const lines = machines.map((m) => {
+    const owned = machineEngine.getOwnedCount(state, m.id);
+    const rented = machineEngine.getRentedCount(state, m.id);
+
+    return [
+      `**${m.name}**`,
+      `Type: ${m.type} • Tier ${m.tier}`,
+      `Owned: ${owned} • Rented: ${rented}`,
+      `Buy: $${m.buyPrice.toLocaleString()} • Rent: $${m.rentPrice.toLocaleString()}`,
+    ].join("\n");
+  });
+
+  return new EmbedBuilder()
+    .setTitle("🚜 Machine Shed")
+    .setDescription(lines.join("\n\n"))
+    .setColor(0x0875AF);
+}
+
+function buildMachineShedComponents(state) {
+  const machines = machineEngine.listMachines();
+
+  const rows = [];
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("farm_machine_buy_select")
+        .setPlaceholder("Buy a machine...")
+        .addOptions(
+          machines.slice(0, 25).map((m) => ({
+            label: `${m.name}`,
+            value: `farm_machine_buy:${m.id}`,
+            description: `Buy for $${m.buyPrice.toLocaleString()}`,
+          }))
+        )
+    )
+  );
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_back")
+        .setLabel("⬅ Back")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
+
+  return rows;
+}
+
 function buildFarmingPlaceholderEmbed() {
   return new EmbedBuilder()
     .setTitle("🌾 Echo Farming")
@@ -763,6 +817,15 @@ function buildFarmingComponents(farm) {
       .setCustomId("farm_market")
       .setLabel("💰 Market")
       .setStyle(ButtonStyle.Primary)
+    )
+  );
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_machines")
+        .setLabel("🚜 Machine Shed")
+        .setStyle(ButtonStyle.Primary)
     )
   );
 
@@ -1718,6 +1781,15 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }).catch(() => {});
       }
 
+      if (session.view === "farm_machines") {
+        const machineState = await machineEngine.ensureMachineState(guildId, userId);
+
+        return msg.edit({
+          embeds: [buildMachineShedEmbed(machineState)],
+          components: buildMachineShedComponents(machineState),
+        }).catch(() => {});
+      }
+
       if (session.view === "enterprises") {
         return msg.edit({
           embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
@@ -2341,6 +2413,35 @@ function scheduleReturnToCategory(delayMs = 5000) {
             return;
           }
 
+          if (actionId === "farm_machines") {
+            session.view = "farm_machines";
+            await redraw();
+            return;
+          }
+
+          if (actionId.startsWith("farm_machine_buy:")) {
+            const machineId = actionId.split(":")[1];
+
+            const result = await machineEngine.buyMachine(guildId, userId, machineId);
+
+              if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
+            await btn.followUp({
+              content: `✅ Bought ${result.machine.name} for $${result.machine.buyPrice.toLocaleString()}.`,
+              ephemeral: true,
+            }).catch(() => {});
+
+            session.view = "farm_machines";
+            await redraw();
+            return;
+          }
+
           if (actionId === "farm_back") {
             session.view = "farming";
             session.fieldIndex = null;
@@ -2905,7 +3006,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder", "farming", "farm_field", "farm_market"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming_placeholder", "farming", "farm_field", "farm_market", "farm_machines"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);

@@ -8,6 +8,7 @@ module.exports = {
     yield: [3, 6],
     seasons: ["spring", "summer"],
     regrow: false,
+    debrisChance: 0.25,
   },
 
   barley: {
@@ -18,6 +19,7 @@ module.exports = {
     yield: [3, 6],
     seasons: ["spring", "summer"],
     regrow: false,
+    debrisChance: 0.25,
   },
 
   oats: {
@@ -28,6 +30,7 @@ module.exports = {
     yield: [2, 5],
     seasons: ["spring"],
     regrow: false,
+    debrisChance: 0.25,
   },
 
   spinach: {
@@ -39,6 +42,7 @@ module.exports = {
     yield: [2, 5],
     seasons: ["spring", "winter"],
     regrow: true,
+    debrisChance: 0,
   },
 // Level 2 Crops
   potatoes: {
@@ -49,6 +53,7 @@ module.exports = {
     yield: [5, 9],
     seasons: ["spring", "autumn"],
     regrow: false,
+    debrisChance: 0.25,
   },
 
   canola: {
@@ -59,6 +64,7 @@ module.exports = {
     yield: [6, 10],
     seasons: ["summer"],
     regrow: false,
+    debrisChance: 0.25,
   },
 // Level 3 Crops
   corn: {
@@ -70,6 +76,7 @@ module.exports = {
     yield: [6, 12],
     seasons: ["summer", "autumn"],
     regrow: true,
+    debrisChance: 0,
   },
 
   soybeans: {
@@ -80,6 +87,7 @@ module.exports = {
     yield: [6, 11],
     seasons: ["summer"],
     regrow: false,
+    debrisChance: 0.25,
   },
 // Level 4 Crops
   carrots: {
@@ -90,5 +98,6 @@ module.exports = {
     yield: [8, 14],
     seasons: ["autumn"],
     regrow: false,
+    debrisChance: 0.25,
   },
 };

@@ -244,7 +244,8 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
     field.plantedAt = now;
     field.readyAt = now + (crop.regrowHours || crop.growthhours) * 60 * 60 * 1000;
   } else {
-    const leavesDebris = Math.random() < (config.DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
+    const leavesDebris =
+      Math.random() < (crop.debrisChance ?? config.NON_REGROW_DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
 
     field.cropId = null;
     field.state = "empty";
