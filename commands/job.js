@@ -483,57 +483,173 @@ function buildFarmMarketComponents(items) {
   return rows;
 }
 
-function buildMachineShedEmbed(state) {
-  const machines = machineEngine.listMachines();
-
-  const lines = machines.map((m) => {
-    const owned = machineEngine.getOwnedCount(state, m.id);
-    const rented = machineEngine.getRentedCount(state, m.id);
-
-    return [
-      `**${m.name}**`,
-      `Type: ${m.type} • Tier ${m.tier}`,
-      `Owned: ${owned} • Rented: ${rented}`,
-      `Buy: $${m.buyPrice.toLocaleString()} • Rent: $${m.rentPrice.toLocaleString()}`,
-    ].join("\n");
-  });
-
+function buildMachineShedHomeEmbed() {
   return new EmbedBuilder()
     .setTitle("🚜 Machine Shed")
-    .setDescription(lines.join("\n\n"))
+    .setDescription(
+      [
+        "Manage your farming equipment.",
+        "",
+        "🛒 **Buy** — Purchase new machinery",
+        "📦 **Sell** — Sell owned equipment",
+        "⏱️ **Rent** — Short-term equipment hire",
+      ].join("\n")
+    )
     .setColor(0x0875AF);
 }
 
-function buildMachineShedComponents(state) {
+function buildMachineShedEmbed(state) {
   const machines = machineEngine.listMachines();
 
-  const rows = [];
+  const grouped = {
+    tractors: [],
+    cultivation: [],
+    seeding: [],
+    spraying: [],
+    harvesting: [],
+    other: [],
+  };
 
-  rows.push(
+  for (const m of machines) {
+    const owned = machineEngine.getOwnedCount(state, m.id);
+    const rented = machineEngine.getRentedCount(state, m.id);
+
+    const line = [
+      `**${m.name}**`,
+      `Tier ${m.tier} • Owned: ${owned} • Rented: ${rented}`,
+      `Buy: $${m.buyPrice.toLocaleString()} • Rent: $${m.rentPrice.toLocaleString()}`,
+    ].join("\n");
+
+    if (m.type === "tractor") grouped.tractors.push(line);
+    else if (m.requiredFor?.includes("cultivate")) grouped.cultivation.push(line);
+    else if (m.requiredFor?.includes("seed")) grouped.seeding.push(line);
+    else if (m.requiredFor?.includes("fertilise")) grouped.spraying.push(line);
+    else if (m.requiredFor?.includes("harvest") || m.type === "harvester") grouped.harvesting.push(line);
+    else grouped.other.push(line);
+  }
+
+  const fields = [];
+
+  if (grouped.tractors.length) {
+    fields.push({ name: "🚜 Tractors", value: grouped.tractors.join("\n\n").slice(0, 1024) });
+  }
+
+  if (grouped.cultivation.length) {
+    fields.push({ name: "🪓 Cultivation", value: grouped.cultivation.join("\n\n").slice(0, 1024) });
+  }
+
+  if (grouped.seeding.length) {
+    fields.push({ name: "🌱 Seeding", value: grouped.seeding.join("\n\n").slice(0, 1024) });
+  }
+
+  if (grouped.spraying.length) {
+    fields.push({ name: "💧 Spraying", value: grouped.spraying.join("\n\n").slice(0, 1024) });
+  }
+
+  if (grouped.harvesting.length) {
+    fields.push({ name: "🌾 Harvesting", value: grouped.harvesting.join("\n\n").slice(0, 1024) });
+  }
+
+  if (grouped.other.length) {
+    fields.push({ name: "📦 Other", value: grouped.other.join("\n\n").slice(0, 1024) });
+  }
+
+  return new EmbedBuilder()
+    .setTitle("🚜 Machine Shed")
+    .setDescription("Manage your farm equipment and expand your operation.")
+    .addFields(fields)
+    .setColor(0x0875AF);
+}
+
+function buildMachineShedHomeComponents() {
+  return [
     new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("farm_machine_buy_select")
-        .setPlaceholder("Buy a machine...")
-        .addOptions(
-          machines.slice(0, 25).map((m) => ({
-            label: `${m.name}`,
-            value: `farm_machine_buy:${m.id}`,
-            description: `Buy for $${m.buyPrice.toLocaleString()}`,
-          }))
-        )
-    )
-  );
+      new ButtonBuilder()
+        .setCustomId("machine_buy")
+        .setLabel("🛒 Buy")
+        .setStyle(ButtonStyle.Primary),
 
-  rows.push(
+      new ButtonBuilder()
+        .setCustomId("machine_rent")
+        .setLabel("⏱️ Rent")
+        .setStyle(ButtonStyle.Secondary),
+
+      new ButtonBuilder()
+        .setCustomId("machine_sell")
+        .setLabel("📦 Sell")
+        .setStyle(ButtonStyle.Secondary)
+    ),
+
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("farm_back")
         .setLabel("⬅ Back")
         .setStyle(ButtonStyle.Secondary)
-    )
-  );
+    ),
+  ];
+}
 
-  return rows;
+function buildMachineBuyEmbed() {
+  return new EmbedBuilder()
+    .setTitle("🛒 Buy Machinery")
+    .setDescription("Select a category to browse machines.")
+    .setColor(0x0875AF);
+}
+
+function buildMachineBuyCategoryComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("buy_cat_tractor").setLabel("🚜 Tractors").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("buy_cat_cultivate").setLabel("🪓 Cultivation").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("buy_cat_seed").setLabel("🌱 Seeding").setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("buy_cat_spray").setLabel("💧 Spraying").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("buy_cat_harvest").setLabel("🌾 Harvesting").setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("machine_home").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary)
+    ),
+  ];
+}
+
+function buildMachineCategoryEmbed(category) {
+  return new EmbedBuilder()
+    .setTitle(`🛒 ${category} Machines`)
+    .setDescription("Select a machine to purchase.")
+    .setColor(0x0875AF);
+}
+
+function buildMachineCategoryComponents(category) {
+  const machines = machineEngine.listMachines().filter((m) => {
+    if (category === "tractor") return m.type === "tractor";
+    if (category === "cultivate") return m.requiredFor?.includes("cultivate");
+    if (category === "seed") return m.requiredFor?.includes("seed");
+    if (category === "spray") return m.requiredFor?.includes("fertilise");
+    if (category === "harvest") return m.requiredFor?.includes("harvest");
+    return false;
+  });
+
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(`machine_buy_select:${category}`)
+        .setPlaceholder("Choose a machine...")
+        .addOptions(
+          machines.map((m) => ({
+            label: m.name,
+            value: `farm_machine_buy:${m.id}`,
+            description: `$${m.buyPrice.toLocaleString()}`,
+          }))
+        )
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("machine_buy")
+        .setLabel("⬅ Back")
+        .setStyle(ButtonStyle.Secondary)
+    ),
+  ];
 }
 
 function buildFarmingPlaceholderEmbed() {
@@ -1782,12 +1898,28 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "farm_machines") {
-        const machineState = await machineEngine.ensureMachineState(guildId, userId);
+        if (session.machinePage === "home") {
+          return msg.edit({
+            embeds: [buildMachineShedHomeEmbed()],
+            components: buildMachineShedHomeComponents(),
+          });
+        }
 
-        return msg.edit({
-          embeds: [buildMachineShedEmbed(machineState)],
-          components: buildMachineShedComponents(machineState),
-        }).catch(() => {});
+        if (session.machinePage === "buy") {
+          return msg.edit({
+            embeds: [buildMachineBuyEmbed()],
+            components: buildMachineBuyCategoryComponents(),
+          });
+        }
+
+        if (session.machinePage?.startsWith("buy_cat")) {
+          const category = session.machinePage.split(":")[1];
+
+          return msg.edit({
+            embeds: [buildMachineCategoryEmbed(category)],
+            components: buildMachineCategoryComponents(category),
+          });
+        }
       }
 
       if (session.view === "enterprises") {
@@ -1943,6 +2075,24 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
         if (actionId === "farm_market") {
           session.view = "farm_market";
+          await redraw();
+          return;
+        }
+        if (actionId === "machine_home") {
+          session.machinePage = "home";
+          await redraw();
+          return;
+        }
+
+        if (actionId === "machine_buy") {
+          session.machinePage = "buy";
+          await redraw();
+          return;
+        }
+
+        if (actionId.startsWith("buy_cat_")) {
+          const cat = actionId.replace("buy_cat_", "");
+          session.machinePage = `buy_cat:${cat}`;
           await redraw();
           return;
         }
@@ -2415,6 +2565,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
           if (actionId === "farm_machines") {
             session.view = "farm_machines";
+            session.machinePage = "home";
             await redraw();
             return;
           }
