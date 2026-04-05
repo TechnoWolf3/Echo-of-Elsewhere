@@ -613,10 +613,47 @@ function buildMachineBuyCategoryComponents() {
   ];
 }
 
-function buildMachineCategoryEmbed(category) {
+function buildMachineCategoryEmbed(category, state) {
+  const categoryNames = {
+    tractor: "🚜 Tractors",
+    cultivate: "🪓 Cultivation Equipment",
+    seed: "🌱 Seeding Equipment",
+    spray: "💧 Spraying Equipment",
+    harvest: "🌾 Harvesters",
+  };
+
+  const machines = machineEngine.listMachines().filter((m) => {
+    if (category === "tractor") return m.type === "tractor";
+    if (category === "cultivate") return m.requiredFor?.includes("cultivate");
+    if (category === "seed") return m.requiredFor?.includes("seed");
+    if (category === "spray") return m.requiredFor?.includes("fertilise");
+    if (category === "harvest") return m.requiredFor?.includes("harvest");
+    return false;
+  });
+
+  const lines = machines.map((m) => {
+    const owned = machineEngine.getOwnedCount(state, m.id);
+    const rented = machineEngine.getRentedCount(state, m.id);
+    const speedBonus = Math.max(0, Math.round((1 - (m.taskSpeedMult || 1)) * 100));
+    const tasks = Array.isArray(m.requiredFor) && m.requiredFor.length
+      ? m.requiredFor.join(", ")
+      : "General use";
+
+    return [
+      `**${m.name}**`,
+      `Tier ${m.tier} • Owned: ${owned} • Rented: ${rented}`,
+      `Buy: $${m.buyPrice.toLocaleString()} • Rent: $${m.rentPrice.toLocaleString()}`,
+      `Speed Bonus: ${speedBonus}% • Tasks: ${tasks}`,
+    ].join("\n");
+  });
+
   return new EmbedBuilder()
-    .setTitle(`🛒 ${category} Machines`)
-    .setDescription("Select a machine to purchase.")
+    .setTitle(`🛒 ${categoryNames[category] || "Machines"}`)
+    .setDescription(
+      lines.length
+        ? lines.join("\n\n")
+        : "No machines found in this category."
+    )
     .setColor(0x0875AF);
 }
 
@@ -1914,11 +1951,12 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
         if (session.machinePage?.startsWith("buy_cat")) {
           const category = session.machinePage.split(":")[1];
+          const machineState = await machineEngine.ensureMachineState(guildId, userId);
 
           return msg.edit({
-            embeds: [buildMachineCategoryEmbed(category)],
+            embeds: [buildMachineCategoryEmbed(category, machineState)],
             components: buildMachineCategoryComponents(category),
-          });
+          }).catch(() => {});
         }
       }
 
