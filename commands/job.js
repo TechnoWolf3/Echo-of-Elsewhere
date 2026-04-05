@@ -781,35 +781,69 @@ function buildFarmingComponents(farm) {
 function renderFieldVisual(field) {
   if (!field) return "";
 
+  const level = Math.max(1, Number(field.level || 1));
+
+  // Visual size scales up, but cap it so embeds stay readable
+  const size = Math.min(level + 2, 8);
+
+  const cropId = String(field.cropId || "").toLowerCase();
+
+  function tileForGrowing() {
+    if (["spinach", "cabbage", "carrots", "potatoes"].includes(cropId)) return "🟩";
+    if (["wheat", "barley", "oats", "corn", "canola", "soybeans"].includes(cropId)) return "🌱";
+    return "🟩";
+  }
+
+  function tileForReady() {
+    if (["wheat", "barley", "oats", "corn", "canola"].includes(cropId)) return "🟨";
+    if (["spinach", "soybeans", "cabbage"].includes(cropId)) return "🟩";
+    if (["carrots", "potatoes"].includes(cropId)) return "🟧";
+    return "🟨";
+  }
+
+  function buildGrid(tile, useDots = false) {
+    const rows = [];
+    for (let r = 0; r < size; r++) {
+      let line = "";
+      for (let c = 0; c < size; c++) {
+        if (useDots && (r + c) % 2 === 1) {
+          line += "▪️";
+        } else {
+          line += tile;
+        }
+      }
+      rows.push(line);
+    }
+    return rows.join("\n");
+  }
+
+  function buildSpoiledGrid() {
+    const rows = [];
+    for (let r = 0; r < size; r++) {
+      let line = "";
+      for (let c = 0; c < size; c++) {
+        const roll = Math.random();
+        if (roll < 0.35) line += "⬛";
+        else line += "🟫";
+      }
+      rows.push(line);
+    }
+    return rows.join("\n");
+  }
+
   if (field.state === "spoiled") {
-    return [
-      "⬛🟫⬛",
-      "🟫⬛🟫",
-      "⬛🟫⬛",
-    ].join("\n");
+    return buildSpoiledGrid();
   }
 
   if (field.state === "ready") {
-    return [
-      "🟨🟨🟨",
-      "🟨🟨🟨",
-      "🟨🟨🟨",
-    ].join("\n");
+    return buildGrid(tileForReady());
   }
 
   if (field.state === "growing") {
-    return [
-      "🟩🟩🟩",
-      "🟩🟩🟩",
-      "🟩🟩🟩",
-    ].join("\n");
+    return buildGrid(tileForGrowing(), true);
   }
 
-  return [
-    "🟫🟫🟫",
-    "🟫🟫🟫",
-    "🟫🟫🟫",
-  ].join("\n");
+  return buildGrid("🟫");
 }
 
 /* ============================================================
@@ -818,6 +852,7 @@ function renderFieldVisual(field) {
 function buildFieldEmbed(farm, fieldIndex) {
   const field = (farm.fields || [])[fieldIndex];
   const visual = renderFieldVisual(field);
+
   if (!field) {
     return new EmbedBuilder()
       .setTitle("🌾 Field")
@@ -825,29 +860,56 @@ function buildFieldEmbed(farm, fieldIndex) {
       .setColor(0xaa0000);
   }
 
+  const allCrops = farming.getAvailableCrops(config.MAX_FIELD_LEVEL || 10);
+  const cropMap = Object.fromEntries(allCrops.map(c => [c.key, c]));
+
+  const crop = field.cropId ? cropMap[field.cropId] : null;
+  const cropName = crop?.name || "None";
+
   let stateText = "Empty";
-  if (field.state === "growing") stateText = "Growing";
-  if (field.state === "ready") stateText = "Ready to Harvest";
-  if (field.state === "spoiled") stateText = "Spoiled";
+  let stateFlavor = "🟫 The soil is ready for work.";
+
+  if (field.state === "growing") {
+    stateText = "Growing";
+    stateFlavor = "🌱 Your crop is growing steadily.";
+  }
+  if (field.state === "ready") {
+    stateText = "Ready to Harvest";
+    stateFlavor = "🌾 This field is ready to bring in.";
+  }
+  if (field.state === "spoiled") {
+    stateText = "Spoiled";
+    stateFlavor = "⬛ The field needs attention before it can be used again.";
+  }
 
   const readyLine =
     field.state === "growing" && field.readyAt
-      ? `\nReady: <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`
+      ? `⏳ **Ready:** <t:${Math.floor(Number(field.readyAt) / 1000)}:R>\n🕒 **At:** <t:${Math.floor(Number(field.readyAt) / 1000)}:F>`
       : "";
+
+  const cultivatedLine = field.cultivated ? "✅ Cultivated" : "❌ Needs Cultivation";
+  const regrowLine = crop?.regrow ? "🔁 Regrows after harvest" : "🌾 Single harvest crop";
 
   return new EmbedBuilder()
     .setTitle(`🌾 Field ${fieldIndex + 1}`)
     .setDescription(
       [
+        `**Field Layout**`,
         visual,
         "",
-        `Level: **${field.level || 1}**`,
-        `State: **${stateText}**`,
-        `Crop: **${field.cropId || "None"}**`,
+        `📈 **Level:** ${field.level || 1}`,
+        `📌 **Status:** ${stateText}`,
+        `🌿 **Crop:** ${cropName}`,
+        `🪴 **Condition:** ${cultivatedLine}`,
+        `🍂 **Season:** ${farming.getCurrentSeason()}`,
+        crop ? regrowLine : "",
         readyLine,
+        "",
+        stateFlavor,
       ].filter(Boolean).join("\n")
     )
-    .setColor(0x0875AF);
+    .setColor(0x0875AF)
+    .setFooter({ text: "Fields can only run one task at a time." });
 }
 
 function buildFieldComponents(farm, fieldIndex) {
