@@ -242,12 +242,15 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
     const now = Date.now();
     field.state = "growing";
     field.plantedAt = now;
-    field.readyAt = now + crop.regrowHours * 60 * 60 * 1000;
+    field.readyAt = now + (crop.regrowHours || crop.growthhours) * 60 * 60 * 1000;
   } else {
+    const leavesDebris = Math.random() < (config.DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
+
     field.cropId = null;
     field.state = "empty";
     field.plantedAt = null;
     field.readyAt = null;
+    field.cultivated = !leavesDebris;
   }
 
   await saveFarm(guildId, userId, farm);
