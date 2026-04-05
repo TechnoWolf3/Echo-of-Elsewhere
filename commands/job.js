@@ -783,14 +783,15 @@ function renderFieldVisual(field) {
 
   const level = Math.max(1, Number(field.level || 1));
 
-  // Visual size scales up, but cap it so embeds stay readable
+  // Scale visual size by level, but cap it for Discord readability
   const size = Math.min(level + 2, 8);
 
   const cropId = String(field.cropId || "").toLowerCase();
 
   function tileForGrowing() {
-    if (["spinach", "cabbage", "carrots", "potatoes"].includes(cropId)) return "🟩";
-    if (["wheat", "barley", "oats", "corn", "canola", "soybeans"].includes(cropId)) return "🌱";
+    if (["spinach", "cabbage", "soybeans"].includes(cropId)) return "🟩";
+    if (["wheat", "barley", "oats", "corn", "canola"].includes(cropId)) return "🌱";
+    if (["carrots", "potatoes"].includes(cropId)) return "🟩";
     return "🟩";
   }
 
@@ -801,16 +802,28 @@ function renderFieldVisual(field) {
     return "🟨";
   }
 
-  function buildGrid(tile, useDots = false) {
+  function buildGrid(tile, usePattern = false) {
     const rows = [];
     for (let r = 0; r < size; r++) {
       let line = "";
       for (let c = 0; c < size; c++) {
-        if (useDots && (r + c) % 2 === 1) {
-          line += "▪️";
-        } else {
-          line += tile;
-        }
+        if (usePattern && (r + c) % 2 === 1) line += "▪️";
+        else line += tile;
+      }
+      rows.push(line);
+    }
+    return rows.join("\n");
+  }
+
+  function buildDebrisGrid() {
+    const rows = [];
+    for (let r = 0; r < size; r++) {
+      let line = "";
+      for (let c = 0; c < size; c++) {
+        const roll = Math.random();
+        if (roll < 0.14) line += "⬜";
+        else if (roll < 0.24) line += "⬛";
+        else line += "🟫";
       }
       rows.push(line);
     }
@@ -831,18 +844,27 @@ function renderFieldVisual(field) {
     return rows.join("\n");
   }
 
+  // Spoiled / damaged field
   if (field.state === "spoiled") {
     return buildSpoiledGrid();
   }
 
+  // Empty but not cultivated = debris / stones / messy field
+  if (field.state === "empty" && !field.cultivated) {
+    return buildDebrisGrid();
+  }
+
+  // Crop ready
   if (field.state === "ready") {
     return buildGrid(tileForReady());
   }
 
+  // Crop growing
   if (field.state === "growing") {
     return buildGrid(tileForGrowing(), true);
   }
 
+  // Clean empty cultivated field
   return buildGrid("🟫");
 }
 
@@ -879,7 +901,11 @@ function buildFieldEmbed(farm, fieldIndex) {
   }
   if (field.state === "spoiled") {
     stateText = "Spoiled";
-    stateFlavor = "⬛ The field needs attention before it can be used again.";
+    stateFlavor = "⬛ The field has been damaged and needs recovery.";
+  }
+  if (field.state === "empty" && !field.cultivated) {
+    stateText = "Needs Cleanup";
+    stateFlavor = "🪨 Stones and debris are scattered across the field.";
   }
 
   const readyLine =
