@@ -35,6 +35,7 @@ module.exports = {
     name: "Spinach",
     level: 1,
     growthHours: 3,
+    regrowHours: 2,
     yield: [2, 5],
     seasons: ["spring", "winter"],
     regrow: true,
@@ -65,10 +66,10 @@ module.exports = {
     name: "Corn",
     level: 3,
     growthHours: 8,
+    regrowHours: 5,
     yield: [6, 12],
     seasons: ["summer", "autumn"],
     regrow: true,
-    regrowHours: 5,
   },
 
   soybeans: {
