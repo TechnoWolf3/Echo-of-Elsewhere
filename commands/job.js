@@ -2641,7 +2641,21 @@ function scheduleReturnToCategory(delayMs = 5000) {
           if (actionId.startsWith("farm_cultivate:")) {
             const fieldIndex = Number(actionId.split(":")[1]);
             const farm = await farming.ensureFarm(guildId, userId);
+            const machineCheck = await machineEngine.reserveMachinesForTask(
+              guildId,
+              userId,
+              fieldIndex,
+              "cultivate",
+              60000 //60 Seconds by default
+            );
 
+            if (!machineCheck.ok) {
+              await btn.followUp({
+                content: `❌ ${machineCheck.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
             const result = await farming.cultivateField(guildId, userId, farm, fieldIndex);
             if (!result.ok) {
               await btn.followUp({
@@ -2707,6 +2721,21 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const fieldIndex = Number(fieldIndexRaw);
 
             const farm = await farming.ensureFarm(guildId, userId);
+            const machineCheck = await machineEngine.reserveMachinesForTask(
+              guildId,
+              userId,
+              fieldIndex,
+              "seed",
+              60000 //60 Seconds by default
+            );
+
+            if (!machineCheck.ok) {
+              await btn.followUp({
+                content: `❌ ${machineCheck.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
             const result = await farming.plantCrop(guildId, userId, farm, fieldIndex, cropId);
 
             if (!result.ok) {
@@ -2730,6 +2759,22 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const fieldIndex = Number(actionId.split(":")[1]);
 
             const farm = await farming.ensureFarm(guildId, userId);
+            const machineCheck = await machineEngine.reserveMachinesForTask(
+              guildId,
+              userId,
+              fieldIndex,
+              "harvest",
+              60000 //60 Seconds by default
+            );
+
+            if (!machineCheck.ok) {
+              await btn.followUp({
+                content: `❌ ${machineCheck.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
             const result = await farming.harvestField(guildId, userId, farm, fieldIndex);
 
             if (!result.ok) {
