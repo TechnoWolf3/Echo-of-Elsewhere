@@ -26,7 +26,7 @@ module.exports = {
   cultivator_basic: {
     id: "cultivator_basic",
     name: "Basic Cultivator",
-    type: "implement",
+    type: "cultivator",
     tier: 1,
     buyPrice: 24000,
     rentPrice: 4000,
@@ -37,7 +37,7 @@ module.exports = {
   cultivator_heavy: {
     id: "cultivator_heavy",
     name: "Heavy Cultivator",
-    type: "implement",
+    type: "cultivator",
     tier: 2,
     buyPrice: 52000,
     rentPrice: 7000,
@@ -49,7 +49,7 @@ module.exports = {
   seeder_basic: {
     id: "seeder_basic",
     name: "Basic Seeder",
-    type: "implement",
+    type: "seeder",
     tier: 1,
     buyPrice: 30000,
     rentPrice: 5000,
@@ -60,7 +60,7 @@ module.exports = {
   seeder_precision: {
     id: "seeder_precision",
     name: "Precision Seeder",
-    type: "implement",
+    type: "seeder",
     tier: 2,
     buyPrice: 70000,
     rentPrice: 9000,
@@ -72,7 +72,7 @@ module.exports = {
   sprayer_basic: {
     id: "sprayer_basic",
     name: "Basic Sprayer",
-    type: "implement",
+    type: "sprayer",
     tier: 1,
     buyPrice: 28000,
     rentPrice: 4500,
@@ -83,7 +83,7 @@ module.exports = {
   sprayer_large: {
     id: "sprayer_large",
     name: "Large Sprayer",
-    type: "implement",
+    type: "sprayer",
     tier: 2,
     buyPrice: 65000,
     rentPrice: 8500,

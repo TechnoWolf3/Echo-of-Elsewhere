@@ -624,10 +624,10 @@ function buildMachineCategoryEmbed(category, state) {
 
   const machines = machineEngine.listMachines().filter((m) => {
     if (category === "tractor") return m.type === "tractor";
-    if (category === "cultivate") return m.requiredFor?.includes("cultivate");
-    if (category === "seed") return m.requiredFor?.includes("seed");
-    if (category === "spray") return m.requiredFor?.includes("fertilise");
-    if (category === "harvest") return m.requiredFor?.includes("harvest");
+    if (category === "cultivate") return m.type === "cultivator";
+    if (category === "seed") return m.type === "seeder";
+    if (category === "spray") return m.type === "sprayer";
+    if (category === "harvest") return m.type === "harvester";
     return false;
   });
 
@@ -660,10 +660,10 @@ function buildMachineCategoryEmbed(category, state) {
 function buildMachineCategoryComponents(category) {
   const machines = machineEngine.listMachines().filter((m) => {
     if (category === "tractor") return m.type === "tractor";
-    if (category === "cultivate") return m.requiredFor?.includes("cultivate");
-    if (category === "seed") return m.requiredFor?.includes("seed");
-    if (category === "spray") return m.requiredFor?.includes("fertilise");
-    if (category === "harvest") return m.requiredFor?.includes("harvest");
+    if (category === "cultivate") return m.type === "cultivator";
+    if (category === "seed") return m.type === "seeder";
+    if (category === "spray") return m.type === "sprayer";
+    if (category === "harvest") return m.type === "harvester";
     return false;
   });
 
