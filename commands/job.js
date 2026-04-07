@@ -1100,37 +1100,28 @@ function buildFieldEmbed(farm, fieldIndex) {
 
   const allCrops = farming.getAvailableCrops(config.MAX_FIELD_LEVEL || 10);
   const cropMap = Object.fromEntries(allCrops.map(c => [c.key, c]));
-
   const crop = field.cropId ? cropMap[field.cropId] : null;
   const cropName = crop?.name || "None";
 
   let stateText = "Empty";
-  let stateFlavor = "🟫 The soil is ready for work.";
+  if (field.state === "growing") stateText = "Growing";
+  if (field.state === "ready") stateText = "Ready to Harvest";
+  if (field.state === "spoiled") stateText = "Spoiled";
+  if (field.state === "empty" && !field.cultivated) stateText = "Needs Cleanup";
 
-  if (field.state === "growing") {
-    stateText = "Growing";
-    stateFlavor = "🌱 Your crop is growing steadily.";
-  }
-  if (field.state === "ready") {
-    stateText = "Ready to Harvest";
-    stateFlavor = "🌾 This field is ready to bring in.";
-  }
-  if (field.state === "spoiled") {
-    stateText = "Spoiled";
-    stateFlavor = "⬛ The field has been damaged and needs recovery.";
-  }
-  if (field.state === "empty" && !field.cultivated) {
-    stateText = "Needs Cleanup";
-    stateFlavor = "🪨 Stones and debris are scattered across the field.";
-  }
+  const task = field.task || null;
+
+  const taskLine =
+    task?.key && task?.endsAt && Date.now() < Number(task.endsAt)
+      ? `🛠️ **Task:** ${task.key}\n⏳ **Done:** <t:${Math.floor(Number(task.endsAt) / 1000)}:R>\n🕒 **At:** <t:${Math.floor(Number(task.endsAt) / 1000)}:F>`
+      : "";
 
   const readyLine =
-    field.state === "growing" && field.readyAt
+    !task?.key && field.state === "growing" && field.readyAt
       ? `⏳ **Ready:** <t:${Math.floor(Number(field.readyAt) / 1000)}:R>\n🕒 **At:** <t:${Math.floor(Number(field.readyAt) / 1000)}:F>`
       : "";
 
   const cultivatedLine = field.cultivated ? "✅ Cultivated" : "❌ Needs Cultivation";
-  const regrowLine = crop?.regrow ? "🔁 Regrows after harvest" : "🌾 Single harvest crop";
 
   return new EmbedBuilder()
     .setTitle(`🌾 Field ${fieldIndex + 1}`)
@@ -1144,10 +1135,8 @@ function buildFieldEmbed(farm, fieldIndex) {
         `🌿 **Crop:** ${cropName}`,
         `🪴 **Condition:** ${cultivatedLine}`,
         `🍂 **Season:** ${farming.getCurrentSeason()}`,
-        crop ? regrowLine : "",
+        taskLine,
         readyLine,
-        "",
-        stateFlavor,
       ].filter(Boolean).join("\n")
     )
     .setColor(0x0875AF)
@@ -1167,6 +1156,31 @@ function buildFieldComponents(farm, fieldIndex) {
           .setStyle(ButtonStyle.Secondary)
       )
     );
+    return rows;
+  }
+
+  const taskActive = farming.isFieldTaskActive(field);
+
+  if (taskActive) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_task_busy")
+          .setLabel("Task In Progress")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      )
+    );
+
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_back")
+          .setLabel("⬅ Back")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    );
+
     return rows;
   }
 
@@ -1898,6 +1912,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           const farm = await farming.ensureFarm(guildId, userId);
 
           await farming.applySeasonRollover(guildId, userId, farm);
+          await farming.applyFieldTaskRollovers(guildId, userId, farm);
 
           const components = buildFarmingComponents(farm);
 
@@ -1918,6 +1933,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       if (session.view === "farm_field") {
         const farm = await farming.ensureFarm(guildId, userId);
         await farming.applySeasonRollover(guildId, userId, farm);
+        await farming.applyFieldTaskRollovers(guildId, userId, farm);
 
         return msg.edit({
           embeds: [buildFieldEmbed(farm, session.fieldIndex)],
@@ -2641,12 +2657,13 @@ function scheduleReturnToCategory(delayMs = 5000) {
           if (actionId.startsWith("farm_cultivate:")) {
             const fieldIndex = Number(actionId.split(":")[1]);
             const farm = await farming.ensureFarm(guildId, userId);
+
             const machineCheck = await machineEngine.reserveMachinesForTask(
               guildId,
               userId,
               fieldIndex,
               "cultivate",
-              60000 //60 Seconds by default
+              60000
             );
 
             if (!machineCheck.ok) {
@@ -2656,7 +2673,9 @@ function scheduleReturnToCategory(delayMs = 5000) {
               }).catch(() => {});
               return;
             }
-            const result = await farming.cultivateField(guildId, userId, farm, fieldIndex);
+
+            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "cultivate", 60000);
+
             if (!result.ok) {
               await btn.followUp({
                 content: `❌ ${result.reasonText}`,
@@ -2666,6 +2685,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
             }
 
             const updatedFarm = await farming.ensureFarm(guildId, userId);
+
+            await btn.followUp({
+              content: `🛠️ Cultivation started. It will finish <t:${Math.floor(Number(result.task.endsAt) / 1000)}:R>.`,
+              ephemeral: true,
+            }).catch(() => {});
 
             await msg.edit({
               embeds: [buildFieldEmbed(updatedFarm, fieldIndex)],
@@ -2721,12 +2745,13 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const fieldIndex = Number(fieldIndexRaw);
 
             const farm = await farming.ensureFarm(guildId, userId);
+
             const machineCheck = await machineEngine.reserveMachinesForTask(
               guildId,
               userId,
               fieldIndex,
               "seed",
-              60000 //60 Seconds by default
+              60000
             );
 
             if (!machineCheck.ok) {
@@ -2736,7 +2761,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
               }).catch(() => {});
               return;
             }
-            const result = await farming.plantCrop(guildId, userId, farm, fieldIndex, cropId);
+
+            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "seed", 60000);
 
             if (!result.ok) {
               await btn.followUp({
@@ -2746,7 +2772,15 @@ function scheduleReturnToCategory(delayMs = 5000) {
               return;
             }
 
+            farm.fields[fieldIndex].task.cropId = cropId;
+            await farming.saveFarm(guildId, userId, farm);
+
             const updatedFarm = await farming.ensureFarm(guildId, userId);
+
+            await btn.followUp({
+              content: `🌱 Seeding started. It will finish <t:${Math.floor(Number(result.task.endsAt) / 1000)}:R>.`,
+              ephemeral: true,
+            }).catch(() => {});
 
             await msg.edit({
               embeds: [buildFieldEmbed(updatedFarm, fieldIndex)],
@@ -2759,12 +2793,13 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const fieldIndex = Number(actionId.split(":")[1]);
 
             const farm = await farming.ensureFarm(guildId, userId);
+
             const machineCheck = await machineEngine.reserveMachinesForTask(
               guildId,
               userId,
               fieldIndex,
               "harvest",
-              60000 //60 Seconds by default
+              60000
             );
 
             if (!machineCheck.ok) {
@@ -2775,7 +2810,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
               return;
             }
 
-            const result = await farming.harvestField(guildId, userId, farm, fieldIndex);
+            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "harvest", 60000);
 
             if (!result.ok) {
               await btn.followUp({
@@ -2788,7 +2823,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const updatedFarm = await farming.ensureFarm(guildId, userId);
 
             await btn.followUp({
-              content: `✅ Harvested ${result.qty}x ${result.cropName}.`,
+              content: `🌾 Harvesting started. It will finish <t:${Math.floor(Number(result.task.endsAt) / 1000)}:R>.`,
               ephemeral: true,
             }).catch(() => {});
 

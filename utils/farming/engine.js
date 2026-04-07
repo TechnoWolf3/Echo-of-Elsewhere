@@ -258,6 +258,146 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
   return { ok: true, qty, cropName: crop.name };
 }
 
+function isFieldTaskActive(field) {
+  return Boolean(field?.task?.key && field?.task?.endsAt && Date.now() < Number(field.task.endsAt));
+}
+
+function getFieldTask(field) {
+  return field?.task || null;
+}
+
+async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durationMs) {
+  const field = farm.fields?.[fieldIndex];
+  if (!field) return { ok: false, reasonText: "That field does not exist." };
+
+  if (isFieldTaskActive(field)) {
+    return { ok: false, reasonText: "This field is already busy with another task." };
+  }
+
+  const now = Date.now();
+  field.task = {
+    key: taskKey,
+    startedAt: now,
+    endsAt: now + durationMs,
+  };
+
+  await saveFarm(guildId, userId, farm);
+
+  return {
+    ok: true,
+    task: field.task,
+  };
+}
+
+async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) {
+  const field = farm.fields?.[fieldIndex];
+  if (!field) return { ok: false, reasonText: "That field does not exist." };
+
+  if (!field.task?.key) {
+    return { ok: false, reasonText: "This field has no active task." };
+  }
+
+  const taskKey = field.task.key;
+  field.task = null;
+
+  if (taskKey === "cultivate") {
+    field.cultivated = true;
+    field.state = "empty";
+    await saveFarm(guildId, userId, farm);
+    return { ok: true, completedTask: taskKey };
+  }
+
+  if (taskKey === "seed") {
+    const cropId = extra.cropId;
+    const crop = crops[cropId];
+    if (!crop) return { ok: false, reasonText: "Unknown crop." };
+    if (crop.level > field.level) {
+      return { ok: false, reasonText: "That field is not a high enough level for this crop." };
+    }
+    if (!field.cultivated) {
+      return { ok: false, reasonText: "Cultivate the field first." };
+    }
+    if (!isCropValidForSeason(cropId)) {
+      return { ok: false, reasonText: "That crop cannot be planted in the current season." };
+    }
+
+    const now = Date.now();
+    field.cropId = cropId;
+    field.state = "growing";
+    field.plantedAt = now;
+    field.readyAt = now + crop.growthHours * 60 * 60 * 1000;
+    field.cultivated = true;
+
+    await saveFarm(guildId, userId, farm);
+    return { ok: true, completedTask: taskKey };
+  }
+
+  if (taskKey === "harvest") {
+    updateFieldRuntime(field);
+
+    if (field.state !== "ready" || !field.cropId) {
+      return { ok: false, reasonText: "That field is not ready to harvest." };
+    }
+
+    const crop = crops[field.cropId];
+    if (!crop) return { ok: false, reasonText: "Unknown crop." };
+
+    const qty = rollYield(crop);
+    for (let i = 0; i < qty; i++) {
+      await addProduceToInventory(guildId, userId, crop);
+    }
+
+    if (crop.regrow && isCropValidForSeason(field.cropId)) {
+      const now = Date.now();
+      field.state = "growing";
+      field.plantedAt = now;
+      field.readyAt = now + (crop.regrowHours || crop.growthHours) * 60 * 60 * 1000;
+    } else {
+      const leavesDebris =
+        Math.random() < (crop.debrisChance ?? config.NON_REGROW_DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
+
+      field.cropId = null;
+      field.state = "empty";
+      field.plantedAt = null;
+      field.readyAt = null;
+      field.cultivated = !leavesDebris;
+    }
+
+    await saveFarm(guildId, userId, farm);
+    return { ok: true, completedTask: taskKey, qty, cropName: crop.name };
+  }
+
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, completedTask: taskKey };
+}
+
+async function applyFieldTaskRollovers(guildId, userId, farm) {
+  let changed = false;
+  const completions = [];
+
+  for (let i = 0; i < (farm.fields || []).length; i++) {
+    const field = farm.fields[i];
+    if (!field?.task?.key || !field.task.endsAt) continue;
+
+    if (Date.now() >= Number(field.task.endsAt)) {
+      const taskKey = field.task.key;
+      const cropId = field.task.cropId || null;
+      const result = await completeFieldTask(guildId, userId, farm, i, { cropId });
+
+      if (result.ok) {
+        completions.push({ fieldIndex: i, ...result });
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    await saveFarm(guildId, userId, farm);
+  }
+
+  return completions;
+}
+
 module.exports = {
   ensureFarm,
   saveFarm,
@@ -273,4 +413,9 @@ module.exports = {
   plantCrop,
   harvestField,
   canRegrow,
+  isFieldTaskActive,
+  getFieldTask,
+  startFieldTask,
+  completeFieldTask,
+  applyFieldTaskRollovers,
 };
