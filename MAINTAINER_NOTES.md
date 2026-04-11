@@ -146,7 +146,8 @@ Farming specifics:
 - Crop selling is handled by `utils/farming/market.js`.
 - The farming home screen must stay under Discord's 5 component row limit. Field buttons are grouped into rows of up to 5.
 - Field tasks should be validated before machinery is reserved. If machinery cannot be reserved after a valid task is started, clear the field task so equipment/fields do not get stuck.
-- `machine_rent` and `machine_sell` are visible but not implemented yet; they currently reply with a "not wired up yet" message.
+- Machine rentals last 24 hours and are stored as leases in `farm_machines.data.rented`.
+- Machine selling pays 60% of the buy price and only allows free owned machines to be sold. Machines busy in active field tasks are protected.
 
 ### Games
 

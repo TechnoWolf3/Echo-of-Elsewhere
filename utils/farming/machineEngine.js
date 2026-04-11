@@ -7,6 +7,9 @@ const TASK_REQUIREMENTS = {
   harvest: ["harvester"],
 };
 
+const RENTAL_DURATION_MS = 24 * 60 * 60 * 1000;
+const SELL_VALUE_RATE = 0.6;
+
 async function ensureMachineTable() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS farm_machines (
@@ -48,6 +51,10 @@ async function ensureMachineState(guildId, userId) {
   if (!data.owned) data.owned = {};
   if (!data.rented) data.rented = {};
   if (!data.activeTasks) data.activeTasks = [];
+  const rentalsChanged = cleanupExpiredRentals(data);
+  const tasksChanged = cleanupFinishedTasks(data);
+  const changed = rentalsChanged || tasksChanged;
+  if (changed) await saveMachineState(guildId, userId, data);
   return data;
 }
 
@@ -79,7 +86,16 @@ function getOwnedCount(state, machineId) {
 }
 
 function getRentedCount(state, machineId) {
-  return Number(state?.rented?.[machineId]?.qty || 0);
+  const entry = state?.rented?.[machineId];
+  if (!entry) return 0;
+
+  const now = Date.now();
+  if (Array.isArray(entry.leases)) {
+    return entry.leases.filter((lease) => Number(lease.expiresAt || 0) > now).length;
+  }
+
+  if (entry.expiresAt && Number(entry.expiresAt) <= now) return 0;
+  return Number(entry.qty || 0);
 }
 
 function getMachinesForTask(taskKey) {
@@ -140,9 +156,119 @@ async function buyMachine(guildId, userId, machineId) {
   return { ok: true, machine };
 }
 
+async function rentMachine(guildId, userId, machineId) {
+  const machine = getMachine(machineId);
+  if (!machine) return { ok: false, reasonText: "Unknown machine." };
+
+  const state = await ensureMachineState(guildId, userId);
+
+  const debit = await pool.query(
+    `UPDATE user_balances
+     SET balance = balance - $1
+     WHERE guild_id=$2 AND user_id=$3 AND balance >= $1
+     RETURNING balance`,
+    [machine.rentPrice, guildId, userId]
+  );
+
+  if (debit.rowCount === 0) {
+    return { ok: false, reasonText: `You need $${machine.rentPrice.toLocaleString()} to rent this machine.` };
+  }
+
+  const now = Date.now();
+  const current = state.rented[machineId] || {};
+  const leases = Array.isArray(current.leases)
+    ? current.leases.filter((lease) => Number(lease.expiresAt || 0) > now)
+    : [];
+
+  if (!leases.length && Number(current.qty || 0) > 0 && (!current.expiresAt || Number(current.expiresAt) > now)) {
+    const qty = Number(current.qty || 0);
+    for (let i = 0; i < qty; i++) {
+      leases.push({
+        rentedAt: now,
+        expiresAt: Number(current.expiresAt || now + RENTAL_DURATION_MS),
+      });
+    }
+  }
+
+  leases.push({
+    rentedAt: now,
+    expiresAt: now + RENTAL_DURATION_MS,
+  });
+
+  state.rented[machineId] = { leases };
+  await saveMachineState(guildId, userId, state);
+
+  await logMachineTransaction(guildId, userId, -machine.rentPrice, "farm_machine_rent", { machineId });
+
+  return { ok: true, machine, expiresAt: now + RENTAL_DURATION_MS };
+}
+
+async function sellMachine(guildId, userId, machineId) {
+  const machine = getMachine(machineId);
+  if (!machine) return { ok: false, reasonText: "Unknown machine." };
+
+  const state = await ensureMachineState(guildId, userId);
+  const owned = getOwnedCount(state, machineId);
+  if (owned <= 0) {
+    return { ok: false, reasonText: "You do not own that machine." };
+  }
+
+  const occupied = getOccupiedCountForMachine(state, machineId);
+  const freeOwned = owned - occupied;
+  if (freeOwned <= 0) {
+    return { ok: false, reasonText: "That machine is currently busy. Wait for active field tasks to finish before selling it." };
+  }
+
+  const sellValue = getSellValue(machine);
+  state.owned[machineId] = owned - 1;
+  if (state.owned[machineId] <= 0) delete state.owned[machineId];
+  await saveMachineState(guildId, userId, state);
+
+  await pool.query(
+    `UPDATE user_balances
+     SET balance = balance + $1
+     WHERE guild_id=$2 AND user_id=$3`,
+    [sellValue, guildId, userId]
+  );
+  await logMachineTransaction(guildId, userId, sellValue, "farm_machine_sell", { machineId });
+
+  return { ok: true, machine, sellValue };
+}
+
 function cleanupFinishedTasks(state) {
   const now = Date.now();
+  const before = (state.activeTasks || []).length;
   state.activeTasks = (state.activeTasks || []).filter(t => t.endsAt > now);
+  return state.activeTasks.length !== before;
+}
+
+function cleanupExpiredRentals(state) {
+  const now = Date.now();
+  let changed = false;
+  if (!state.rented) state.rented = {};
+
+  for (const [machineId, entry] of Object.entries(state.rented)) {
+    if (!entry) {
+      delete state.rented[machineId];
+      changed = true;
+      continue;
+    }
+
+    if (Array.isArray(entry.leases)) {
+      const kept = entry.leases.filter((lease) => Number(lease.expiresAt || 0) > now);
+      if (kept.length !== entry.leases.length) changed = true;
+      if (kept.length) state.rented[machineId] = { leases: kept };
+      else delete state.rented[machineId];
+      continue;
+    }
+
+    if (entry.expiresAt && Number(entry.expiresAt) <= now) {
+      delete state.rented[machineId];
+      changed = true;
+    }
+  }
+
+  return changed;
 }
 
 function getOccupiedMachineIds(state) {
@@ -155,6 +281,28 @@ function getOccupiedMachineIds(state) {
   }
 
   return occupied;
+}
+
+function getOccupiedCountForMachine(state, machineId) {
+  return (state.activeTasks || []).reduce((count, task) => {
+    return count + (task.machineIds || []).filter((id) => id === machineId).length;
+  }, 0);
+}
+
+function getSellValue(machine) {
+  return Math.floor(Number(machine?.buyPrice || 0) * SELL_VALUE_RATE);
+}
+
+async function logMachineTransaction(guildId, userId, amount, type, meta = {}) {
+  try {
+    await pool.query(
+      `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [guildId, userId, amount, type, meta]
+    );
+  } catch (e) {
+    console.warn("[FARM][MACHINES] transaction log failed:", e?.message || e);
+  }
 }
 
 function getAvailableMachinesByType(state, type) {
@@ -192,7 +340,10 @@ function getAvailableMachinesByType(state, type) {
 async function reserveMachinesForTask(guildId, userId, fieldIndex, taskKey, durationMs) {
   const state = await ensureMachineState(guildId, userId);
 
-  cleanupFinishedTasks(state);
+  const tasksChanged = cleanupFinishedTasks(state);
+  const rentalsChanged = cleanupExpiredRentals(state);
+  const cleaned = tasksChanged || rentalsChanged;
+  if (cleaned) await saveMachineState(guildId, userId, state);
 
   const requiredTypes = TASK_REQUIREMENTS[taskKey] || [];
   const chosenMachines = [];
@@ -238,10 +389,17 @@ module.exports = {
   getOwnedCount,
   getRentedCount,
   buyMachine,
+  rentMachine,
+  sellMachine,
   getMachinesForTask,
   getAvailableCountForMachine,
   hasMachineForTask,
   cleanupFinishedTasks,
+  cleanupExpiredRentals,
   getAvailableMachinesByType,
+  getOccupiedCountForMachine,
+  getSellValue,
+  RENTAL_DURATION_MS,
+  SELL_VALUE_RATE,
   reserveMachinesForTask,
 };

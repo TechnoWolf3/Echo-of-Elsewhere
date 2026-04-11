@@ -689,6 +689,132 @@ function buildMachineCategoryComponents(category) {
   ];
 }
 
+function machineActionLabel(mode) {
+  if (mode === "rent") return "Rent";
+  if (mode === "sell") return "Sell";
+  return "Buy";
+}
+
+function buildMachineActionEmbed(mode = "buy") {
+  return new EmbedBuilder()
+    .setTitle(`Machine Shed - ${machineActionLabel(mode)} Machinery`)
+    .setDescription("Select a category to browse machines.")
+    .setColor(0x0875AF);
+}
+
+function buildMachineActionCategoryComponents(mode = "buy") {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`machine_cat:${mode}:tractor`).setLabel("Tractors").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`machine_cat:${mode}:cultivate`).setLabel("Cultivation").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`machine_cat:${mode}:seed`).setLabel("Seeding").setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`machine_cat:${mode}:spray`).setLabel("Spraying").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId(`machine_cat:${mode}:harvest`).setLabel("Harvesting").setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("machine_home").setLabel("Back").setStyle(ButtonStyle.Secondary)
+    ),
+  ];
+}
+
+function machineCategoryList(category) {
+  return machineEngine.listMachines().filter((m) => {
+    if (category === "tractor") return m.type === "tractor";
+    if (category === "cultivate") return m.type === "cultivator";
+    if (category === "seed") return m.type === "seeder";
+    if (category === "spray") return m.type === "sprayer";
+    if (category === "harvest") return m.type === "harvester";
+    return false;
+  });
+}
+
+function buildMachineActionCategoryEmbed(category, state, mode = "buy") {
+  const categoryNames = {
+    tractor: "Tractors",
+    cultivate: "Cultivation Equipment",
+    seed: "Seeding Equipment",
+    spray: "Spraying Equipment",
+    harvest: "Harvesters",
+  };
+
+  const lines = machineCategoryList(category).map((m) => {
+    const owned = machineEngine.getOwnedCount(state, m.id);
+    const rented = machineEngine.getRentedCount(state, m.id);
+    const busy = machineEngine.getOccupiedCountForMachine(state, m.id);
+    const speedBonus = Math.max(0, Math.round((1 - (m.taskSpeedMult || 1)) * 100));
+    const tasks = Array.isArray(m.requiredFor) && m.requiredFor.length ? m.requiredFor.join(", ") : "General use";
+
+    return [
+      `**${m.name}**`,
+      `Tier ${m.tier} - Owned: ${owned} - Rented: ${rented} - Busy: ${busy}`,
+      `Buy: $${m.buyPrice.toLocaleString()} - Rent: $${m.rentPrice.toLocaleString()} - Sell: $${machineEngine.getSellValue(m).toLocaleString()}`,
+      `Speed Bonus: ${speedBonus}% - Tasks: ${tasks}`,
+    ].join("\n");
+  });
+
+  return new EmbedBuilder()
+    .setTitle(`Machine Shed - ${machineActionLabel(mode)} ${categoryNames[category] || "Machines"}`)
+    .setDescription(lines.length ? lines.join("\n\n") : "No machines found in this category.")
+    .setColor(0x0875AF);
+}
+
+function buildMachineActionSelectComponents(category, state, mode = "buy") {
+  const machines = machineCategoryList(category);
+  const selectable = mode === "sell"
+    ? machines.filter((m) => machineEngine.getOwnedCount(state, m.id) > 0)
+    : machines;
+
+  const rows = [];
+
+  if (selectable.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`machine_select:${mode}:${category}`)
+          .setPlaceholder(`Choose a machine to ${machineActionLabel(mode).toLowerCase()}...`)
+          .addOptions(
+            selectable.map((m) => {
+              const price = mode === "rent"
+                ? m.rentPrice
+                : mode === "sell"
+                  ? machineEngine.getSellValue(m)
+                  : m.buyPrice;
+
+              return {
+                label: mode === "sell" ? `${m.name} (${machineEngine.getOwnedCount(state, m.id)} owned)` : m.name,
+                value: `farm_machine_${mode}:${m.id}`,
+                description: `$${price.toLocaleString()}`,
+              };
+            })
+          )
+      )
+    );
+  } else {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("machine_noop")
+          .setLabel(mode === "sell" ? "No Owned Machines Here" : "No Machines Available")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true)
+      )
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`machine_${mode}`)
+        .setLabel("Back")
+        .setStyle(ButtonStyle.Secondary)
+    )
+  );
+
+  return rows;
+}
+
 function buildFarmingPlaceholderEmbed() {
   return new EmbedBuilder()
     .setTitle("🌾 Echo Farming")
@@ -1960,26 +2086,27 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "farm_machines") {
         if (session.machinePage === "home") {
+          const machineState = await machineEngine.ensureMachineState(guildId, userId);
           return msg.edit({
-            embeds: [buildMachineShedHomeEmbed()],
+            embeds: [buildMachineShedEmbed(machineState)],
             components: buildMachineShedHomeComponents(),
           });
         }
 
-        if (session.machinePage === "buy") {
+        if (["buy", "rent", "sell"].includes(session.machinePage)) {
           return msg.edit({
-            embeds: [buildMachineBuyEmbed()],
-            components: buildMachineBuyCategoryComponents(),
+            embeds: [buildMachineActionEmbed(session.machinePage)],
+            components: buildMachineActionCategoryComponents(session.machinePage),
           });
         }
 
-        if (session.machinePage?.startsWith("buy_cat")) {
-          const category = session.machinePage.split(":")[1];
+        if (session.machinePage?.startsWith("machine_cat:")) {
+          const [, mode, category] = session.machinePage.split(":");
           const machineState = await machineEngine.ensureMachineState(guildId, userId);
 
           return msg.edit({
-            embeds: [buildMachineCategoryEmbed(category, machineState)],
-            components: buildMachineCategoryComponents(category),
+            embeds: [buildMachineActionCategoryEmbed(category, machineState, mode)],
+            components: buildMachineActionSelectComponents(category, machineState, mode),
           }).catch(() => {});
         }
       }
@@ -2152,20 +2279,28 @@ function scheduleReturnToCategory(delayMs = 5000) {
           return;
         }
 
-        if (actionId === "machine_rent" || actionId === "machine_sell") {
-          await btn.followUp({
-            content:
-              actionId === "machine_rent"
-                ? "⏱️ Machine rental is not wired up yet. Buying machines works right now."
-                : "📦 Machine selling is not wired up yet. Buying machines works right now.",
-            flags: MessageFlags.Ephemeral,
-          }).catch(() => {});
+        if (actionId === "machine_rent") {
+          session.machinePage = "rent";
+          await redraw();
+          return;
+        }
+
+        if (actionId === "machine_sell") {
+          session.machinePage = "sell";
+          await redraw();
           return;
         }
 
         if (actionId.startsWith("buy_cat_")) {
           const cat = actionId.replace("buy_cat_", "");
-          session.machinePage = `buy_cat:${cat}`;
+          session.machinePage = `machine_cat:buy:${cat}`;
+          await redraw();
+          return;
+        }
+
+        if (actionId.startsWith("machine_cat:")) {
+          const [, mode, category] = actionId.split(":");
+          session.machinePage = `machine_cat:${mode}:${category}`;
           await redraw();
           return;
         }
@@ -2678,6 +2813,50 @@ function scheduleReturnToCategory(delayMs = 5000) {
             }).catch(() => {});
 
             session.view = "farm_machines";
+            await redraw();
+            return;
+          }
+
+          if (actionId.startsWith("farm_machine_rent:")) {
+            const machineId = actionId.split(":")[1];
+
+            const result = await machineEngine.rentMachine(guildId, userId, machineId);
+
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                flags: MessageFlags.Ephemeral,
+              }).catch(() => {});
+              return;
+            }
+
+            await btn.followUp({
+              content: `✅ Rented ${result.machine.name} for $${result.machine.rentPrice.toLocaleString()}. Rental expires <t:${Math.floor(result.expiresAt / 1000)}:R>.`,
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
+
+            await redraw();
+            return;
+          }
+
+          if (actionId.startsWith("farm_machine_sell:")) {
+            const machineId = actionId.split(":")[1];
+
+            const result = await machineEngine.sellMachine(guildId, userId, machineId);
+
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                flags: MessageFlags.Ephemeral,
+              }).catch(() => {});
+              return;
+            }
+
+            await btn.followUp({
+              content: `✅ Sold ${result.machine.name} for $${result.sellValue.toLocaleString()}.`,
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
+
             await redraw();
             return;
           }
