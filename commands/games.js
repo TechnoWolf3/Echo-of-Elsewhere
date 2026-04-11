@@ -14,6 +14,7 @@ const {
 const { getActiveGame } = require("../utils/gamesHubState");
 const echoCurses = require("../utils/echoCurses");
 const jail = require("../utils/jail");
+const ui = require("../utils/ui");
 const { loadCategories, getCategory, getGame } = require("../data/games");
 const gamesConfig = require("../data/games/config");
 
@@ -30,14 +31,15 @@ const panels = new Map(); // channelId -> { messageId, collector, view, catId }
 function statusLine(channelId) {
   const active = getActiveGame(channelId);
   return active
-    ? `🟡 **Active:** ${active.type} — **${active.state || "active"}**`
-    : "🟢 **No active game in this channel**";
+    ? `${ui.statusEmoji("active")} **Active:** ${active.type} — **${active.state || "active"}**`
+    : `${ui.statusEmoji("ready")} **No active game in this channel**`;
 }
 
 function buildHomeEmbed(channelId, categories) {
   const embed = new EmbedBuilder()
     .setTitle(gamesConfig.title)
     .setDescription(`${gamesConfig.description}\n\n${statusLine(channelId)}`);
+  ui.applySystemStyle(embed, "games");
 
   for (const c of categories) {
     embed.addFields({
@@ -57,11 +59,11 @@ function buildCategoryEmbed(channelId, cat) {
         .join("\n")
     : "_No games in this category yet._";
 
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle(`${cat.emoji || "🎮"} ${cat.name}`)
     .setDescription(
       `${statusLine(channelId)}\n\n${cat.description || ""}\n\n**Available:**\n${list}`
-    );
+    ), "games");
 }
 
 
@@ -84,7 +86,7 @@ function buildCategorySelect(categories) {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(CAT_SELECT_ID)
-      .setPlaceholder("Choose a category…")
+      .setPlaceholder("Choose a category...")
       .addOptions(
         categories.map((c) => ({
           label: c.name,
@@ -101,7 +103,7 @@ function buildGameSelect(cat) {
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(GAME_SELECT_ID)
-      .setPlaceholder(games.length ? "Choose a game…" : "No games available")
+      .setPlaceholder(games.length ? "Choose a game..." : "No games available")
       .setDisabled(games.length === 0)
       .addOptions(
         games.map((g) => ({
@@ -121,28 +123,28 @@ function buildButtons({ showBack }) {
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(BTN_BACK_ID)
-        .setLabel("Back")
-        .setEmoji("⬅️")
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     );
   }
 
   row.addComponents(
     new ButtonBuilder()
       .setCustomId(BTN_HOME_ID)
-      .setLabel("Home")
-      .setEmoji("🏠")
-      .setStyle(ButtonStyle.Primary),
+      .setLabel(ui.nav.home.label)
+      .setEmoji(ui.nav.home.emoji)
+      .setStyle(ui.nav.home.style),
     new ButtonBuilder()
       .setCustomId(BTN_REFRESH_ID)
-      .setLabel("Refresh")
-      .setEmoji("🔄")
-      .setStyle(ButtonStyle.Secondary),
+      .setLabel(ui.nav.refresh.label)
+      .setEmoji(ui.nav.refresh.emoji)
+      .setStyle(ui.nav.refresh.style),
     new ButtonBuilder()
       .setCustomId(BTN_CLOSE_ID)
-      .setLabel("Close")
-      .setEmoji("🗑️")
-      .setStyle(ButtonStyle.Danger)
+      .setLabel(ui.nav.close.label)
+      .setEmoji(ui.nav.close.emoji)
+      .setStyle(ui.nav.close.style)
   );
 
   return row;

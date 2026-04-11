@@ -9,6 +9,7 @@ const {
 } = require("discord.js");
 
 const { guardNotJailed } = require("../utils/jail");
+const ui = require("../utils/ui");
 const ritualsRegistry = require("../data/rituals");
 const { getPrimaryRituals, getOtherRituals, getRitual } = ritualsRegistry;
 const { getRitualStatus, claimRitual, buildStatusLine } = require("../utils/rituals");
@@ -28,7 +29,6 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
   }
 
   const embed = new EmbedBuilder()
-    .setColor(0x7a2bff)
     .setTitle("🕯️ Echo Rituals")
     .setDescription(
       "Return here for timed offerings, recurring rites, and whatever else Echo decides is worth your time."
@@ -53,6 +53,7 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
   if (latestMessage) {
     embed.addFields({ name: "Latest Result", value: latestMessage.slice(0, 1024) });
   }
+  ui.applySystemStyle(embed, "rituals");
 
   const buttonStyles = [ButtonStyle.Primary, ButtonStyle.Secondary, ButtonStyle.Success, ButtonStyle.Primary, ButtonStyle.Secondary];
   const primaryRows = [];
@@ -74,7 +75,7 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
 
   const otherMenu = new StringSelectMenuBuilder()
     .setCustomId(SELECT_ID)
-    .setPlaceholder(other.length ? "Choose another ritual…" : "No other rituals available yet")
+    .setPlaceholder(other.length ? "Choose another ritual..." : "No other rituals available yet")
     .setDisabled(other.length === 0)
     .addOptions(
       (other.length
@@ -94,8 +95,8 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
 
   const menuRow = new ActionRowBuilder().addComponents(otherMenu);
   const utilityRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(REFRESH_ID).setLabel("Refresh").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(CLOSE_ID).setLabel("Close").setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId(REFRESH_ID).setLabel(ui.nav.refresh.label).setEmoji(ui.nav.refresh.emoji).setStyle(ui.nav.refresh.style),
+    new ButtonBuilder().setCustomId(CLOSE_ID).setLabel(ui.nav.close.label).setEmoji(ui.nav.close.emoji).setStyle(ui.nav.close.style)
   );
 
   return { embeds: [embed], components: [...primaryRows, menuRow, utilityRow] };

@@ -118,6 +118,19 @@ Money movement should go through `utils/economy.js` where possible:
 
 ## Feature Map
 
+## Visual Identity
+
+- Shared visual constants live in `utils/ui.js`.
+- Keep common behavior consistent across the bot:
+  - Back, Home, Refresh, and Close labels/icons/styles should come from `ui.nav`.
+  - Success, warning, and danger embed colors should come from `ui.colors`.
+  - System hub colors/footers should come from `ui.systems` or `ui.applySystemStyle`.
+- Keep major systems visually distinct:
+  - `/job` uses the work-board identity from `ui.systems.job`.
+  - `/games` uses the brighter games identity from `ui.systems.games`.
+  - `/rituals` uses the ritual identity from `ui.systems.rituals`.
+- Do not make all hubs identical. Share the mechanics and polish, but preserve each system's mood and wording.
+
 ### Economy, Bank, Shop, Inventory
 
 - Core utility: `utils/economy.js`

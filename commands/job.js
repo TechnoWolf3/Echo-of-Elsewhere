@@ -15,6 +15,7 @@ const { ensureUser } = require("../utils/economy");
 const { creditUserWithEffects } = require("../utils/effectSystem");
 const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); // jail blocks ALL jobs while active
 const { unlockAchievement } = require("../utils/achievementEngine");
+const ui = require("../utils/ui");
 
 // ✅ UPDATED: add getCrimeHeatInfo for bar + timer UI
 const {
@@ -288,7 +289,7 @@ async function announceAchievement(channel, userId, info) {
   const embed = new EmbedBuilder()
     .setTitle("🏆 Achievement Unlocked!")
     .setDescription(`<@${userId}> unlocked **${info.name}**\n${info.description || ""}`.trim())
-    .setColor(0xffd54a)
+    .setColor(ui.colors.warning)
     .setFooter({ text: `Achievement ID: ${info.id}` });
 
   await channel.send({ embeds: [embed] }).catch(() => {});
@@ -324,7 +325,7 @@ function buildHubEmbed(user, progress, cooldownUnix) {
   const mult = levelMultiplier(progress.level);
   const bonusPct = Math.round((mult - 1) * 100);
 
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🧰 Job Board")
     .setDescription(
       [
@@ -352,8 +353,7 @@ function buildHubEmbed(user, progress, cooldownUnix) {
         name: "Rules",
         value: `Cooldown between payouts: **${JOB_COOLDOWN_SECONDS}s**\nAuto-clears after **3m** inactivity (or **Stop Work**)`,
       }
-    )
-    .setFooter({ text: "Leveling up increases payout bonus." });
+    ), "job", "Leveling up increases payout bonus.");
 }
 
 function buildHubComponents(disabled = false) {
@@ -372,14 +372,19 @@ function buildHubComponents(disabled = false) {
   );
 
   const navRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    new ButtonBuilder()
+      .setCustomId("job_stop")
+      .setLabel(ui.nav.close.label)
+      .setEmoji(ui.nav.close.emoji)
+      .setStyle(ui.nav.close.style)
+      .setDisabled(disabled)
   );
 
   return [catRow, navRow];
 }
 
 function buildEnterprisesEmbed({ cooldownUnix } = {}) {
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🏭 Enterprises")
     .setDescription(
       [
@@ -391,8 +396,7 @@ function buildEnterprisesEmbed({ cooldownUnix } = {}) {
         "⛏️ **Mining** — Coming later.",
         "🏭 **Manufacturing** — Coming later.",
       ].join("\n")
-    )
-    .setColor(0x2b2d31);
+    ), "job");
 }
 
 function buildEnterprisesComponents(disabled = false) {
@@ -429,7 +433,7 @@ function buildEnterprisesComponents(disabled = false) {
 
 function buildFarmMarketEmbed(items) {
   if (!items || items.length === 0) {
-    return new EmbedBuilder()
+    return ui.applySystemStyle(new EmbedBuilder()
       .setTitle("💰 Farm Market")
       .setDescription(
         [
@@ -437,18 +441,16 @@ function buildFarmMarketEmbed(items) {
           "",
           "Harvest produce from your fields, then come back here.",
         ].join("\n")
-      )
-      .setColor(0x0875AF);
+      ), "job");
   }
 
   const lines = items.map((item) =>
     `**${item.name}** — ${item.qty} in stock\n$${item.unitPrice.toLocaleString()} each • Total: $${item.totalValue.toLocaleString()}`
   );
 
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("💰 Farm Market")
-    .setDescription(lines.join("\n\n"))
-    .setColor(0x0875AF);
+    .setDescription(lines.join("\n\n")), "job");
 }
 
 function buildFarmMarketComponents(items) {
@@ -484,7 +486,7 @@ function buildFarmMarketComponents(items) {
 }
 
 function buildMachineShedHomeEmbed() {
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🚜 Machine Shed")
     .setDescription(
       [
@@ -494,8 +496,7 @@ function buildMachineShedHomeEmbed() {
         "📦 **Sell** — Sell owned equipment",
         "⏱️ **Rent** — Short-term equipment hire",
       ].join("\n")
-    )
-    .setColor(0x0875AF);
+    ), "job");
 }
 
 function buildMachineShedEmbed(state) {
@@ -554,11 +555,10 @@ function buildMachineShedEmbed(state) {
     fields.push({ name: "📦 Other", value: grouped.other.join("\n\n").slice(0, 1024) });
   }
 
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🚜 Machine Shed")
     .setDescription("Manage your farm equipment and expand your operation.")
-    .addFields(fields)
-    .setColor(0x0875AF);
+    .addFields(fields), "job");
 }
 
 function buildMachineShedHomeComponents() {
@@ -590,10 +590,9 @@ function buildMachineShedHomeComponents() {
 }
 
 function buildMachineBuyEmbed() {
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🛒 Buy Machinery")
-    .setDescription("Select a category to browse machines.")
-    .setColor(0x0875AF);
+    .setDescription("Select a category to browse machines."), "job");
 }
 
 function buildMachineBuyCategoryComponents() {
@@ -608,7 +607,7 @@ function buildMachineBuyCategoryComponents() {
       new ButtonBuilder().setCustomId("buy_cat_harvest").setLabel("🌾 Harvesting").setStyle(ButtonStyle.Primary)
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("machine_home").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("machine_home").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
     ),
   ];
 }
@@ -647,14 +646,13 @@ function buildMachineCategoryEmbed(category, state) {
     ].join("\n");
   });
 
-  return new EmbedBuilder()
+  return ui.applySystemStyle(new EmbedBuilder()
     .setTitle(`🛒 ${categoryNames[category] || "Machines"}`)
     .setDescription(
       lines.length
         ? lines.join("\n\n")
         : "No machines found in this category."
-    )
-    .setColor(0x0875AF);
+    ), "job");
 }
 
 function buildMachineCategoryComponents(category) {
@@ -683,8 +681,9 @@ function buildMachineCategoryComponents(category) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("machine_buy")
-        .setLabel("⬅ Back")
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     ),
   ];
 }
@@ -699,7 +698,7 @@ function buildMachineActionEmbed(mode = "buy") {
   return new EmbedBuilder()
     .setTitle(`Machine Shed - ${machineActionLabel(mode)} Machinery`)
     .setDescription("Select a category to browse machines.")
-    .setColor(0x0875AF);
+    .setColor(ui.systems.job.color);
 }
 
 function buildMachineActionCategoryComponents(mode = "buy") {
@@ -714,7 +713,7 @@ function buildMachineActionCategoryComponents(mode = "buy") {
       new ButtonBuilder().setCustomId(`machine_cat:${mode}:harvest`).setLabel("Harvesting").setStyle(ButtonStyle.Primary)
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("machine_home").setLabel("Back").setStyle(ButtonStyle.Secondary)
+      new ButtonBuilder().setCustomId("machine_home").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
     ),
   ];
 }
@@ -757,7 +756,7 @@ function buildMachineActionCategoryEmbed(category, state, mode = "buy") {
   return new EmbedBuilder()
     .setTitle(`Machine Shed - ${machineActionLabel(mode)} ${categoryNames[category] || "Machines"}`)
     .setDescription(lines.length ? lines.join("\n\n") : "No machines found in this category.")
-    .setColor(0x0875AF);
+    .setColor(ui.systems.job.color);
 }
 
 function buildMachineActionSelectComponents(category, state, mode = "buy") {
@@ -807,8 +806,9 @@ function buildMachineActionSelectComponents(category, state, mode = "buy") {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`machine_${mode}`)
-        .setLabel("Back")
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     )
   );
 
@@ -827,7 +827,7 @@ function buildFarmingPlaceholderEmbed() {
       "• Market\n\n" +
       "Coming very soon..."
     )
-    .setColor(0x0875AF);
+    .setColor(ui.systems.job.color);
 }
 
 function buildNineToFiveEmbed(user, progress, cooldownUnix) {
@@ -890,9 +890,9 @@ function buildNineToFiveComponents({ disabled = false, legendary = false } = {})
   const jobRow = new ActionRowBuilder().addComponents(jobMenu);
 
   const navRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_home").setLabel(ui.nav.home.label).setEmoji(ui.nav.home.emoji).setStyle(ui.nav.home.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel(ui.nav.close.label).setEmoji(ui.nav.close.emoji).setStyle(ui.nav.close.style).setDisabled(disabled)
   );
 
   return [catRow, jobRow, navRow];
@@ -958,9 +958,9 @@ function buildNightWalkerComponents(disabled = false) {
   const jobRow = new ActionRowBuilder().addComponents(jobMenu);
 
   const navRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_home").setLabel(ui.nav.home.label).setEmoji(ui.nav.home.emoji).setStyle(ui.nav.home.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel(ui.nav.close.label).setEmoji(ui.nav.close.emoji).setStyle(ui.nav.close.style).setDisabled(disabled)
   );
 
   return [catRow, jobRow, navRow];
@@ -1015,7 +1015,7 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
       ].join("\n")
     )
     .addFields({ name: "Jobs", value: lines || "No jobs configured." })
-    .setColor(0x2b2d31)
+    .setColor(ui.systems.job.color)
     .setFooter({ text: grindIndex.category?.footer || "Fatigue is shared across all Grind jobs." });
 }
 
@@ -1055,9 +1055,9 @@ function buildGrindComponents(disabled = false) {
   const jobRow = new ActionRowBuilder().addComponents(jobMenu);
 
   const navRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_home").setLabel(ui.nav.home.label).setEmoji(ui.nav.home.emoji).setStyle(ui.nav.home.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel(ui.nav.close.label).setEmoji(ui.nav.close.emoji).setStyle(ui.nav.close.style).setDisabled(disabled)
   );
 
   return [catRow, jobRow, navRow];
@@ -1219,7 +1219,7 @@ function buildFieldEmbed(farm, fieldIndex) {
     return new EmbedBuilder()
       .setTitle("🌾 Field")
       .setDescription("That field does not exist.")
-      .setColor(0xaa0000);
+      .setColor(ui.colors.danger);
   }
 
   const allCrops = farming.getAvailableCrops(config.MAX_FIELD_LEVEL || 10);
@@ -1263,7 +1263,7 @@ function buildFieldEmbed(farm, fieldIndex) {
         readyLine,
       ].filter(Boolean).join("\n")
     )
-    .setColor(0x0875AF)
+    .setColor(ui.systems.job.color)
     .setFooter({ text: "Fields can only run one task at a time." });
 }
 
@@ -1276,8 +1276,9 @@ function buildFieldComponents(farm, fieldIndex) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId("farm_back")
-          .setLabel("⬅ Back")
-          .setStyle(ButtonStyle.Secondary)
+          .setLabel(ui.nav.back.label)
+          .setEmoji(ui.nav.back.emoji)
+          .setStyle(ui.nav.back.style)
       )
     );
     return rows;
@@ -1300,8 +1301,9 @@ function buildFieldComponents(farm, fieldIndex) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId("farm_back")
-          .setLabel("⬅ Back")
-          .setStyle(ButtonStyle.Secondary)
+          .setLabel(ui.nav.back.label)
+          .setEmoji(ui.nav.back.emoji)
+          .setStyle(ui.nav.back.style)
       )
     );
 
@@ -1379,8 +1381,9 @@ function buildFieldComponents(farm, fieldIndex) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("farm_back")
-        .setLabel("⬅ Back")
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     )
   );
 
@@ -1440,7 +1443,7 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
         cdLines,
       ].join("\n")
     )
-    .setColor(0x2b2d31)
+    .setColor(ui.systems.job.color)
     .setFooter({ text: "Crime cooldowns are separate from the /job payout cooldown." });
 }
 
@@ -1475,9 +1478,9 @@ function buildCrimeComponents(disabled = false) {
   );
 
   const navRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("job_back:hub").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_home").setLabel("🏠 Home").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-    new ButtonBuilder().setCustomId("job_stop").setLabel("🗑 Close").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    new ButtonBuilder().setCustomId("job_back:hub").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_home").setLabel(ui.nav.home.label).setEmoji(ui.nav.home.emoji).setStyle(ui.nav.home.style).setDisabled(disabled),
+    new ButtonBuilder().setCustomId("job_stop").setLabel(ui.nav.close.label).setEmoji(ui.nav.close.emoji).setStyle(ui.nav.close.style).setDisabled(disabled)
   );
 
   return [catRow, jobRow, navRow];
@@ -2057,7 +2060,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
               new EmbedBuilder()
                 .setTitle("🌾 Farming")
                 .setDescription("❌ Farming failed to load. Check the bot logs for details.")
-                .setColor(0xaa0000)
+                .setColor(ui.colors.danger)
             ],
             components: buildEnterprisesComponents(false),
           }).catch(() => {});
@@ -2086,9 +2089,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "farm_machines") {
         if (session.machinePage === "home") {
-          const machineState = await machineEngine.ensureMachineState(guildId, userId);
           return msg.edit({
-            embeds: [buildMachineShedEmbed(machineState)],
+            embeds: [buildMachineShedHomeEmbed()],
             components: buildMachineShedHomeComponents(),
           });
         }
@@ -2714,7 +2716,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
                 .filter(Boolean)
                 .join("\n")
             )
-            .setColor(0x22aa55);
+            .setColor(ui.colors.success);
 
           session.view = "95";
           session.trucker = null;
@@ -3105,7 +3107,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
                     "Back to Work a 9–5.",
                   ].join("\n")
                 )
-                .setColor(0xaa0000);
+                .setColor(ui.colors.danger);
 
               session.view = "95";
               await msg
@@ -3142,7 +3144,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
                   .filter(Boolean)
                   .join("\n")
               )
-              .setColor(0x22aa55);
+              .setColor(ui.colors.success);
 
             session.view = "95";
             await msg
@@ -3178,7 +3180,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const embed = new EmbedBuilder()
               .setTitle(isLegendary ? "🌟 Legendary — Failed" : "🧠 Skill Check — Failed")
               .setDescription("❌ Too slow. No payout.")
-              .setColor(0xaa0000);
+              .setColor(ui.colors.danger);
 
             session.view = "95";
             await msg
@@ -3218,7 +3220,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
                 .filter(Boolean)
                 .join("\n")
             )
-            .setColor(0x22aa55);
+            .setColor(ui.colors.success);
 
           session.view = "95";
           await msg
@@ -3259,7 +3261,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
                 .filter(Boolean)
                 .join("\n")
             )
-            .setColor(0x22aa55);
+            .setColor(ui.colors.success);
 
           session.view = "95";
           await msg
@@ -3359,7 +3361,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const embed = new EmbedBuilder()
               .setTitle(`${cfg.title || jobKey} — Failed`)
               .setDescription("❌ Too many wrong answers. No payout.")
-              .setColor(0xaa0000);
+              .setColor(ui.colors.danger);
 
             await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
             return;
@@ -3372,7 +3374,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const embed = new EmbedBuilder()
               .setTitle(`${cfg.title || jobKey} — Failed`)
               .setDescription("❌ You messed up too many times. No payout.")
-              .setColor(0xaa0000);
+              .setColor(ui.colors.danger);
 
             await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
             scheduleReturnToCategory(5000);
@@ -3386,7 +3388,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const embed = new EmbedBuilder()
               .setTitle(`${cfg.title || jobKey} — Failed`)
               .setDescription("❌ Heat got too high. No payout.")
-              .setColor(0xaa0000);
+              .setColor(ui.colors.danger);
 
             await msg.edit({ embeds: [embed], components: buildNightWalkerComponents(false) }).catch(() => {});
             scheduleReturnToCategory(5000);
@@ -3425,7 +3427,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
                   .filter(Boolean)
                   .join("\n")
               )
-              .setColor(0x22aa55);
+              .setColor(ui.colors.success);
 
             session.view = "nw";
             session.nw = null;
