@@ -142,10 +142,16 @@ Money movement should go through `utils/economy.js` where possible:
 ### Jobs
 
 - Main command: `commands/job.js`
+- Crime UI/interactions: `features/crime/*`
+- Grind UI/interactions: `features/grind/*`
+- 9-to-5 UI/interactions: `features/nineToFive/*`
+- Night Walker UI/interactions: `features/nightWalker/*`
 - 9-to-5 configs: `data/work/categories/nineToFive/*`
 - Crime minigames: `data/work/categories/crime/*`
 - Grind minigames: `data/work/categories/grind/*`
 - Nightwalker minigames: `data/work/categories/nightwalker/*`
+- Farming UI: `features/farming/ui.js`
+- Farming interactions: `features/farming/handlers.js`
 - Farming backend: `utils/farming/*`, `data/farming/*`
 - Jail guard: `utils/jail.js`
 - Crime heat: `utils/crimeHeat.js`
@@ -157,6 +163,9 @@ Farming specifics:
 - Machine state is stored separately as JSON in `farm_machines.data`.
 - Harvested crops are inserted as produce items in `store_items` and quantities in `user_inventory`.
 - Crop selling is handled by `utils/farming/market.js`.
+- Farming embeds, buttons, field pages, market pages, and machine shed pages are built in `features/farming/ui.js`.
+- Farming button/select behaviour is handled in `features/farming/handlers.js`.
+- `/job` should mainly route to farming helpers and redraw the current farming view.
 - The farming home screen must stay under Discord's 5 component row limit. Field buttons are grouped into rows of up to 5.
 - Field tasks should be validated before machinery is reserved. If machinery cannot be reserved after a valid task is started, clear the field task so equipment/fields do not get stuck.
 - Machine rentals last 24 hours and are stored as leases in `farm_machines.data.rented`.
