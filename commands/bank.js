@@ -10,11 +10,11 @@ const {
   MessageFlags,
 } = require("discord.js");
 const economy = require("../utils/economy");
+const bankLoans = require("../utils/bankLoans");
 const { guardNotJailed } = require("../utils/jail");
 
 const BRAND_NAME = "The Echo Reserve";
 const BRAND_COLOR = 0x0875AF;
-// Replace this with the direct URL of your uploaded bank logo.
 const BANK_LOGO = "https://i.ibb.co/rR1VMCSW/The-Echo-Reserve-Logo.png";
 const BRAND_MOTTO = "Stability. Security. Silence.";
 
@@ -22,7 +22,12 @@ function money(n) {
   return `$${Number(n || 0).toLocaleString("en-AU")}`;
 }
 
-function buildHomeEmbed(user, snapshot) {
+function formatTs(dateLike, style = "R") {
+  const ts = Math.floor(new Date(dateLike).getTime() / 1000);
+  return `<t:${ts}:${style}>`;
+}
+
+function buildHomeEmbed(user, snapshot, loan) {
   const embed = new EmbedBuilder()
     .setColor(BRAND_COLOR)
     .setTitle(`🏦 ${BRAND_NAME}`)
@@ -36,6 +41,14 @@ function buildHomeEmbed(user, snapshot) {
     )
     .setFooter({ text: `${user.username} • ${BRAND_NAME} • ${BRAND_MOTTO}` })
     .setTimestamp();
+
+  if (loan) {
+    embed.addFields({
+      name: "Loan Status",
+      value: `**${bankLoans.formatLoanStatus(loan.status)}**\nRemaining: **${money(loan.remaining_due)}**\nDue: ${formatTs(loan.due_at)}${loan.status !== bankLoans.STATUS.ACTIVE ? `\nDefault: ${formatTs(loan.default_at)}` : ""}`,
+      inline: false,
+    });
+  }
 
   if (BANK_LOGO && BANK_LOGO !== "https://i.ibb.co/rR1VMCSW/The-Echo-Reserve-Logo.png") {
     embed.setThumbnail(BANK_LOGO);
@@ -51,9 +64,39 @@ function buildHomeComponents() {
       new ButtonBuilder().setCustomId("bank:withdraw").setLabel("Withdraw").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("bank:transfer").setLabel("Transfer").setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId("bank:history").setLabel("History").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("bank:loans").setLabel("Loans").setStyle(ButtonStyle.Secondary)
+    ),
+    new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("bank:refresh").setLabel("Refresh").setStyle(ButtonStyle.Secondary)
     ),
   ];
+}
+
+function buildLoansComponents(activeLoan) {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("bank:loan:offers").setLabel("View Offers").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("bank:loan:view").setLabel("My Loan").setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId("bank:loan:repay").setLabel("Repay").setStyle(ButtonStyle.Success).setDisabled(!activeLoan),
+      new ButtonBuilder().setCustomId("bank:home").setLabel("Back").setStyle(ButtonStyle.Secondary)
+    ),
+  ];
+}
+
+function buildRepayModal() {
+  return new ModalBuilder()
+    .setCustomId("bank:modal:loan_repay")
+    .setTitle("Repay Loan")
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("amount")
+          .setLabel("Amount")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("Enter an amount, or type 'all'")
+          .setRequired(true)
+      )
+    );
 }
 
 function parseAmount(raw, max) {
@@ -71,16 +114,72 @@ function txLine(tx) {
   if (tx.type === "bank_deposit") return `📥 Deposited **${money(meta.amount)}** • <t:${ts}:R>`;
   if (tx.type === "bank_withdraw") return `📤 Withdrew **${money(meta.amount)}** • <t:${ts}:R>`;
   if (tx.type === "bank_transfer_out") return `🔁 Sent **${money(Math.abs(meta.amount || tx.amount || 0))}** to account \`${meta.toAccountNumber || "?"}\` • <t:${ts}:R>`;
-  if (tx.type === "bank_transfer_in") return `💸 Received **${money(meta.amount || tx.amount || 0)}** from account \`${meta.fromAccountNumber || "?"}\` • <t:${ts}:R>`;
+  if (tx.type === "bank_transfer_in") {
+    const recovered = Number(meta.recoveredAmount || 0);
+    const extra = recovered > 0 ? ` (${money(recovered)} seized for debt)` : "";
+    return `💸 Received **${money(meta.creditedAmount || meta.amount || tx.amount || 0)}** from account \`${meta.fromAccountNumber || "?"}\`${extra} • <t:${ts}:R>`;
+  }
+  if (tx.type === "loan_disbursed") return `🏦 Loan disbursed **${money(tx.amount)}** • <t:${ts}:R>`;
+  if (tx.type === "loan_recovery_garnish") return `⚖️ Reserve seized **${money(meta.amount)}** from incoming funds • <t:${ts}:R>`;
+  if (tx.type === "loan_recovery_bank_sweep") return `🏛️ Reserve swept **${money(Math.abs(tx.amount || 0))}** from bank • <t:${ts}:R>`;
+  if (tx.type === "loan_recovery_wallet_sweep") return `👛 Reserve swept **${money(Math.abs(tx.amount || 0))}** from wallet • <t:${ts}:R>`;
+  if (tx.type === "loan_manual_payment_bank") return `✅ Loan payment **${money(Math.abs(tx.amount || 0))}** from bank • <t:${ts}:R>`;
+  if (tx.type === "loan_manual_payment_wallet") return `✅ Loan payment **${money(Math.abs(tx.amount || 0))}** from wallet • <t:${ts}:R>`;
   const amount = Number(tx.amount || 0);
   const icon = amount >= 0 ? "➕" : "➖";
   return `${icon} **${tx.type}** • ${money(amount)} • <t:${ts}:R>`;
 }
 
+async function buildLoansHome(user, guildId) {
+  await bankLoans.sweepRecoverableBalances(guildId, user.id).catch(() => {});
+  const snapshot = await economy.getEconomySnapshot(guildId, user.id);
+  const loan = await bankLoans.getActiveLoan(guildId, user.id);
+  const history = await bankLoans.getLoanHistory(guildId, user.id, 3);
+
+  const embed = new EmbedBuilder()
+    .setColor(BRAND_COLOR)
+    .setTitle(`💳 ${BRAND_NAME} Loans`)
+    .setDescription("Reserve lending is simple, expensive, and extremely serious once you miss your date.")
+    .addFields(
+      { name: "Wallet", value: money(snapshot.wallet), inline: true },
+      { name: "Bank", value: money(snapshot.bank), inline: true },
+      { name: "Total Wealth", value: money(snapshot.total), inline: true },
+    )
+    .setFooter({ text: `${user.username} • ${BRAND_MOTTO}` })
+    .setTimestamp();
+
+  if (loan) {
+    const garnish = loan.status === bankLoans.STATUS.OVERDUE ? "50%" : loan.status === bankLoans.STATUS.DEFAULTED ? "90%" : "0%";
+    embed.addFields({
+      name: `Current Obligation • ${bankLoans.formatLoanStatus(loan.status)}`,
+      value: `Principal: **${money(loan.principal)}**\nRemaining: **${money(loan.remaining_due)}**\nDue: ${formatTs(loan.due_at)}\nDefault: ${formatTs(loan.default_at)}\nRecovery Rate: **${garnish}**`,
+      inline: false,
+    });
+  } else {
+    embed.addFields({ name: "Current Obligation", value: "No active Reserve obligation.", inline: false });
+  }
+
+  if (history.length) {
+    embed.addFields({
+      name: "Recent Loan History",
+      value: history.map((x) => `• **${x.offer_name}** — ${bankLoans.formatLoanStatus(x.status)} — ${money(x.remaining_due)} remaining`).join("\n"),
+      inline: false,
+    });
+  }
+
+  if (BANK_LOGO && BANK_LOGO !== "https://i.ibb.co/rR1VMCSW/The-Echo-Reserve-Logo.png") {
+    embed.setThumbnail(BANK_LOGO);
+  }
+
+  return { embeds: [embed], components: buildLoansComponents(loan) };
+}
+
 async function sendHome(interaction, user) {
+  await bankLoans.sweepRecoverableBalances(interaction.guildId, user.id).catch(() => {});
   const snapshot = await economy.getEconomySnapshot(interaction.guildId, user.id);
+  const loan = await bankLoans.getActiveLoan(interaction.guildId, user.id);
   const payload = {
-    embeds: [buildHomeEmbed(user, snapshot)],
+    embeds: [buildHomeEmbed(user, snapshot, loan)],
     components: buildHomeComponents(),
     flags: MessageFlags.Ephemeral,
   };
@@ -152,7 +251,7 @@ module.exports = {
 
     try {
       if (interaction.isButton()) {
-        if (cid === "bank:refresh") {
+        if (cid === "bank:refresh" || cid === "bank:home") {
           await interaction.deferUpdate().catch(() => {});
           await sendHome(interaction, interaction.user);
           return true;
@@ -173,6 +272,88 @@ module.exports = {
           }
 
           await interaction.editReply({ embeds: [embed], components: buildHomeComponents() });
+          return true;
+        }
+
+        if (cid === "bank:loans") {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+          const payload = await buildLoansHome(interaction.user, interaction.guildId);
+          await interaction.editReply(payload);
+          return true;
+        }
+
+        if (cid === "bank:loan:view") {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+          const payload = await buildLoansHome(interaction.user, interaction.guildId);
+          await interaction.editReply(payload);
+          return true;
+        }
+
+        if (cid === "bank:loan:offers") {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+          const snapshot = await economy.getEconomySnapshot(interaction.guildId, interaction.user.id);
+          const offers = await bankLoans.getLoanOffersForUser(interaction.guildId, interaction.user.id, snapshot);
+          const rows = [];
+          let current = new ActionRowBuilder();
+          let used = 0;
+          for (const offer of offers) {
+            if (used === 5) {
+              rows.push(current);
+              current = new ActionRowBuilder();
+              used = 0;
+            }
+            current.addComponents(
+              new ButtonBuilder()
+                .setCustomId(`bank:loan:take:${offer.id}`)
+                .setLabel(offer.name.slice(0, 80))
+                .setStyle(offer.available ? ButtonStyle.Success : ButtonStyle.Secondary)
+                .setDisabled(!offer.available)
+            );
+            used += 1;
+          }
+          if (used) rows.push(current);
+          rows.push(new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId("bank:loan:view").setLabel("Back").setStyle(ButtonStyle.Secondary)
+          ));
+
+          const embed = new EmbedBuilder()
+            .setColor(BRAND_COLOR)
+            .setTitle(`💼 ${BRAND_NAME} Offers`)
+            .setDescription(offers.map((offer) => {
+              const req = Number(offer.minTotalWealth || 0) > 0 ? `Requires total wealth of **${money(offer.minTotalWealth)}**.` : "Available to all account holders.";
+              const state = offer.available ? "✅ Available" : `⛔ ${offer.unavailableReason}`;
+              return `**${offer.name}**\n${offer.description}\nBorrow **${money(offer.principal)}** • Repay **${money(offer.totalDue)}** • Due in **${offer.days}d** (+${offer.graceDays}d grace)\n${req}\n${state}`;
+            }).join("\n\n"))
+            .setTimestamp();
+
+          await interaction.editReply({ embeds: [embed], components: rows });
+          return true;
+        }
+
+        if (cid.startsWith("bank:loan:take:")) {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+          const offerId = cid.split(":").pop();
+          const result = await bankLoans.acceptLoanOffer(interaction.guildId, interaction.user.id, offerId);
+          if (!result.ok) {
+            const msg = {
+              offer_not_found: "❌ That loan offer no longer exists.",
+              active_loan_exists: "❌ You already have an active Reserve obligation.",
+              offer_locked: "❌ Your account does not meet the requirements for that offer.",
+            }[result.reason] || "❌ The Reserve declined that application.";
+            await interaction.editReply({ content: msg });
+            return true;
+          }
+          await interaction.editReply({
+            content: `✅ Loan approved. **${money(result.loan.principal)}** has been deposited into your bank account. You owe **${money(result.loan.total_due)}** by ${formatTs(result.loan.due_at, "F")}.`,
+            embeds: [buildHomeEmbed(interaction.user, result.snapshot, result.loan)],
+            components: buildHomeComponents(),
+          });
+          return true;
+        }
+
+        if (cid === "bank:loan:repay") {
+          if (await guardNotJailed(interaction)) return true;
+          await interaction.showModal(buildRepayModal());
           return true;
         }
 
@@ -213,7 +394,7 @@ module.exports = {
           }
           await interaction.editReply({
             content: `✅ Deposited **${money(amount)}** into your ${BRAND_NAME} account.`,
-            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank })],
+            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank }, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
             components: buildHomeComponents(),
           });
           return true;
@@ -229,12 +410,15 @@ module.exports = {
           }
           const moved = await economy.withdrawFromBank(interaction.guildId, interaction.user.id, amount, { via: "bank_hub" });
           if (!moved.ok) {
-            await interaction.editReply("❌ Withdrawal failed.");
+            const msg = moved.reason === "loan_defaulted"
+              ? "❌ Your bank is under Reserve recovery. Withdrawals are blocked while defaulted."
+              : "❌ Withdrawal failed.";
+            await interaction.editReply(msg);
             return true;
           }
           await interaction.editReply({
             content: `✅ Withdrew **${money(amount)}** into your wallet.`,
-            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank })],
+            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank }, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
             components: buildHomeComponents(),
           });
           return true;
@@ -260,6 +444,7 @@ module.exports = {
               same_account: "❌ You can’t transfer to your own account.",
               insufficient_funds: "❌ You don’t have enough in your bank balance for that transfer.",
               source_missing: "❌ Your bank profile could not be loaded.",
+              loan_defaulted: "❌ Transfers are blocked while your account is in default recovery.",
             };
             await interaction.editReply(reasonMap[res.reason] || "❌ Transfer failed.");
             return true;
@@ -268,7 +453,36 @@ module.exports = {
           const snap = await economy.getEconomySnapshot(interaction.guildId, interaction.user.id);
           await interaction.editReply({
             content: `✅ Sent **${money(amount)}** to account \`${accountNumber}\`.`,
-            embeds: [buildHomeEmbed(interaction.user, snap)],
+            embeds: [buildHomeEmbed(interaction.user, snap, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
+            components: buildHomeComponents(),
+          });
+          return true;
+        }
+
+        if (cid === "bank:modal:loan_repay") {
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+          const snap = await economy.getEconomySnapshot(interaction.guildId, interaction.user.id);
+          const loan = await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id);
+          if (!loan) {
+            await interaction.editReply("❌ You do not have an active loan.");
+            return true;
+          }
+          const amount = parseAmount(interaction.fields.getTextInputValue("amount"), snap.wallet + snap.bank);
+          if (!amount) {
+            await interaction.editReply("❌ Enter a valid repayment amount.");
+            return true;
+          }
+          const result = await bankLoans.repayLoan(interaction.guildId, interaction.user.id, amount);
+          if (!result.ok) {
+            const msg = result.reason === "insufficient_funds"
+              ? "❌ You do not have enough available funds to make that payment."
+              : "❌ You do not have an active loan.";
+            await interaction.editReply(msg);
+            return true;
+          }
+          await interaction.editReply({
+            content: `✅ Paid **${money(result.paid)}** toward your Reserve obligation.${result.loan.status === bankLoans.STATUS.PAID ? " Loan cleared." : ` Remaining due: **${money(result.loan.remaining_due)}**.`}`,
+            embeds: [buildHomeEmbed(interaction.user, result.snapshot, result.loan.status === bankLoans.STATUS.PAID ? null : result.loan)],
             components: buildHomeComponents(),
           });
           return true;

@@ -264,44 +264,115 @@ async function creditUser(guildId, userId, amount, type, meta = {}) {
   if (amount <= 0) throw new Error("Amount must be positive");
   await ensureUser(guildId, userId);
 
-  const res = await pool.query(
-    `UPDATE user_balances
-     SET balance = balance + $3
-     WHERE guild_id=$1 AND user_id=$2
-     RETURNING balance`,
-    [guildId, userId, amount]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const recovery = await bankLoans.applyRecoveryToIncoming({
+      client, guildId, userId, amount, balanceType: "wallet", type, meta,
+    });
 
-  await pool.query(
-    `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [guildId, userId, amount, type, { ...meta, balance_type: "wallet" }]
-  );
+    let creditedAmount = Number(recovery.creditedAmount || 0);
+    let newBalance = null;
+    if (creditedAmount > 0) {
+      const res = await client.query(
+        `UPDATE user_balances
+         SET balance = balance + $3
+         WHERE guild_id=$1 AND user_id=$2
+         RETURNING balance`,
+        [guildId, userId, creditedAmount]
+      );
+      newBalance = Number(res.rows[0].balance);
+      await client.query(
+        `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [guildId, userId, creditedAmount, type, { ...meta, balance_type: "wallet" }]
+      );
+    } else {
+      const bal = await client.query(`SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`, [guildId, userId]);
+      newBalance = Number(bal.rows?.[0]?.balance ?? 0);
+    }
 
-  const newBalance = Number(res.rows[0].balance);
-  trackCredit({ guildId, userId, amount, newBalance }).catch(() => {});
-  return { ok: true, newBalance };
+    if (Number(recovery.recoveredAmount || 0) > 0) {
+      await client.query(
+        `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+         VALUES ($1, $2, 0, 'loan_recovery_garnish', $3)`,
+        [guildId, userId, {
+          amount: Number(recovery.recoveredAmount || 0),
+          status: recovery.status,
+          sourceType: type,
+          creditedAmount,
+          originalAmount: amount,
+          balance_type: "wallet",
+        }]
+      );
+    }
+
+    await client.query("COMMIT");
+    if (creditedAmount > 0) trackCredit({ guildId, userId, amount: creditedAmount, newBalance }).catch(() => {});
+    return { ok: true, newBalance, creditedAmount, recoveredAmount: Number(recovery.recoveredAmount || 0), loanStatus: recovery.status };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function creditBank(guildId, userId, amount, type, meta = {}) {
   if (amount <= 0) throw new Error("Amount must be positive");
   await ensureUser(guildId, userId);
 
-  const res = await pool.query(
-    `UPDATE user_balances
-     SET bank_balance = bank_balance + $3
-     WHERE guild_id=$1 AND user_id=$2
-     RETURNING bank_balance`,
-    [guildId, userId, amount]
-  );
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const recovery = await bankLoans.applyRecoveryToIncoming({
+      client, guildId, userId, amount, balanceType: "bank", type, meta,
+    });
 
-  await pool.query(
-    `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [guildId, userId, amount, type, { ...meta, balance_type: "bank" }]
-  );
+    let creditedAmount = Number(recovery.creditedAmount || 0);
+    let newBalance = null;
+    if (creditedAmount > 0) {
+      const res = await client.query(
+        `UPDATE user_balances
+         SET bank_balance = bank_balance + $3
+         WHERE guild_id=$1 AND user_id=$2
+         RETURNING bank_balance`,
+        [guildId, userId, creditedAmount]
+      );
+      newBalance = Number(res.rows[0].bank_balance);
+      await client.query(
+        `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [guildId, userId, creditedAmount, type, { ...meta, balance_type: "bank" }]
+      );
+    } else {
+      const bal = await client.query(`SELECT bank_balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`, [guildId, userId]);
+      newBalance = Number(bal.rows?.[0]?.bank_balance ?? 0);
+    }
 
-  return { ok: true, newBalance: Number(res.rows[0].bank_balance) };
+    if (Number(recovery.recoveredAmount || 0) > 0) {
+      await client.query(
+        `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+         VALUES ($1, $2, 0, 'loan_recovery_garnish', $3)`,
+        [guildId, userId, {
+          amount: Number(recovery.recoveredAmount || 0),
+          status: recovery.status,
+          sourceType: type,
+          creditedAmount,
+          originalAmount: amount,
+          balance_type: "bank",
+        }]
+      );
+    }
+
+    await client.query("COMMIT");
+    return { ok: true, newBalance, creditedAmount, recoveredAmount: Number(recovery.recoveredAmount || 0), loanStatus: recovery.status };
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 async function tryDebitBank(guildId, userId, amount, type, meta = {}) {
@@ -377,6 +448,11 @@ async function withdrawFromBank(guildId, userId, amount, meta = {}) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const transferCheck = await bankLoans.canTransferOut(guildId, userId);
+    if (!transferCheck.ok) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: transferCheck.reason };
+    }
     const move = await client.query(
       `UPDATE user_balances
        SET bank_balance = bank_balance - $3,
@@ -420,6 +496,11 @@ async function transferBankByAccount(guildId, fromUserId, toAccountNumber, amoun
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const transferCheck = await bankLoans.canTransferOut(guildId, fromUserId);
+    if (!transferCheck.ok) {
+      await client.query("ROLLBACK");
+      return { ok: false, reason: transferCheck.reason };
+    }
 
     const sourceRes = await client.query(
       `SELECT user_id, bank_balance, account_number
@@ -463,13 +544,30 @@ async function transferBankByAccount(guildId, fromUserId, toAccountNumber, amoun
       return { ok: false, reason: "insufficient_funds" };
     }
 
-    const credit = await client.query(
-      `UPDATE user_balances
-       SET bank_balance = bank_balance + $3
-       WHERE guild_id=$1 AND user_id=$2
-       RETURNING bank_balance`,
-      [guildId, target.user_id, amount]
-    );
+    const recovery = await bankLoans.applyRecoveryToIncoming({
+      client,
+      guildId,
+      userId: String(target.user_id),
+      amount,
+      balanceType: "bank",
+      type: "bank_transfer_in",
+      meta: { ...meta, fromUserId: String(fromUserId), fromAccountNumber: String(source.account_number || "") },
+    });
+
+    let recipientBank = null;
+    if (Number(recovery.creditedAmount || 0) > 0) {
+      const credit = await client.query(
+        `UPDATE user_balances
+         SET bank_balance = bank_balance + $3
+         WHERE guild_id=$1 AND user_id=$2
+         RETURNING bank_balance`,
+        [guildId, target.user_id, Number(recovery.creditedAmount || 0)]
+      );
+      recipientBank = Number(credit.rows[0].bank_balance ?? 0);
+    } else {
+      const snap = await client.query(`SELECT bank_balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`, [guildId, target.user_id]);
+      recipientBank = Number(snap.rows?.[0]?.bank_balance ?? 0);
+    }
 
     await client.query(
       `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
@@ -482,18 +580,34 @@ async function transferBankByAccount(guildId, fromUserId, toAccountNumber, amoun
         "bank_transfer_out",
         { ...meta, amount, balance_type: "bank", toAccountNumber: String(toAccountNumber), toUserId: String(target.user_id) },
         target.user_id,
-        amount,
+        Number(recovery.creditedAmount || 0),
         "bank_transfer_in",
-        { ...meta, amount, balance_type: "bank", fromUserId: String(fromUserId), fromAccountNumber: String(source.account_number || "") },
+        { ...meta, amount, creditedAmount: Number(recovery.creditedAmount || 0), recoveredAmount: Number(recovery.recoveredAmount || 0), balance_type: "bank", fromUserId: String(fromUserId), fromAccountNumber: String(source.account_number || "") },
       ]
     );
+
+    if (Number(recovery.recoveredAmount || 0) > 0) {
+      await client.query(
+        `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+         VALUES ($1, $2, 0, 'loan_recovery_garnish', $3)`,
+        [guildId, target.user_id, {
+          amount: Number(recovery.recoveredAmount || 0),
+          status: recovery.status,
+          sourceType: 'bank_transfer_in',
+          creditedAmount: Number(recovery.creditedAmount || 0),
+          originalAmount: amount,
+          balance_type: 'bank',
+        }]
+      );
+    }
 
     await client.query("COMMIT");
     return {
       ok: true,
       toUserId: String(target.user_id),
       senderBank: Number(debit.rows[0].bank_balance ?? 0),
-      recipientBank: Number(credit.rows[0].bank_balance ?? 0),
+      recipientBank,
+      recoveredAmount: Number(recovery.recoveredAmount || 0),
     };
   } catch (e) {
     await client.query("ROLLBACK");
@@ -573,20 +687,43 @@ async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
       return { ok: false, bankBalance: Number(bankNow.rows[0]?.bank_balance ?? 0) };
     }
 
-    const userUpdate = await client.query(
-      `UPDATE user_balances
-       SET balance = balance + $3
-       WHERE guild_id=$1 AND user_id=$2
-       RETURNING balance`,
-      [guildId, userId, amount]
-    );
+    const recovery = await bankLoans.applyRecoveryToIncoming({
+      client, guildId, userId, amount, balanceType: "wallet", type, meta,
+    });
 
-    const newBalance = Number(userUpdate.rows?.[0]?.balance ?? 0);
-    await client.query(
-      `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [guildId, userId, amount, type, { ...meta, balance_type: "wallet" }]
-    );
+    let newBalance = null;
+    if (Number(recovery.creditedAmount || 0) > 0) {
+      const userUpdate = await client.query(
+        `UPDATE user_balances
+         SET balance = balance + $3
+         WHERE guild_id=$1 AND user_id=$2
+         RETURNING balance`,
+        [guildId, userId, Number(recovery.creditedAmount || 0)]
+      );
+      newBalance = Number(userUpdate.rows?.[0]?.balance ?? 0);
+      await client.query(
+        `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [guildId, userId, Number(recovery.creditedAmount || 0), type, { ...meta, balance_type: "wallet" }]
+      );
+    } else {
+      const bal = await client.query(`SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`, [guildId, userId]);
+      newBalance = Number(bal.rows?.[0]?.balance ?? 0);
+    }
+    if (Number(recovery.recoveredAmount || 0) > 0) {
+      await client.query(
+        `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+         VALUES ($1, $2, 0, 'loan_recovery_garnish', $3)`,
+        [guildId, userId, {
+          amount: Number(recovery.recoveredAmount || 0),
+          status: recovery.status,
+          sourceType: type,
+          creditedAmount: Number(recovery.creditedAmount || 0),
+          originalAmount: amount,
+          balance_type: 'wallet',
+        }]
+      );
+    }
     await client.query(
       `INSERT INTO transactions (guild_id, user_id, amount, type, meta)
        VALUES ($1, NULL, $2, $3, $4)`,
@@ -594,10 +731,10 @@ async function bankToUserIfEnough(guildId, userId, amount, type, meta = {}) {
     );
 
     await client.query("COMMIT");
-    trackCredit({ guildId, userId, amount, newBalance }).catch(() => {});
+    if (Number(recovery.creditedAmount || 0) > 0) trackCredit({ guildId, userId, amount: Number(recovery.creditedAmount || 0), newBalance }).catch(() => {});
     safeIncAndCheck({ guildId, userId, key: "economy_bank_payouts", delta: 1 }).catch(() => {});
 
-    return { ok: true, bankBalance: Number(bankUpdate.rows[0].bank_balance) };
+    return { ok: true, bankBalance: Number(bankUpdate.rows[0].bank_balance), creditedAmount: Number(recovery.creditedAmount || 0), recoveredAmount: Number(recovery.recoveredAmount || 0), loanStatus: recovery.status };
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;

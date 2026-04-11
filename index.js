@@ -352,6 +352,37 @@ async function ensureEconomyTables(db) {
     CREATE INDEX IF NOT EXISTS idx_transactions_type_created
     ON transactions (type, created_at DESC);
 
+
+    CREATE TABLE IF NOT EXISTS bank_loans (
+      id BIGSERIAL PRIMARY KEY,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      offer_id TEXT NOT NULL,
+      offer_name TEXT NOT NULL,
+      principal BIGINT NOT NULL,
+      fee BIGINT NOT NULL DEFAULT 0,
+      total_due BIGINT NOT NULL,
+      remaining_due BIGINT NOT NULL,
+      payments_made BIGINT NOT NULL DEFAULT 0,
+      recovered_amount BIGINT NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active',
+      due_at TIMESTAMPTZ NOT NULL,
+      default_at TIMESTAMPTZ NOT NULL,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_payment_at TIMESTAMPTZ NULL,
+      paid_at TIMESTAMPTZ NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_bank_loans_guild_user_issued
+    ON bank_loans (guild_id, user_id, issued_at DESC);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_bank_loans_one_active
+    ON bank_loans (guild_id, user_id)
+    WHERE status IN ('active', 'overdue', 'defaulted');
+
+
     CREATE TABLE IF NOT EXISTS casino_security_state (
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
