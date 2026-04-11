@@ -28,10 +28,23 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
     statuses.set(ritual.id, await getRitualStatus(guildId, userId, ritual));
   }
 
+  const readyCount = [...statuses.values()].filter((status) => status.available).length;
+  const nextReady = [...statuses.values()]
+    .filter((status) => !status.available && status.unix)
+    .sort((a, b) => a.unix - b.unix)[0];
+
   const embed = new EmbedBuilder()
     .setTitle("🕯️ Echo Rituals")
     .setDescription(
-      "Return here for timed offerings, recurring rites, and whatever else Echo decides is worth your time."
+      [
+        "Timed offerings, recurring rites, and whatever else Echo decides is worth your time.",
+        "",
+        readyCount > 0
+          ? `✨ **${readyCount} ritual${readyCount === 1 ? "" : "s"} ready now.**`
+          : nextReady
+            ? `🌘 Nothing is ready yet. Next return <t:${nextReady.unix}:R>.`
+            : "🌘 Nothing is ready yet.",
+      ].join("\n")
     )
     .addFields({
       name: "Primary Rituals",
@@ -51,7 +64,7 @@ async function buildHubPayload(guildId, userId, latestMessage = null) {
   }
 
   if (latestMessage) {
-    embed.addFields({ name: "Latest Result", value: latestMessage.slice(0, 1024) });
+    embed.addFields({ name: "Latest Echo", value: latestMessage.slice(0, 1024) });
   }
   ui.applySystemStyle(embed, "rituals");
 

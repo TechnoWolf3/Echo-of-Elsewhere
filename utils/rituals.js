@@ -139,7 +139,7 @@ function buildStatusLine(ritual, status) {
   if (status?.available) {
     return `✨ **${ritual.name}** — Ready now`;
   }
-  return `✨ **${ritual.name}** — Available <t:${status.unix}:R>`;
+  return `🌘 **${ritual.name}** — Returns <t:${status.unix}:R>`;
 }
 
 module.exports = {

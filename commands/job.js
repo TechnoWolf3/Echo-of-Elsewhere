@@ -477,8 +477,9 @@ function buildFarmMarketComponents(items) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("farm_back")
-        .setLabel("⬅ Back")
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     )
   );
 
@@ -583,8 +584,9 @@ function buildMachineShedHomeComponents() {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("farm_back")
-        .setLabel("⬅ Back")
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     ),
   ];
 }
@@ -1110,12 +1112,77 @@ function buildFarmingComponents(farm) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("job_back:hub")
-        .setLabel("⬅ Back")
-        .setStyle(ButtonStyle.Secondary)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     )
   );
 
   return rows;
+}
+
+function buildFarmingEmbed(farm) {
+  const fields = farm.fields || [];
+  const season = farming.getCurrentSeason();
+  const nextCost = fields.length < config.MAX_FIELDS ? farming.getNextFieldCost(fields.length) : null;
+
+  const counts = fields.reduce(
+    (acc, field) => {
+      const state = field?.state || "empty";
+      if (state === "growing") acc.growing += 1;
+      else if (state === "ready") acc.ready += 1;
+      else if (state === "spoiled") acc.spoiled += 1;
+      else if (!field?.cultivated) acc.cleanup += 1;
+      else acc.empty += 1;
+      if (farming.isFieldTaskActive(field)) acc.busy += 1;
+      return acc;
+    },
+    { growing: 0, ready: 0, spoiled: 0, cleanup: 0, empty: 0, busy: 0 }
+  );
+
+  const fieldLines = fields.length
+    ? fields.map((field, index) => {
+        let status = "Empty";
+        if (field.state === "growing") status = "Growing";
+        if (field.state === "ready") status = "Ready";
+        if (field.state === "spoiled") status = "Spoiled";
+        if (field.state === "empty" && !field.cultivated) status = "Needs cleanup";
+        if (farming.isFieldTaskActive(field)) {
+          status = `${field.task.key} until <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
+        }
+        const crop = field.cropId ? ` • ${field.cropId}` : "";
+        return `**Field ${index + 1}** • Lv ${field.level || 1} • ${status}${crop}`;
+      }).join("\n")
+    : "No fields yet. Buy your first field to start farming.";
+
+  return ui.applySystemStyle(new EmbedBuilder()
+    .setTitle("🌾 Farming")
+    .setDescription(
+      [
+        `Season: **${season}**`,
+        fields.length < config.MAX_FIELDS
+          ? `Next field: **${ui.money(nextCost)}**`
+          : "Field limit reached.",
+      ].join("\n")
+    )
+    .addFields(
+      {
+        name: "Farm Status",
+        value: [
+          `Fields: **${fields.length}/${config.MAX_FIELDS}**`,
+          `Ready: **${counts.ready}**`,
+          `Growing: **${counts.growing}**`,
+          `Busy: **${counts.busy}**`,
+          `Needs cleanup: **${counts.cleanup + counts.spoiled}**`,
+        ].join("\n"),
+        inline: true,
+      },
+      {
+        name: "Fields",
+        value: fieldLines.slice(0, 1024),
+        inline: false,
+      }
+    ), "job", "Open a field to cultivate, plant, harvest, or upgrade.");
 }
 
 function renderFieldVisual(field) {
@@ -1246,6 +1313,14 @@ function buildFieldEmbed(farm, fieldIndex) {
       : "";
 
   const cultivatedLine = field.cultivated ? "✅ Cultivated" : "❌ Needs Cultivation";
+  const machineHint =
+    field.state === "ready"
+      ? "Needs a free harvester."
+      : field.state === "empty" && field.cultivated
+        ? "Needs a tractor and seeder to plant."
+        : field.state === "spoiled" || !field.cultivated
+          ? "Needs a tractor and cultivator."
+          : "Let it grow.";
 
   return new EmbedBuilder()
     .setTitle(`🌾 Field ${fieldIndex + 1}`)
@@ -1259,6 +1334,7 @@ function buildFieldEmbed(farm, fieldIndex) {
         `🌿 **Crop:** ${cropName}`,
         `🪴 **Condition:** ${cultivatedLine}`,
         `🍂 **Season:** ${farming.getCurrentSeason()}`,
+        `🚜 **Machine Need:** ${machineHint}`,
         taskLine,
         readyLine,
       ].filter(Boolean).join("\n")
@@ -1577,7 +1653,7 @@ function buildContractButtons(stepIndex, level, disabled = false) {
 
   rows.push(
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_back:95").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
       new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     )
   );
@@ -1614,7 +1690,7 @@ function buildSkillButtons(targetEmoji, disabled = false, prefix = "job_skill") 
   return [
     row,
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_back:95").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
       new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     ),
   ];
@@ -1752,7 +1828,7 @@ function buildTruckerButtons(run = {}) {
         new ButtonBuilder().setCustomId("job_trucker_refresh").setLabel("🔁 New Manifest").setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("job_back:95").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("job_back:95").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style),
         new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger)
       ),
     ];
@@ -1796,7 +1872,7 @@ function buildNWChoiceComponents({ jobKey, roundIndex, choices, disabled = false
   return [
     row,
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("job_back:nw").setLabel("⬅ Back").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_back:nw").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
       new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     ),
   ];
@@ -2044,13 +2120,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           const components = buildFarmingComponents(farm);
 
           return await msg.edit({
-            embeds: [
-              new EmbedBuilder()
-                .setTitle("🌾 Farming")
-                .setDescription(
-                  `🌾 Fields: ${(farm.fields || []).length}\nSeason: ${farming.getCurrentSeason()}`
-                )
-            ],
+            embeds: [buildFarmingEmbed(farm)],
             components
           });
         } catch (err) {

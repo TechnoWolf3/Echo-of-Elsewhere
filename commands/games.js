@@ -36,9 +36,17 @@ function statusLine(channelId) {
 }
 
 function buildHomeEmbed(channelId, categories) {
+  const totalGames = categories.reduce((sum, c) => sum + (c.games?.length || 0), 0);
   const embed = new EmbedBuilder()
     .setTitle(gamesConfig.title)
-    .setDescription(`${gamesConfig.description}\n\n${statusLine(channelId)}`);
+    .setDescription(
+      [
+        gamesConfig.description,
+        "",
+        statusLine(channelId),
+        `🎲 **${totalGames} games** across **${categories.length} categories**`,
+      ].join("\n")
+    );
   ui.applySystemStyle(embed, "games");
 
   for (const c of categories) {
@@ -55,15 +63,25 @@ function buildHomeEmbed(channelId, categories) {
 function buildCategoryEmbed(channelId, cat) {
   const list = (cat.games?.length || 0)
     ? cat.games
-        .map((g) => `${g.emoji || "🎮"} **${g.name}** — ${g.description || "—"}`)
-        .join("\n")
+        .map((g) => [
+          `${g.emoji || "🎮"} **${g.name}**`,
+          `${g.description || "Ready to play."}`,
+        ].join("\n"))
+        .join("\n\n")
     : "_No games in this category yet._";
 
   return ui.applySystemStyle(new EmbedBuilder()
     .setTitle(`${cat.emoji || "🎮"} ${cat.name}`)
     .setDescription(
-      `${statusLine(channelId)}\n\n${cat.description || ""}\n\n**Available:**\n${list}`
-    ), "games");
+      [
+        statusLine(channelId),
+        "",
+        cat.description || "",
+        "",
+        `**Available Games (${cat.games?.length || 0})**`,
+        list,
+      ].join("\n")
+    ), "games", "Choose a game below to launch it in this channel.");
 }
 
 

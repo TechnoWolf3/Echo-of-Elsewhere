@@ -11,8 +11,8 @@ module.exports = {
   description: "A steadier rite that returns each Sydney week.",
   payout: { min: 12000, max: 20000 },
   nextClaimAt: nextSydneyMondayMidnightUTC,
-  claimText: ({ amount }) => `🕯️ Your **Weekly Ritual** is complete. Echo answers with **$${Number(amount).toLocaleString()}**.`,
-  cooldownText: ({ unix }) => `⏳ Your **Weekly Ritual** has already been completed. Return <t:${unix}:R>.`,
+  claimText: ({ amount }) => `🕯️ **Weekly Ritual complete.** Echo answers with **$${Number(amount).toLocaleString()}**.`,
+  cooldownText: ({ unix }) => `⏳ **Weekly Ritual** has already been completed. Return <t:${unix}:R>.`,
   activityEffects: {
     effectsApply: true,
     canAwardEffects: true,
