@@ -4,6 +4,7 @@
 // Bank   = protected stored funds
 
 const { pool } = require("./db");
+const bankLoans = require('./bankLoans');
 const achievementEngine = require("./achievementEngine");
 const achievementProgress = require("./achievementProgress");
 
