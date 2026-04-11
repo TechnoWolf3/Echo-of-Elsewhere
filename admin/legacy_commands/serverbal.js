@@ -10,7 +10,7 @@ function isBotMaster(member) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("serverbal")
-    .setDescription("Show the server bank balance (admin only).")
+    .setDescription("Show the server bank balance (admin only)."),
     // NOTE: This file is no longer deployed as a slash command.
     // Permissions are enforced by the Admin Panel + this role gate.
 

@@ -266,7 +266,7 @@ function getFieldTask(field) {
   return field?.task || null;
 }
 
-async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durationMs) {
+async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durationMs, extra = {}) {
   const field = farm.fields?.[fieldIndex];
   if (!field) return { ok: false, reasonText: "That field does not exist." };
 
@@ -274,11 +274,41 @@ async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durati
     return { ok: false, reasonText: "This field is already busy with another task." };
   }
 
+  if (taskKey === "cultivate") {
+    if (field.cropId || field.state === "growing" || field.state === "ready") {
+      return { ok: false, reasonText: "That field is not empty." };
+    }
+  }
+
+  if (taskKey === "seed") {
+    const cropId = extra.cropId || null;
+    if (field.state !== "empty" || !field.cultivated) {
+      return { ok: false, reasonText: "That field must be empty and cultivated before seeding." };
+    }
+    if (!cropId) return { ok: false, reasonText: "Choose a crop before seeding." };
+    const crop = crops[cropId];
+    if (!crop) return { ok: false, reasonText: "Unknown crop." };
+    if (crop.level > field.level) {
+      return { ok: false, reasonText: "That field is not a high enough level for this crop." };
+    }
+    if (!isCropValidForSeason(cropId)) {
+      return { ok: false, reasonText: "That crop cannot be planted in the current season." };
+    }
+  }
+
+  if (taskKey === "harvest") {
+    updateFieldRuntime(field);
+    if (field.state !== "ready" || !field.cropId) {
+      return { ok: false, reasonText: "That field is not ready to harvest." };
+    }
+  }
+
   const now = Date.now();
   field.task = {
     key: taskKey,
     startedAt: now,
     endsAt: now + durationMs,
+    ...extra,
   };
 
   await saveFarm(guildId, userId, farm);
@@ -287,6 +317,14 @@ async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durati
     ok: true,
     task: field.task,
   };
+}
+
+async function clearFieldTask(guildId, userId, farm, fieldIndex) {
+  const field = farm.fields?.[fieldIndex];
+  if (!field?.task) return { ok: false };
+  field.task = null;
+  await saveFarm(guildId, userId, farm);
+  return { ok: true };
 }
 
 async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) {
@@ -300,6 +338,11 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
   const taskKey = field.task.key;
   field.task = null;
 
+  const failAndSave = async (reasonText) => {
+    await saveFarm(guildId, userId, farm);
+    return { ok: false, reasonText, clearedTask: taskKey };
+  };
+
   if (taskKey === "cultivate") {
     field.cultivated = true;
     field.state = "empty";
@@ -310,15 +353,18 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
   if (taskKey === "seed") {
     const cropId = extra.cropId;
     const crop = crops[cropId];
-    if (!crop) return { ok: false, reasonText: "Unknown crop." };
+    if (!crop) return failAndSave("Unknown crop.");
     if (crop.level > field.level) {
-      return { ok: false, reasonText: "That field is not a high enough level for this crop." };
+      return failAndSave("That field is not a high enough level for this crop.");
     }
     if (!field.cultivated) {
-      return { ok: false, reasonText: "Cultivate the field first." };
+      return failAndSave("Cultivate the field first.");
+    }
+    if (field.state !== "empty") {
+      return failAndSave("That field is not ready to be planted.");
     }
     if (!isCropValidForSeason(cropId)) {
-      return { ok: false, reasonText: "That crop cannot be planted in the current season." };
+      return failAndSave("That crop cannot be planted in the current season.");
     }
 
     const now = Date.now();
@@ -336,11 +382,11 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     updateFieldRuntime(field);
 
     if (field.state !== "ready" || !field.cropId) {
-      return { ok: false, reasonText: "That field is not ready to harvest." };
+      return failAndSave("That field is not ready to harvest.");
     }
 
     const crop = crops[field.cropId];
-    if (!crop) return { ok: false, reasonText: "Unknown crop." };
+    if (!crop) return failAndSave("Unknown crop.");
 
     const qty = rollYield(crop);
     for (let i = 0; i < qty; i++) {
@@ -416,6 +462,7 @@ module.exports = {
   isFieldTaskActive,
   getFieldTask,
   startFieldTask,
+  clearFieldTask,
   completeFieldTask,
   applyFieldTaskRollovers,
 };

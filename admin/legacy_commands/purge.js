@@ -21,7 +21,7 @@ module.exports = {
         .setRequired(true)
         .setMinValue(1)
         .setMaxValue(200)
-    )
+    ),
     // NOTE: This file is no longer deployed as a slash command.
     // Permissions are enforced by the Admin Panel + this role gate.
 

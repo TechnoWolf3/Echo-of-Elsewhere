@@ -191,9 +191,22 @@ async function ensureAchievementTables(db) {
       guild_id TEXT NOT NULL,
       user_id  TEXT NOT NULL,
       heat     INT  NOT NULL DEFAULT 0,
-      next_claim_at TIMESTAMPTZ NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id)
     );
+
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='crime_heat' AND column_name='next_claim_at'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='crime_heat' AND column_name='expires_at'
+      ) THEN
+        ALTER TABLE crime_heat RENAME COLUMN next_claim_at TO expires_at;
+      END IF;
+    END $$;
 
     CREATE INDEX IF NOT EXISTS idx_crime_heat_expires
     ON crime_heat (expires_at);
@@ -287,40 +300,38 @@ async function ensureEconomyTables(db) {
       IF EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name='cooldowns' AND column_name='expires'
-      ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='next_claim_at'
       ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expires TO next_claim_at;
+        UPDATE cooldowns SET next_claim_at = expires WHERE next_claim_at IS NULL;
       END IF;
 
       IF EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name='cooldowns' AND column_name='expiry'
-      ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='next_claim_at'
       ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expiry TO next_claim_at;
+        UPDATE cooldowns SET next_claim_at = expiry WHERE next_claim_at IS NULL;
       END IF;
 
       IF EXISTS (
         SELECT 1 FROM information_schema.columns
         WHERE table_name='cooldowns' AND column_name='expires_on'
-      ) AND NOT EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_name='cooldowns' AND column_name='next_claim_at'
       ) THEN
-        ALTER TABLE cooldowns RENAME COLUMN expires_on TO next_claim_at;
+        UPDATE cooldowns SET next_claim_at = expires_on WHERE next_claim_at IS NULL;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name='cooldowns' AND column_name='expires_at'
+      ) THEN
+        UPDATE cooldowns SET next_claim_at = expires_at WHERE next_claim_at IS NULL;
       END IF;
     END $$;
 
-    UPDATE cooldowns SET expires_at = NOW() WHERE expires_at IS NULL;
-    ALTER TABLE cooldowns ALTER COLUMN expires_at SET NOT NULL;
-    ALTER TABLE cooldowns ALTER COLUMN expires_at SET DEFAULT NOW();
+    UPDATE cooldowns SET next_claim_at = NOW() WHERE next_claim_at IS NULL;
+    ALTER TABLE cooldowns ALTER COLUMN next_claim_at SET NOT NULL;
+    ALTER TABLE cooldowns ALTER COLUMN next_claim_at SET DEFAULT NOW();
 
-    CREATE INDEX IF NOT EXISTS idx_cooldowns_expires
-    ON cooldowns (expires_at);
+    CREATE INDEX IF NOT EXISTS idx_cooldowns_next_claim
+    ON cooldowns (next_claim_at);
 
     CREATE TABLE IF NOT EXISTS transactions (
       id BIGSERIAL PRIMARY KEY,
@@ -620,6 +631,13 @@ client.once(Events.ClientReady, async () => {
       const currentDeployment = process.env.RAILWAY_DEPLOYMENT_ID;
 
       if (currentDeployment) {
+        await client.db.query(`
+          CREATE TABLE IF NOT EXISTS system_state (
+            key TEXT PRIMARY KEY,
+            value TEXT
+          )
+        `);
+
         const res = await client.db.query(
           "SELECT value FROM system_state WHERE key = $1",
           ["last_deployment_id"]

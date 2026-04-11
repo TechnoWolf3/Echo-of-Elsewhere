@@ -939,48 +939,46 @@ function buildGrindComponents(disabled = false) {
 
 function buildFarmingComponents(farm) {
   const rows = [];
+  const fields = farm.fields || [];
 
-  if ((farm.fields || []).length < config.MAX_FIELDS) {
-  const nextCost = farming.getNextFieldCost((farm.fields || []).length);
+  const actionButtons = [];
 
-  rows.push(
-    new ActionRowBuilder().addComponents(
+  if (fields.length < config.MAX_FIELDS) {
+    const nextCost = farming.getNextFieldCost(fields.length);
+    actionButtons.push(
       new ButtonBuilder()
         .setCustomId("farm_buy")
         .setLabel(`Buy Field ($${nextCost.toLocaleString()})`)
         .setStyle(ButtonStyle.Success)
-    )
-  );
-}
-
-  (farm.fields || []).forEach((f, i) => {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`farm_select:${i}`)
-          .setLabel(`Field ${i + 1}`)
-          .setStyle(ButtonStyle.Primary)
-      )
     );
-  });
+  }
 
-  rows.push(
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
+  actionButtons.push(
+    new ButtonBuilder()
       .setCustomId("farm_market")
       .setLabel("💰 Market")
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId("farm_machines")
+      .setLabel("🚜 Machine Shed")
       .setStyle(ButtonStyle.Primary)
-    )
   );
 
-  rows.push(
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId("farm_machines")
-        .setLabel("🚜 Machine Shed")
-        .setStyle(ButtonStyle.Primary)
-    )
-  );
+  rows.push(new ActionRowBuilder().addComponents(actionButtons));
+
+  for (let start = 0; start < fields.length; start += 5) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        fields.slice(start, start + 5).map((_, offset) => {
+          const index = start + offset;
+          return new ButtonBuilder()
+            .setCustomId(`farm_select:${index}`)
+            .setLabel(`Field ${index + 1}`)
+            .setStyle(ButtonStyle.Primary);
+        })
+      )
+    );
+  }
 
   rows.push(
     new ActionRowBuilder().addComponents(
@@ -1927,6 +1925,16 @@ function scheduleReturnToCategory(delayMs = 5000) {
             components
           });
         } catch (err) {
+          console.error("[FARM] redraw failed:", err);
+          return msg.edit({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle("🌾 Farming")
+                .setDescription("❌ Farming failed to load. Check the bot logs for details.")
+                .setColor(0xaa0000)
+            ],
+            components: buildEnterprisesComponents(false),
+          }).catch(() => {});
         }
       }
 
@@ -2141,6 +2149,17 @@ function scheduleReturnToCategory(delayMs = 5000) {
         if (actionId === "machine_buy") {
           session.machinePage = "buy";
           await redraw();
+          return;
+        }
+
+        if (actionId === "machine_rent" || actionId === "machine_sell") {
+          await btn.followUp({
+            content:
+              actionId === "machine_rent"
+                ? "⏱️ Machine rental is not wired up yet. Buying machines works right now."
+                : "📦 Machine selling is not wired up yet. Buying machines works right now.",
+            flags: MessageFlags.Ephemeral,
+          }).catch(() => {});
           return;
         }
 
@@ -2576,27 +2595,43 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
           if (actionId === "farm_buy") {
             let farm = await farming.ensureFarm(guildId, userId);
+            if ((farm.fields || []).length >= config.MAX_FIELDS) {
+              await btn.followUp({
+                content: "❌ You already own the maximum number of fields.",
+                flags: MessageFlags.Ephemeral,
+              }).catch(() => {});
+              return;
+            }
 
             const cost = farming.getNextFieldCost(farm.fields.length);
 
-            const bal = await pool.query(
-              `SELECT balance FROM user_balances WHERE user_id=$1 AND guild_id=$2`,
-              [userId, guildId]
-            );
-
-            if ((bal.rows[0]?.balance || 0) < cost) {
-              return btn.followUp({
-                content: `❌ You need $${cost.toLocaleString()}`,
-                ephemeral: true
-              });
-            }
-
-            await pool.query(
-              `UPDATE user_balances SET balance = balance - $1 WHERE user_id=$2 AND guild_id=$3`,
+            const debit = await pool.query(
+              `UPDATE user_balances
+               SET balance = balance - $1
+               WHERE user_id=$2 AND guild_id=$3 AND balance >= $1
+               RETURNING balance`,
               [cost, userId, guildId]
             );
 
-            await farming.buyField(guildId, userId, farm);
+            if (debit.rowCount === 0) {
+              return btn.followUp({
+                content: `❌ You need $${cost.toLocaleString()}`,
+                flags: MessageFlags.Ephemeral,
+              });
+            }
+
+            const result = await farming.buyField(guildId, userId, farm);
+            if (result?.ok === false) {
+              await pool.query(
+                `UPDATE user_balances SET balance = balance + $1 WHERE user_id=$2 AND guild_id=$3`,
+                [cost, userId, guildId]
+              );
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                flags: MessageFlags.Ephemeral,
+              }).catch(() => {});
+              return;
+            }
 
             await redraw();
             return;
@@ -2658,6 +2693,16 @@ function scheduleReturnToCategory(delayMs = 5000) {
             const fieldIndex = Number(actionId.split(":")[1]);
             const farm = await farming.ensureFarm(guildId, userId);
 
+            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "cultivate", 60000);
+
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
             const machineCheck = await machineEngine.reserveMachinesForTask(
               guildId,
               userId,
@@ -2667,18 +2712,9 @@ function scheduleReturnToCategory(delayMs = 5000) {
             );
 
             if (!machineCheck.ok) {
+              await farming.clearFieldTask(guildId, userId, farm, fieldIndex).catch(() => {});
               await btn.followUp({
                 content: `❌ ${machineCheck.reasonText}`,
-                ephemeral: true,
-              }).catch(() => {});
-              return;
-            }
-
-            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "cultivate", 60000);
-
-            if (!result.ok) {
-              await btn.followUp({
-                content: `❌ ${result.reasonText}`,
                 ephemeral: true,
               }).catch(() => {});
               return;
@@ -2746,23 +2782,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
             const farm = await farming.ensureFarm(guildId, userId);
 
-            const machineCheck = await machineEngine.reserveMachinesForTask(
-              guildId,
-              userId,
-              fieldIndex,
-              "seed",
-              60000
-            );
-
-            if (!machineCheck.ok) {
-              await btn.followUp({
-                content: `❌ ${machineCheck.reasonText}`,
-                ephemeral: true,
-              }).catch(() => {});
-              return;
-            }
-
-            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "seed", 60000);
+            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "seed", 60000, { cropId });
 
             if (!result.ok) {
               await btn.followUp({
@@ -2772,8 +2792,22 @@ function scheduleReturnToCategory(delayMs = 5000) {
               return;
             }
 
-            farm.fields[fieldIndex].task.cropId = cropId;
-            await farming.saveFarm(guildId, userId, farm);
+            const machineCheck = await machineEngine.reserveMachinesForTask(
+              guildId,
+              userId,
+              fieldIndex,
+              "seed",
+              60000
+            );
+
+            if (!machineCheck.ok) {
+              await farming.clearFieldTask(guildId, userId, farm, fieldIndex).catch(() => {});
+              await btn.followUp({
+                content: `❌ ${machineCheck.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
 
             const updatedFarm = await farming.ensureFarm(guildId, userId);
 
@@ -2794,6 +2828,16 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
             const farm = await farming.ensureFarm(guildId, userId);
 
+            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "harvest", 60000);
+
+            if (!result.ok) {
+              await btn.followUp({
+                content: `❌ ${result.reasonText}`,
+                ephemeral: true,
+              }).catch(() => {});
+              return;
+            }
+
             const machineCheck = await machineEngine.reserveMachinesForTask(
               guildId,
               userId,
@@ -2803,18 +2847,9 @@ function scheduleReturnToCategory(delayMs = 5000) {
             );
 
             if (!machineCheck.ok) {
+              await farming.clearFieldTask(guildId, userId, farm, fieldIndex).catch(() => {});
               await btn.followUp({
                 content: `❌ ${machineCheck.reasonText}`,
-                ephemeral: true,
-              }).catch(() => {});
-              return;
-            }
-
-            const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, "harvest", 60000);
-
-            if (!result.ok) {
-              await btn.followUp({
-                content: `❌ ${result.reasonText}`,
                 ephemeral: true,
               }).catch(() => {});
               return;
