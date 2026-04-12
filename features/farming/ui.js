@@ -326,7 +326,7 @@ function buildFarmingEmbed(farm, weatherChannel = null) {
 
       if (field.state === "growing") {
         if (field.readyAt) {
-          status = `Ready <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`;
+          status = `Growing, Ready <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`;
         } else {
           status = "Growing";
         }
