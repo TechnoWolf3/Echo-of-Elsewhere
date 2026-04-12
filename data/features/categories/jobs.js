@@ -4,144 +4,123 @@ module.exports = {
   order: 3,
   name: "Jobs",
   emoji: "🧑‍🔧",
-  blurb: "About our Workforce.",
+  blurb: "Clock on, hustle hard, or risk everything for bigger money.",
   description:
-    "Jobs are a money-driven hub connected directly to your personal bank. Work hard, take risks, earn big. All jobs come with their own tasks and associated risks.\n" +
-    "There are currently 4 categories for work; 9-5, Nightwalker, Grind & Crime",
+    "Jobs are one of the main ways fresh money enters the economy. From easy legal shifts to grind jobs, crime, and nightlife work, every category offers a different style of earning with its own pressure and payout.",
 
-  // Items shown inside the category (like help.commands)
   items: [
     {
-      id: "nineToFive_Transport",
+      id: "nine_to_five_transport",
       name: "🚚 Transport Contract",
-      short: "Deliver the parcels, take risks with instant outcomes.",
+      short: "Parcel delivery with risk-based routes and payout choices.",
       detail:
-        "Transport clients parcels.\n" +
-        "Take riskier routes and delivery options.\n" +
-        "Risk directly impacts the payout but careful! Being reckless can destroy your load.",
+        "Transport Contract is a fast legal delivery job where players move cargo and choose how much risk they want to take on.\n\n" +
+        "Safer options keep things steady. Riskier routes and choices can lift the payout, but one bad decision can cost the whole job.",
     },
     {
-      id: "nineToFive_SkillCheck",
+      id: "nine_to_five_trucker",
+      name: "🚛 Trucker",
+      short: "Take a manifest, haul freight, and watch the kilometres roll by.",
+      detail:
+        "Trucker expands the 9-5 roster with a longer-form transport job built around proper freight work.\n\n" +
+        "Players receive a manifest, haul realistic loads across real Australian-style distances, and track progress from departure to delivery. It is a calmer, click-and-wait style job with strong flavour and solid progression potential.\n\n" +
+        "For players who like logistics and long-haul vibes, it adds a much more grounded transport option to the work hub.",
+    },
+    {
+      id: "nine_to_five_skill_check",
       name: "🤹 Skill Check",
-      short: "A quick time event job.",
+      short: "Quick reactions, quick payout, quick mistakes.",
       detail:
-        "Skill Check requires your eyes and hands to work together.\n" +
-        "Find what colour is reequired and click it in time.\n" +
-        "One wrong move and your shift ends early.",
+        "Skill Check is built around speed, attention, and clean execution.\n\n" +
+        "Spot the right prompt in time and keep the shift alive. Slip up, and the job can end early. It is one of the fastest legal earners for players who trust their reactions.",
     },
     {
-      id: "nineToFive_Shift",
+      id: "nine_to_five_shift",
       name: "🕒 Shift",
-      short: "Clock on, clock off & get paid.",
+      short: "Clock on, wait it out, collect your pay.",
       detail:
-        "The easiest of the 9-5's\n" +
-        "Simply clock on and wait out the shift.\n" +
-        "Collect your paycheck at the end to get paid.\n" +
-        "*Due to the lack of effort required, this job pays the least*.",
+        "Shift is the simplest legal job on the board.\n\n" +
+        "There is very little risk and very little effort, which also means the payout stays modest. It is the easy option for players who just want clean, dependable income.",
     },
     {
-      id: "nightwalker_Flirt",
+      id: "nightwalker_flirt",
       name: "💬 Flirt",
-      short: "A social skill check.",
+      short: "Read the room, play it right, and keep the client interested.",
       detail:
-        "Dance to keepp your client happy.\n" +
-        "Follow the vibe and your clients hints, correct moves reward better.\n" +
-        "Make the wrong move and the client may just up and leave!",
+        "Flirt is a social, choice-driven Night Walker job where reading the vibe matters.\n\n" +
+        "Pick the right responses and the payout climbs. Misread the moment and the whole interaction can collapse.",
     },
     {
-      id: "nightwalker_LapDance",
+      id: "nightwalker_lap_dance",
       name: "💃 Lap Dance",
-      short: "I hope those dance classes will pay off.",
+      short: "Keep the energy up and turn confidence into tips.",
       detail:
-        "Dance your heart out.\n" +
-        "Overcome incidents gracefully to keep your partner feeling it.\n" +
-        "Riskier moves lead to bigger tips!.",
+        "Lap Dance leans into performance, momentum, and handling mid-job incidents without losing control.\n\n" +
+        "The better you manage the session, the better the payout. It is flashy, risky, and very different to the slower legal jobs.",
     },
     {
-      id: "nightwalker_Prostitute",
+      id: "nightwalker_prostitute",
       name: "🎲 Prostitute",
-      short: "Do we need to explain?",
+      short: "High pressure nightlife work with high earning potential.",
       detail:
-        "Service the nightlife.\n" +
-        "Your body is your tool, lonely people get freaky, match their vibe but dont get caught!.\n" +
-        "Risk meters will help you keep in line.",
+        "This Night Walker role pushes risk and reward further, asking players to stay in control while dealing with volatile client interactions.\n\n" +
+        "Handle it well and the money can be excellent. Handle it badly and the job can go south quickly.",
     },
     {
-      id: "grind_StoreClerk",
+      id: "grind_store_clerk",
       name: "🏪 Store Clerk",
-      short: "Fast-paced retail tasks with steady, reliable payouts.",
+      short: "Fast retail gameplay with steady, reliable payouts.",
       detail:
-        "Store Clerk places players behind the counter in a steady retail workflow.\n" +
-        "It focuses on quick interactions and reliable payouts, making it a dependable entry point for the grind system.\n" +
-        "Clean prompts and simple tasks keep the pace moving while still feeling connected to the server economy.",
+        "Store Clerk puts players behind the counter in a simple but satisfying retail loop.\n\n" +
+        "Quick prompts, clean interactions, and dependable income make it one of the best entry points into the grind category.",
     },
     {
-      id: "grind_Warehousing",
+      id: "grind_warehousing",
       name: "📦 Warehousing",
-      short: "Move stock, handle cargo, and keep the warehouse flowing.",
+      short: "Move stock, handle orders, and keep the warehouse alive.",
       detail:
-        "Warehousing introduces structured logistics work into the grind category.\n" +
-        "Players move goods, complete handling tasks, and keep the operation running smoothly.\n" +
-        "The role rewards consistency and efficiency, offering a stable income path for players who enjoy productive gameplay loops.",
+        "Warehousing is a logistics-focused grind job built around consistent task completion and efficiency.\n\n" +
+        "It rewards players who enjoy a structured workflow and a sense of building momentum over time.",
     },
     {
-      id: "grind_Fishing",
+      id: "grind_fishing",
       name: "🎣 Fishing",
-      short: "A slower-paced grind built around patience and timing.",
+      short: "A calmer earning path built on patience and timing.",
       detail:
-        "Fishing offers a slower, methodical grind built around patience and timing.\n" +
-        "It provides a relaxed alternative to high-intensity jobs while still feeding directly into the economy.\n" +
-        "The calm pace makes it ideal for players looking to earn while enjoying a quieter gameplay rhythm.",
+        "Fishing offers a slower-paced grind loop for players who want something more relaxed.\n\n" +
+        "It trades chaos for patience while still feeding directly into the wider economy.",
     },
     {
-      id: "grind_Quarry",
+      id: "grind_quarry",
       name: "🪨 Quarry",
-      short: "Heavy labour and resource extraction for solid payouts.",
+      short: "Heavy labour, industrial flavour, and solid returns.",
       detail:
-        "Quarry work focuses on heavy labour and resource extraction within the grind system.\n" +
-        "Players complete demanding tasks that reflect industrial-style work environments.\n" +
-        "It delivers solid payouts through effort-based progression, rewarding players who stick with the job cycle.",
+        "Quarry work focuses on extraction, workload, and effort-based earnings.\n\n" +
+        "It is one of the more demanding grind options, but that effort comes with respectable payouts.",
     },
     {
-      id: "crime_StoreRobbery",
+      id: "crime_store_robbery",
       name: "🏪 Store Robbery",
-      short: "Risky grab-and-go crime with quick payouts.",
+      short: "Fast crime, quick cash, and rising heat.",
       detail:
-        "Store Robbery introduces fast-moving criminal opportunities to the job system.\n" +
-        "It rewards timing and nerve, allowing players to attempt quick hits for immediate cash.\n" +
-        "While the payout can be tempting, every robbery adds heat, increasing the risk of future crime attempts.",
+        "Store Robbery is a fast-moving criminal option for players who want quick hits instead of long jobs.\n\n" +
+        "It can pay well, but every robbery raises heat and increases the pressure on future crime attempts.",
     },
     {
-      id: "crime_CarChase",
-      name: "🚓 Car Chase",
-      short: "Coming Soon.",
-      detail:
-        "Coming Soon.",
-    },
-    {
-      id: "crime_DrugPushing",
-      name: "💊 Drug Pushing",
-      short: "Coming Soon.",
-      detail:
-        "Coming Soon.",
-    },
-    {
-      id: "crime_Heist",
+      id: "crime_heist",
       name: "🏦 Heist",
-      short: "Large-scale jobs with serious heat.",
+      short: "Bigger crime with bigger planning and bigger consequences.",
       detail:
-        "Heists represent coordinated high-value crime operations.\n" +
-        "These jobs offer significantly larger rewards than smaller crimes, but come with greater consequences.\n" +
-        "Taking on a heist means committing to a high-risk play where the payoff can be massive — or disastrous.",
+        "Heists take crime beyond simple smash-and-grab jobs and into higher-stakes coordinated runs.\n\n" +
+        "The reward ceiling is much higher, but so is the fallout when it goes wrong.",
     },
     {
-      id: "crime_MajorHeist",
+      id: "crime_major_heist",
       name: "💎 Major Heist",
-      short: "Massive payouts with extreme risk.",
+      short: "Top-tier crime with extreme reward and extreme danger.",
       detail:
-        "Major Heists sit at the top of the crime ladder, offering the biggest payouts available in the job system.\n" +
-        "These operations push the risk level to its limits, generating serious heat and attention.\n" +
-        "Only the boldest players will attempt them, knowing the rewards can reshape the balance of the economy.",
+        "Major Heist sits at the top of the crime ladder.\n\n" +
+        "Huge payouts are possible, but so are huge losses, major heat, and hard consequences. It is designed for players who want to push their luck all the way.",
     },
   ],
 };

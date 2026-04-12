@@ -1,7 +1,7 @@
 // data/features/categories/effects.js
 module.exports = {
   id: "effects",
-  order: 99,
+  order: 8,
   name: "Effects",
   emoji: "✨",
   blurb: "Echo's Bleesings and Curses.",

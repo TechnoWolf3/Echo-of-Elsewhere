@@ -1,7 +1,7 @@
 // data/features/categories/botGames.js
 module.exports = {
   id: "botgames",
-  order: 4,
+  order: 7,
   name: "Bot Games",
   emoji: "🤖",
   blurb: "Echo's random challenges, do you dare contest?.",
