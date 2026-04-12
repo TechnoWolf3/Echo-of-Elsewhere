@@ -293,7 +293,7 @@ function buildFarmingComponents(farm) {
   return rows;
 }
 
-function buildFarmingEmbed(farm) {
+function buildFarmingEmbed(farm, weatherChannel = null) {
   const fields = farm.fields || [];
   const season = farming.getCurrentSeason();
   const nextCost = fields.length < config.MAX_FIELDS ? farming.getNextFieldCost(fields.length) : null;
@@ -319,44 +319,64 @@ function buildFarmingEmbed(farm) {
         if (field.state === "ready") status = "Ready";
         if (field.state === "spoiled") status = "Spoiled";
         if (field.state === "empty" && !field.cultivated) status = "Needs cleanup";
+        if (field.fieldCondition?.label) status = field.fieldCondition.label;
         if (farming.isFieldTaskActive(field)) {
           status = `${field.task.key} until <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
         }
         const crop = field.cropId ? ` - ${field.cropId}` : "";
         const size = farming.getFieldSize(field.level || 1);
-        return `**Field ${index + 1}** - Lv ${field.level || 1} (${size}x${size}) - ${status}${crop}`;
+        const usable = farming.getUsablePlots(field);
+        const total = farming.getTotalPlots(field);
+        const plotText = usable === total ? `${size}x${size}` : `${usable}/${total} plots`;
+        return `**Field ${index + 1}** - Lv ${field.level || 1} - ${status} - ${plotText}${crop}`;
       }).join("\n")
     : "No fields yet. Buy your first field to start farming.";
 
+  const embed = new EmbedBuilder()
+    .setTitle("🌾 Farming")
+    .setDescription(
+      [
+        `Season: **${season}**`,
+        fields.length < config.MAX_FIELDS
+          ? `Next field: **${ui.money(nextCost)}**`
+          : "Field limit reached.",
+      ].join("\n")
+    )
+    .addFields(
+      {
+        name: "Farm Status",
+        value: [
+          `Fields: **${fields.length}/${config.MAX_FIELDS}**`,
+          `Ready: **${counts.ready}**`,
+          `Growing: **${counts.growing}**`,
+          `Busy: **${counts.busy}**`,
+          `Needs cleanup: **${counts.cleanup + counts.spoiled}**`,
+        ].join("\n"),
+        inline: true,
+      },
+      {
+        name: "Fields",
+        value: fieldLines.slice(0, 1024),
+        inline: false,
+      }
+    );
+
+  if (weatherChannel) {
+    embed.addFields({
+      name: "📺 Weather Channel",
+      value: [
+        weatherChannel.headline,
+        weatherChannel.forecast,
+        weatherChannel.impact,
+        "",
+        `> ${weatherChannel.report}`,
+      ].filter(Boolean).join("\n"),
+      inline: false,
+    });
+  }
+
   return ui.applySystemStyle(
-    new EmbedBuilder()
-      .setTitle("🌾 Farming")
-      .setDescription(
-        [
-          `Season: **${season}**`,
-          fields.length < config.MAX_FIELDS
-            ? `Next field: **${ui.money(nextCost)}**`
-            : "Field limit reached.",
-        ].join("\n")
-      )
-      .addFields(
-        {
-          name: "Farm Status",
-          value: [
-            `Fields: **${fields.length}/${config.MAX_FIELDS}**`,
-            `Ready: **${counts.ready}**`,
-            `Growing: **${counts.growing}**`,
-            `Busy: **${counts.busy}**`,
-            `Needs cleanup: **${counts.cleanup + counts.spoiled}**`,
-          ].join("\n"),
-          inline: true,
-        },
-        {
-          name: "Fields",
-          value: fieldLines.slice(0, 1024),
-          inline: false,
-        }
-      ),
+    embed,
     "job",
     "Open a field to cultivate, plant, harvest, or upgrade."
   );
@@ -366,7 +386,7 @@ function renderFieldVisual(field) {
   if (!field) return "";
 
   const level = Math.max(1, Number(field.level || 1));
-  const size = farming.getFieldSize(level);
+  const size = Math.min(farming.getFieldSize(level), 12);
   const cropId = String(field.cropId || "").toLowerCase();
 
   function tileForGrowing() {
@@ -454,42 +474,39 @@ function buildFieldEmbed(farm, fieldIndex) {
   if (field.state === "ready") stateText = "Ready to Harvest";
   if (field.state === "spoiled") stateText = "Spoiled";
   if (field.state === "empty" && !field.cultivated) stateText = "Needs Cleanup";
+  if (field.fieldCondition?.label) stateText = field.fieldCondition.label;
 
   const task = field.task || null;
   const taskLine =
     task?.key && task?.endsAt && Date.now() < Number(task.endsAt)
-      ? `🛠️ **Task:** ${task.key}\n⏳ **Done:** <t:${Math.floor(Number(task.endsAt) / 1000)}:R>\n🕒 **At:** <t:${Math.floor(Number(task.endsAt) / 1000)}:F>`
+      ? `🛠️ **Task:** ${task.key}
+⏳ **Done:** <t:${Math.floor(Number(task.endsAt) / 1000)}:R>
+🕒 **At:** <t:${Math.floor(Number(task.endsAt) / 1000)}:F>`
       : "";
 
   const readyLine =
     !task?.key && field.state === "growing" && field.readyAt
-      ? `⏳ **Ready:** <t:${Math.floor(Number(field.readyAt) / 1000)}:R>\n🕒 **At:** <t:${Math.floor(Number(field.readyAt) / 1000)}:F>`
+      ? `⏳ **Ready:** <t:${Math.floor(Number(field.readyAt) / 1000)}:R>
+🕒 **At:** <t:${Math.floor(Number(field.readyAt) / 1000)}:F>`
       : "";
 
   const cultivatedLine = field.cultivated ? "✅ Cultivated" : "❌ Needs Cultivation";
-  const size = farming.getFieldSize(field.level || 1);
-  const plots = farming.getFieldPlotCount(field.level || 1);
-  const cropYield = crop ? farming.getYieldRangeForField(crop, field) : null;
-  const taskTimes = {
-    cultivate: farming.getTaskDurationMs("cultivate", field),
-    seed: farming.getTaskDurationMs("seed", field),
-    harvest: farming.getTaskDurationMs("harvest", field),
-  };
-  const formatDuration = (ms) => {
-    const totalMinutes = Math.max(1, Math.round(ms / 60000));
-    if (totalMinutes < 60) return `${totalMinutes}m`;
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
-  };
   const machineHint =
     field.state === "ready"
       ? "Needs a free harvester."
-      : field.state === "empty" && field.cultivated
+      : field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation
         ? "Needs a tractor and seeder to plant."
-        : field.state === "spoiled" || !field.cultivated
+        : field.state === "spoiled" || !field.cultivated || field.fieldCondition?.requiresCultivation
           ? "Needs a tractor and cultivator."
           : "Let it grow.";
+
+  const fieldSize = farming.getFieldSize(field.level || 1);
+  const totalPlots = farming.getTotalPlots(field);
+  const usablePlots = farming.getUsablePlots(field);
+  const yieldRange = crop ? farming.getScaledYieldRange(crop, field) : null;
+  const weatherLines = [];
+  if (field.cropWeatherEffect?.label) weatherLines.push(`🌦️ **Crop Effect:** ${field.cropWeatherEffect.label}`);
+  if (field.fieldCondition?.label) weatherLines.push(`🧱 **Field Condition:** ${field.fieldCondition.label}`);
 
   return new EmbedBuilder()
     .setTitle(`🌾 Field ${fieldIndex + 1}`)
@@ -499,14 +516,15 @@ function buildFieldEmbed(farm, fieldIndex) {
         visual,
         "",
         `📈 **Level:** ${field.level || 1}`,
-        `📐 **Size:** ${size}x${size} (${plots} plots)` ,
+        `📏 **Size:** ${fieldSize}x${fieldSize}`,
+        `🟫 **Plots:** ${usablePlots}/${totalPlots} usable`,
         `📌 **Status:** ${stateText}`,
         `🌿 **Crop:** ${cropName}`,
-        cropYield ? `📦 **Yield Range:** ${cropYield.min}-${cropYield.max}` : null,
+        yieldRange ? `📦 **Yield Range:** ${yieldRange[0]}-${yieldRange[1]}` : "",
         `🪴 **Condition:** ${cultivatedLine}`,
         `🍂 **Season:** ${farming.getCurrentSeason()}`,
-        `⏱️ **Task Times:** Cultivate ${formatDuration(taskTimes.cultivate)} • Seed ${formatDuration(taskTimes.seed)} • Harvest ${formatDuration(taskTimes.harvest)}`,
         `🚜 **Machine Need:** ${machineHint}`,
+        ...weatherLines,
         taskLine,
         readyLine,
       ].filter(Boolean).join("\n")
@@ -563,7 +581,7 @@ function buildFieldComponents(farm, fieldIndex) {
     .getAvailableCrops(field.level || 1)
     .filter((crop) => Array.isArray(crop.seasons) && crop.seasons.includes(currentSeason));
 
-  if (field.state === "spoiled" || !field.cultivated) {
+  if (field.state === "spoiled" || !field.cultivated || field.fieldCondition?.requiresCultivation) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -574,7 +592,7 @@ function buildFieldComponents(farm, fieldIndex) {
     );
   }
 
-  if (field.state === "empty" && field.cultivated && cropOptions.length > 0) {
+  if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation && cropOptions.length > 0) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
@@ -584,14 +602,14 @@ function buildFieldComponents(farm, fieldIndex) {
             cropOptions.map((crop) => ({
               label: crop.name,
               value: `farm_plant:${fieldIndex}:${crop.key}`,
-              description: `Level ${crop.level} - ${crop.growthHours}h growth`,
+              description: `Level ${crop.level} - ${crop.growthHours}h growth - ${farming.getScaledYieldRange(crop, field).join("-")}` ,
             }))
           )
       )
     );
   }
 
-  if (field.state === "empty" && field.cultivated && cropOptions.length === 0) {
+  if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation && cropOptions.length === 0) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -614,7 +632,7 @@ function buildFieldComponents(farm, fieldIndex) {
     );
   }
 
-  if (field.state === "empty" && field.cultivated && (field.level || 1) < config.MAX_FIELD_LEVEL) {
+  if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation && (field.level || 1) < config.MAX_FIELD_LEVEL) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()

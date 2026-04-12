@@ -4,6 +4,7 @@ const config = require("../../data/farming/config");
 const farming = require("../../utils/farming/engine");
 const market = require("../../utils/farming/market");
 const machineEngine = require("../../utils/farming/machineEngine");
+const weather = require("../../utils/farming/weather");
 const farmingUi = require("./ui");
 
 function isFarmingInteraction(actionId) {
@@ -155,6 +156,7 @@ async function handleFarmingInteraction({
   if (actionId.startsWith("farm_select:")) {
     const fieldIndex = Number(actionId.split(":")[1]);
     const farm = await farming.ensureFarm(guildId, userId);
+    await weather.ensureDailyWeatherState(guildId);
     await farming.applySeasonRollover(guildId, userId, farm);
 
     session.view = "farm_field";
@@ -353,8 +355,9 @@ async function startMachineBackedFieldTask({
   successText,
 }) {
   const farm = await farming.ensureFarm(guildId, userId);
+  await weather.ensureDailyWeatherState(guildId);
   const field = farm.fields?.[fieldIndex];
-  const taskMs = farming.getTaskDurationMs(action, field);
+  const taskMs = farming.getTaskDurationMs(field, action, 60000);
   const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, action, taskMs, extra);
 
   if (!result.ok) {

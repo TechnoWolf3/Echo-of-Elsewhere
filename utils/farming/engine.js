@@ -1,10 +1,48 @@
 const { pool } = require("../db");
 const crops = require("../../data/farming/crops");
 const config = require("../../data/farming/config");
+const weather = require("./weather");
 
 function getCurrentSeason(now = Date.now()) {
   const index = Math.floor(now / config.SEASON_LENGTH_MS) % config.SEASONS.length;
   return config.SEASONS[index];
+}
+
+
+function getFieldSize(level) {
+  return Math.max(3, Number(level || 1) + 2);
+}
+
+function getTotalPlots(fieldOrLevel) {
+  const level = typeof fieldOrLevel === "number" ? fieldOrLevel : Number(fieldOrLevel?.level || 1);
+  const size = getFieldSize(level);
+  return size * size;
+}
+
+function getUsablePlots(field) {
+  const total = getTotalPlots(field);
+  const multiplier = weather.getUsablePlotMultiplier(field);
+  return Math.max(1, Math.floor(total * multiplier));
+}
+
+function getTaskDurationMs(field, taskKey, baseMs = 60000) {
+  const scale = getTotalPlots(field) / 9;
+  let duration = Math.max(baseMs, Math.round(baseMs * scale));
+
+  if (taskKey === "cultivate" && field?.fieldCondition?.requiresCultivation) {
+    duration = Math.round(duration * 1.15);
+  }
+
+  return duration;
+}
+
+function getScaledYieldRange(crop, field) {
+  const [min, max] = crop?.yield || [1, 1];
+  const plotScale = getUsablePlots(field) / 9;
+  const yieldMult = weather.getYieldMultiplier(field);
+  const scaledMin = Math.max(1, Math.round(min * plotScale * yieldMult));
+  const scaledMax = Math.max(scaledMin, Math.round(max * plotScale * yieldMult));
+  return [scaledMin, scaledMax];
 }
 
 async function ensureTable() {
@@ -120,50 +158,6 @@ function canRegrow(field) {
   return Boolean(crops[field.cropId]?.regrow);
 }
 
-function getFieldSize(level = 1) {
-  const safeLevel = Math.max(1, Math.min(Number(level || 1), config.MAX_FIELD_LEVEL || 10));
-  return safeLevel + 2;
-}
-
-function getFieldPlotCount(level = 1) {
-  const size = getFieldSize(level);
-  return size * size;
-}
-
-function getYieldRangeForField(cropOrId, fieldOrLevel = 1) {
-  const crop = typeof cropOrId === "string" ? crops[cropOrId] : cropOrId;
-  if (!crop) return { min: 0, max: 0, multiplier: 1, plots: getFieldPlotCount(fieldOrLevel?.level ?? fieldOrLevel ?? 1) };
-
-  const fieldLevel = typeof fieldOrLevel === "object" ? Number(fieldOrLevel?.level || 1) : Number(fieldOrLevel || 1);
-  const plots = getFieldPlotCount(fieldLevel);
-  const basePlots = getFieldPlotCount(1);
-  const multiplier = plots / basePlots;
-
-  const [baseMin, baseMax] = crop.yield || [1, 1];
-  return {
-    min: Math.max(1, Math.round(baseMin * multiplier)),
-    max: Math.max(1, Math.round(baseMax * multiplier)),
-    multiplier,
-    plots,
-  };
-}
-
-function getTaskDurationMs(taskKey, fieldOrLevel = 1) {
-  const fieldLevel = typeof fieldOrLevel === "object" ? Number(fieldOrLevel?.level || 1) : Number(fieldOrLevel || 1);
-  const baseMinutesByTask = {
-    cultivate: 1,
-    seed: 1,
-    harvest: 1,
-  };
-
-  const baseMinutes = baseMinutesByTask[taskKey] || 1;
-  const plots = getFieldPlotCount(fieldLevel);
-  const basePlots = getFieldPlotCount(1);
-  const scaledMinutes = baseMinutes * (plots / basePlots);
-
-  return Math.max(60_000, Math.round(scaledMinutes * 60 * 1000));
-}
-
 function updateFieldRuntime(field) {
   if (!field) return field;
   if (field.state === "growing" && isReady(field)) {
@@ -184,6 +178,7 @@ async function applySeasonRollover(guildId, userId, farm) {
       field.cultivated = false;
       field.plantedAt = null;
       field.readyAt = null;
+      field.cropWeatherEffect = null;
       changed = true;
     }
   }
@@ -212,6 +207,7 @@ async function cultivateField(guildId, userId, farm, fieldIndex) {
 
   field.cultivated = true;
   field.state = "empty";
+  weather.clearCultivationWeather(field);
 
   await saveFarm(guildId, userId, farm);
   return { ok: true };
@@ -254,13 +250,15 @@ async function plantCrop(guildId, userId, farm, fieldIndex, cropId) {
   field.plantedAt = now;
   field.readyAt = now + crop.growthHours * 60 * 60 * 1000;
   field.cultivated = true;
+  const weatherState = await weather.ensureDailyWeatherState(guildId);
+  weather.maybeApplyActiveEventToField(field, weatherState);
 
   await saveFarm(guildId, userId, farm);
   return { ok: true, field };
 }
 
-function rollYield(crop, fieldOrLevel = 1) {
-  const { min, max } = getYieldRangeForField(crop, fieldOrLevel);
+function rollYield(crop, field = null) {
+  const [min, max] = field ? getScaledYieldRange(crop, field) : (crop.yield || [1, 1]);
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
@@ -282,11 +280,14 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
     await addProduceToInventory(guildId, userId, crop);
   }
 
-  if (crop.regrow && isCropValidForSeason(field.cropId)) {
+  const hasFieldDamage = Boolean(field.fieldCondition?.requiresCultivation);
+  weather.clearHarvestWeather(field);
+
+  if (crop.regrow && isCropValidForSeason(field.cropId) && !hasFieldDamage) {
     const now = Date.now();
     field.state = "growing";
     field.plantedAt = now;
-    field.readyAt = now + (crop.regrowHours || crop.growthhours) * 60 * 60 * 1000;
+    field.readyAt = now + (crop.regrowHours || crop.growthHours) * 60 * 60 * 1000;
   } else {
     const leavesDebris =
       Math.random() < (crop.debrisChance ?? config.NON_REGROW_DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
@@ -295,7 +296,7 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
     field.state = "empty";
     field.plantedAt = null;
     field.readyAt = null;
-    field.cultivated = !leavesDebris;
+    field.cultivated = !leavesDebris && !hasFieldDamage;
   }
 
   await saveFarm(guildId, userId, farm);
@@ -328,6 +329,9 @@ async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durati
     const cropId = extra.cropId || null;
     if (field.state !== "empty" || !field.cultivated) {
       return { ok: false, reasonText: "That field must be empty and cultivated before seeding." };
+    }
+    if (field.fieldCondition?.requiresCultivation) {
+      return { ok: false, reasonText: "This field is damaged. Cultivate it before planting again." };
     }
     if (!cropId) return { ok: false, reasonText: "Choose a crop before seeding." };
     const crop = crops[cropId];
@@ -390,6 +394,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
   if (taskKey === "cultivate") {
     field.cultivated = true;
     field.state = "empty";
+    weather.clearCultivationWeather(field);
     await saveFarm(guildId, userId, farm);
     return { ok: true, completedTask: taskKey };
   }
@@ -417,6 +422,8 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     field.plantedAt = now;
     field.readyAt = now + crop.growthHours * 60 * 60 * 1000;
     field.cultivated = true;
+    const weatherState = await weather.ensureDailyWeatherState(guildId);
+    weather.maybeApplyActiveEventToField(field, weatherState, now);
 
     await saveFarm(guildId, userId, farm);
     return { ok: true, completedTask: taskKey };
@@ -437,7 +444,10 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
       await addProduceToInventory(guildId, userId, crop);
     }
 
-    if (crop.regrow && isCropValidForSeason(field.cropId)) {
+    const hasFieldDamage = Boolean(field.fieldCondition?.requiresCultivation);
+    weather.clearHarvestWeather(field);
+
+    if (crop.regrow && isCropValidForSeason(field.cropId) && !hasFieldDamage) {
       const now = Date.now();
       field.state = "growing";
       field.plantedAt = now;
@@ -450,7 +460,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
       field.state = "empty";
       field.plantedAt = null;
       field.readyAt = null;
-      field.cultivated = !leavesDebris;
+      field.cultivated = !leavesDebris && !hasFieldDamage;
     }
 
     await saveFarm(guildId, userId, farm);
@@ -503,14 +513,15 @@ module.exports = {
   plantCrop,
   harvestField,
   canRegrow,
-  getFieldSize,
-  getFieldPlotCount,
-  getYieldRangeForField,
-  getTaskDurationMs,
   isFieldTaskActive,
   getFieldTask,
   startFieldTask,
   clearFieldTask,
   completeFieldTask,
   applyFieldTaskRollovers,
+  getFieldSize,
+  getTotalPlots,
+  getUsablePlots,
+  getTaskDurationMs,
+  getScaledYieldRange,
 };

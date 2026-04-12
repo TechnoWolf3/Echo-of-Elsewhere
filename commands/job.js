@@ -32,6 +32,7 @@ const shiftCfg = require("../data/work/categories/nineToFive/shift");
 
 // ✅ Farming
 const farming = require("../utils/farming/engine");
+const farmWeather = require("../utils/farming/weather");
 const market = require("../utils/farming/market");
 const machineEngine = require("../utils/farming/machineEngine");
 const farmingUi = require("../features/farming/ui");
@@ -570,14 +571,16 @@ function scheduleReturnToCategory(delayMs = 5000) {
         try {
 
           const farm = await farming.ensureFarm(guildId, userId);
+          const weatherState = await farmWeather.ensureDailyWeatherState(guildId);
 
           await farming.applySeasonRollover(guildId, userId, farm);
           await farming.applyFieldTaskRollovers(guildId, userId, farm);
 
           const components = farmingUi.buildFarmingComponents(farm);
+          const weatherChannel = farmWeather.buildWeatherChannel(weatherState);
 
           return await msg.edit({
-            embeds: [farmingUi.buildFarmingEmbed(farm)],
+            embeds: [farmingUi.buildFarmingEmbed(farm, weatherChannel)],
             components
           });
         } catch (err) {
@@ -596,6 +599,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "farm_field") {
         const farm = await farming.ensureFarm(guildId, userId);
+        await farmWeather.ensureDailyWeatherState(guildId);
         await farming.applySeasonRollover(guildId, userId, farm);
         await farming.applyFieldTaskRollovers(guildId, userId, farm);
 
