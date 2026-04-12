@@ -84,7 +84,7 @@ function buildCategoryPanel(userId, category) {
   // Select to open an entry
   const options = items.map((it) => ({
     label: it.name.slice(0, 100),
-    value: it.id,
+    value: String(index),
     description: (it.short || "Open").slice(0, 100),
   }));
 
@@ -207,10 +207,12 @@ async function handleInteraction(interaction) {
       return true;
     }
 
-    const entryId = interaction.values?.[0];
-    const entry = (category.items || []).find((it) => it.id === entryId);
+    const selectedIndex = parseInt(interaction.values?.[0], 10);
+    const entry = category.items?.[selectedIndex];
 
     if (!entry) {
+      console.warn("[FEATURES] Invalid entry selection:", interaction.values?.[0]);
+
       const panel = buildCategoryPanel(userId, category);
       await interaction.update(panel).catch(() => null);
       return true;
