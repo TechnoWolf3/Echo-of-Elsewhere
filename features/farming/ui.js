@@ -172,12 +172,20 @@ function buildMachineActionCategoryEmbed(category, state, mode = "buy") {
     const speedBonus = Math.max(0, Math.round((1 - (m.taskSpeedMult || 1)) * 100));
     const tasks = Array.isArray(m.requiredFor) && m.requiredFor.length ? m.requiredFor.join(", ") : "General use";
 
+    const powerLine =
+      m.type === "tractor"
+        ? `Power: ${m.horsepower} HP`
+        : m.minHorsepower
+          ? `Requires: ${m.minHorsepower} HP`
+          : null;
+
     return [
       `**${m.name}**`,
       `Tier ${m.tier} - Owned: ${owned} - Rented: ${rented} - Busy: ${busy}`,
+      powerLine,
       `Buy: $${m.buyPrice.toLocaleString()} - Rent: $${m.rentPrice.toLocaleString()} - Sell: $${machineEngine.getSellValue(m).toLocaleString()}`,
       `Speed Bonus: ${speedBonus}% - Tasks: ${tasks}`,
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   });
 
   return ui.applySystemStyle(
@@ -313,24 +321,35 @@ function buildFarmingEmbed(farm, weatherChannel = null) {
   );
 
   const fieldLines = fields.length
-    ? fields.map((field, index) => {
-        let status = "Empty";
-        if (field.state === "growing") status = "Growing";
-        if (field.state === "ready") status = "Ready";
-        if (field.state === "spoiled") status = "Spoiled";
-        if (field.state === "empty" && !field.cultivated) status = "Needs cleanup";
-        if (field.fieldCondition?.label) status = field.fieldCondition.label;
-        if (farming.isFieldTaskActive(field)) {
-          status = `${field.task.key} until <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
+  ? fields.map((field, index) => {
+      let status = "Empty";
+
+      if (field.state === "growing") {
+        if (field.readyAt) {
+          status = `Ready <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`;
+        } else {
+          status = "Growing";
         }
-        const crop = field.cropId ? ` - ${field.cropId}` : "";
-        const size = farming.getFieldSize(field.level || 1);
-        const usable = farming.getUsablePlots(field);
-        const total = farming.getTotalPlots(field);
-        const plotText = usable === total ? `${size}x${size}` : `${usable}/${total} plots`;
-        return `**Field ${index + 1}** - Lv ${field.level || 1} - ${status} - ${plotText}${crop}`;
-      }).join("\n")
-    : "No fields yet. Buy your first field to start farming.";
+      }
+
+      if (field.state === "ready") status = "Ready";
+      if (field.state === "spoiled") status = "Spoiled";
+      if (field.state === "empty" && !field.cultivated) status = "Needs cleanup";
+      if (field.fieldCondition?.label) status = field.fieldCondition.label;
+
+      if (farming.isFieldTaskActive(field)) {
+        status = `${field.task.key} until <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
+      }
+
+      const crop = field.cropId ? ` - ${field.cropId}` : "";
+      const size = farming.getFieldSize(field.level || 1);
+      const usable = farming.getUsablePlots(field);
+      const total = farming.getTotalPlots(field);
+      const plotText = usable === total ? `${size}x${size}` : `${usable}/${total} plots`;
+
+      return `**Field ${index + 1}** - Lv ${field.level || 1} - ${status} - ${plotText}${crop}`;
+    }).join("\n")
+  : "No fields yet. Buy your first field to start farming.";
 
   const embed = new EmbedBuilder()
     .setTitle("🌾 Farming")

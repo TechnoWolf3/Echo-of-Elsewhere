@@ -337,6 +337,67 @@ function getAvailableMachinesByType(state, type) {
   return results;
 }
 
+function canTractorRunImplement(tractor, implement) {
+  if (!implement) return true;
+  if (implement.type === "harvester") return true; // harvesters are self-powered in current logic
+  if (!implement.minHorsepower) return true;
+  if (!tractor?.horsepower) return false;
+
+  return Number(tractor.horsepower) >= Number(implement.minHorsepower);
+}
+
+function getAvailableMachineObjectsByType(state, type) {
+  const ids = getAvailableMachinesByType(state, type);
+  return ids.map((id) => machines[id]).filter(Boolean);
+}
+
+function findCompatibleMachineSet(state, taskKey) {
+  const requiredTypes = TASK_REQUIREMENTS[taskKey] || [];
+
+  // harvest only needs a harvester, so no tractor compatibility needed
+  if (requiredTypes.length === 1) {
+    const onlyType = requiredTypes[0];
+    const available = getAvailableMachinesByType(state, onlyType);
+    if (!available.length) return null;
+    return [available[0]];
+  }
+
+  const needsTractor = requiredTypes.includes("tractor");
+  if (!needsTractor) {
+    const chosen = [];
+
+    for (const type of requiredTypes) {
+      const available = getAvailableMachinesByType(state, type);
+      if (!available.length) return null;
+      chosen.push(available[0]);
+    }
+
+    return chosen;
+  }
+
+  const tractorOptions = getAvailableMachineObjectsByType(state, "tractor");
+  const implementType = requiredTypes.find((t) => t !== "tractor");
+  const implementOptions = getAvailableMachineObjectsByType(state, implementType);
+
+  if (!tractorOptions.length || !implementOptions.length) return null;
+
+  // pick the first tractor + implement combo that is compatible
+  for (const tractor of tractorOptions) {
+    for (const implement of implementOptions) {
+      if (canTractorRunImplement(tractor, implement)) {
+        return [tractor.id, implement.id];
+      }
+    }
+  }
+
+  return {
+    incompatible: true,
+    implementType,
+    tractorOptions,
+    implementOptions,
+  };
+}
+
 async function reserveMachinesForTask(guildId, userId, fieldIndex, taskKey, durationMs) {
   const state = await ensureMachineState(guildId, userId);
 
@@ -346,21 +407,32 @@ async function reserveMachinesForTask(guildId, userId, fieldIndex, taskKey, dura
   if (cleaned) await saveMachineState(guildId, userId, state);
 
   const requiredTypes = TASK_REQUIREMENTS[taskKey] || [];
-  const chosenMachines = [];
+  const compatibleSet = findCompatibleMachineSet(state, taskKey);
 
-  for (const type of requiredTypes) {
-    const available = getAvailableMachinesByType(state, type);
-
-    if (available.length === 0) {
-      return {
-        ok: false,
-        reasonText: `You need a free ${type} for ${taskKey}.`,
-      };
-    }
-
-    const selected = available[0];
-    chosenMachines.push(selected);
+  if (!compatibleSet) {
+    const missingType = requiredTypes.find((type) => getAvailableMachinesByType(state, type).length === 0);
+    return {
+      ok: false,
+      reasonText: `You need a free ${missingType || "machine"} for ${taskKey}.`,
+    };
   }
+
+  if (compatibleSet.incompatible) {
+    const bestTractorHp = Math.max(
+      0,
+      ...compatibleSet.tractorOptions.map((t) => Number(t.horsepower || 0))
+    );
+    const lowestRequiredHp = Math.min(
+      ...compatibleSet.implementOptions.map((m) => Number(m.minHorsepower || 0))
+    );
+
+    return {
+      ok: false,
+      reasonText: `Your free tractors are not powerful enough for your available ${compatibleSet.implementType}s. Best available tractor: ${bestTractorHp} HP. Lowest requirement: ${lowestRequiredHp} HP.`,
+    };
+  }
+
+  const chosenMachines = compatibleSet;
 
   const now = Date.now();
 
@@ -402,4 +474,6 @@ module.exports = {
   RENTAL_DURATION_MS,
   SELL_VALUE_RATE,
   reserveMachinesForTask,
+  canTractorRunImplement,
+  findCompatibleMachineSet,
 };
