@@ -320,7 +320,8 @@ async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durati
   }
 
   if (taskKey === "cultivate") {
-    if (field.cropId || field.state === "growing" || field.state === "ready") {
+    const forceResetCrop = Boolean(extra.forceResetCrop);
+    if (!forceResetCrop && (field.cropId || field.state === "growing" || field.state === "ready")) {
       return { ok: false, reasonText: "That field is not empty." };
     }
   }
@@ -383,7 +384,8 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     return { ok: false, reasonText: "This field has no active task." };
   }
 
-  const taskKey = field.task.key;
+  const taskMeta = { ...(field.task || {}), ...(extra || {}) };
+  const taskKey = taskMeta.key;
   field.task = null;
 
   const failAndSave = async (reasonText) => {
@@ -392,11 +394,18 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
   };
 
   if (taskKey === "cultivate") {
+    field.cropId = null;
     field.cultivated = true;
     field.state = "empty";
+    field.plantedAt = null;
+    field.readyAt = null;
     weather.clearCultivationWeather(field);
     await saveFarm(guildId, userId, farm);
-    return { ok: true, completedTask: taskKey };
+    return {
+      ok: true,
+      completedTask: taskKey,
+      resetCrop: Boolean(taskMeta.forceResetCrop),
+    };
   }
 
   if (taskKey === "seed") {
@@ -480,9 +489,8 @@ async function applyFieldTaskRollovers(guildId, userId, farm) {
     if (!field?.task?.key || !field.task.endsAt) continue;
 
     if (Date.now() >= Number(field.task.endsAt)) {
-      const taskKey = field.task.key;
-      const cropId = field.task.cropId || null;
-      const result = await completeFieldTask(guildId, userId, farm, i, { cropId });
+      const taskMeta = { ...(field.task || {}) };
+      const result = await completeFieldTask(guildId, userId, farm, i, taskMeta);
 
       if (result.ok) {
         completions.push({ fieldIndex: i, ...result });

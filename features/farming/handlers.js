@@ -24,6 +24,7 @@ function isFarmingInteraction(actionId) {
     actionId.startsWith("farm_machine_rent:") ||
     actionId.startsWith("farm_machine_sell:") ||
     actionId.startsWith("farm_cultivate:") ||
+    actionId.startsWith("farm_recultivate:") ||
     actionId.startsWith("farm_upgrade:") ||
     actionId.startsWith("farm_plant:") ||
     actionId.startsWith("farm_harvest:") ||
@@ -237,13 +238,27 @@ async function handleFarmingInteraction({
     const fieldIndex = Number(actionId.split(":")[1]);
     await startMachineBackedFieldTask({
       action: "cultivate",
-      actionId,
       fieldIndex,
       guildId,
       userId,
       interaction,
       msg,
       successText: "🛠️ Cultivation started.",
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_recultivate:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    await startMachineBackedFieldTask({
+      action: "cultivate",
+      fieldIndex,
+      guildId,
+      userId,
+      interaction,
+      msg,
+      extra: { forceResetCrop: true },
+      successText: "♻️ Re-cultivation started. The current crop will be cleared when the job finishes.",
     });
     return true;
   }

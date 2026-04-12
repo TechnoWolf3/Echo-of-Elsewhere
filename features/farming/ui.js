@@ -651,6 +651,17 @@ function buildFieldComponents(farm, fieldIndex) {
     );
   }
 
+  if (field.cropId && (field.state === "growing" || field.state === "ready")) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_recultivate:${fieldIndex}`)
+          .setLabel("♻️ Re-Cultivate")
+          .setStyle(ButtonStyle.Danger)
+      )
+    );
+  }
+
   if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation && (field.level || 1) < config.MAX_FIELD_LEVEL) {
     rows.push(
       new ActionRowBuilder().addComponents(
