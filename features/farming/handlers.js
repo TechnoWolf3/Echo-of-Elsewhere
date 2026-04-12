@@ -352,8 +352,9 @@ async function startMachineBackedFieldTask({
   extra = {},
   successText,
 }) {
-  const taskMs = 60000;
   const farm = await farming.ensureFarm(guildId, userId);
+  const field = farm.fields?.[fieldIndex];
+  const taskMs = farming.getTaskDurationMs(action, field);
   const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, action, taskMs, extra);
 
   if (!result.ok) {

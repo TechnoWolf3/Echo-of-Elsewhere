@@ -323,7 +323,8 @@ function buildFarmingEmbed(farm) {
           status = `${field.task.key} until <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
         }
         const crop = field.cropId ? ` - ${field.cropId}` : "";
-        return `**Field ${index + 1}** - Lv ${field.level || 1} - ${status}${crop}`;
+        const size = farming.getFieldSize(field.level || 1);
+        return `**Field ${index + 1}** - Lv ${field.level || 1} (${size}x${size}) - ${status}${crop}`;
       }).join("\n")
     : "No fields yet. Buy your first field to start farming.";
 
@@ -365,7 +366,7 @@ function renderFieldVisual(field) {
   if (!field) return "";
 
   const level = Math.max(1, Number(field.level || 1));
-  const size = Math.min(level + 2, 8);
+  const size = farming.getFieldSize(level);
   const cropId = String(field.cropId || "").toLowerCase();
 
   function tileForGrowing() {
@@ -466,6 +467,21 @@ function buildFieldEmbed(farm, fieldIndex) {
       : "";
 
   const cultivatedLine = field.cultivated ? "✅ Cultivated" : "❌ Needs Cultivation";
+  const size = farming.getFieldSize(field.level || 1);
+  const plots = farming.getFieldPlotCount(field.level || 1);
+  const cropYield = crop ? farming.getYieldRangeForField(crop, field) : null;
+  const taskTimes = {
+    cultivate: farming.getTaskDurationMs("cultivate", field),
+    seed: farming.getTaskDurationMs("seed", field),
+    harvest: farming.getTaskDurationMs("harvest", field),
+  };
+  const formatDuration = (ms) => {
+    const totalMinutes = Math.max(1, Math.round(ms / 60000));
+    if (totalMinutes < 60) return `${totalMinutes}m`;
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  };
   const machineHint =
     field.state === "ready"
       ? "Needs a free harvester."
@@ -483,10 +499,13 @@ function buildFieldEmbed(farm, fieldIndex) {
         visual,
         "",
         `📈 **Level:** ${field.level || 1}`,
+        `📐 **Size:** ${size}x${size} (${plots} plots)` ,
         `📌 **Status:** ${stateText}`,
         `🌿 **Crop:** ${cropName}`,
+        cropYield ? `📦 **Yield Range:** ${cropYield.min}-${cropYield.max}` : null,
         `🪴 **Condition:** ${cultivatedLine}`,
         `🍂 **Season:** ${farming.getCurrentSeason()}`,
+        `⏱️ **Task Times:** Cultivate ${formatDuration(taskTimes.cultivate)} • Seed ${formatDuration(taskTimes.seed)} • Harvest ${formatDuration(taskTimes.harvest)}`,
         `🚜 **Machine Need:** ${machineHint}`,
         taskLine,
         readyLine,

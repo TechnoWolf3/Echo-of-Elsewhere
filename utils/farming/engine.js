@@ -120,6 +120,50 @@ function canRegrow(field) {
   return Boolean(crops[field.cropId]?.regrow);
 }
 
+function getFieldSize(level = 1) {
+  const safeLevel = Math.max(1, Math.min(Number(level || 1), config.MAX_FIELD_LEVEL || 10));
+  return safeLevel + 2;
+}
+
+function getFieldPlotCount(level = 1) {
+  const size = getFieldSize(level);
+  return size * size;
+}
+
+function getYieldRangeForField(cropOrId, fieldOrLevel = 1) {
+  const crop = typeof cropOrId === "string" ? crops[cropOrId] : cropOrId;
+  if (!crop) return { min: 0, max: 0, multiplier: 1, plots: getFieldPlotCount(fieldOrLevel?.level ?? fieldOrLevel ?? 1) };
+
+  const fieldLevel = typeof fieldOrLevel === "object" ? Number(fieldOrLevel?.level || 1) : Number(fieldOrLevel || 1);
+  const plots = getFieldPlotCount(fieldLevel);
+  const basePlots = getFieldPlotCount(1);
+  const multiplier = plots / basePlots;
+
+  const [baseMin, baseMax] = crop.yield || [1, 1];
+  return {
+    min: Math.max(1, Math.round(baseMin * multiplier)),
+    max: Math.max(1, Math.round(baseMax * multiplier)),
+    multiplier,
+    plots,
+  };
+}
+
+function getTaskDurationMs(taskKey, fieldOrLevel = 1) {
+  const fieldLevel = typeof fieldOrLevel === "object" ? Number(fieldOrLevel?.level || 1) : Number(fieldOrLevel || 1);
+  const baseMinutesByTask = {
+    cultivate: 1,
+    seed: 1,
+    harvest: 1,
+  };
+
+  const baseMinutes = baseMinutesByTask[taskKey] || 1;
+  const plots = getFieldPlotCount(fieldLevel);
+  const basePlots = getFieldPlotCount(1);
+  const scaledMinutes = baseMinutes * (plots / basePlots);
+
+  return Math.max(60_000, Math.round(scaledMinutes * 60 * 1000));
+}
+
 function updateFieldRuntime(field) {
   if (!field) return field;
   if (field.state === "growing" && isReady(field)) {
@@ -215,8 +259,8 @@ async function plantCrop(guildId, userId, farm, fieldIndex, cropId) {
   return { ok: true, field };
 }
 
-function rollYield(crop) {
-  const [min, max] = crop.yield || [1, 1];
+function rollYield(crop, fieldOrLevel = 1) {
+  const { min, max } = getYieldRangeForField(crop, fieldOrLevel);
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
@@ -233,7 +277,7 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
   const crop = crops[field.cropId];
   if (!crop) return { ok: false, reasonText: "Unknown crop." };
 
-  const qty = rollYield(crop);
+  const qty = rollYield(crop, field);
   for (let i = 0; i < qty; i++) {
     await addProduceToInventory(guildId, userId, crop);
   }
@@ -388,7 +432,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     const crop = crops[field.cropId];
     if (!crop) return failAndSave("Unknown crop.");
 
-    const qty = rollYield(crop);
+    const qty = rollYield(crop, field);
     for (let i = 0; i < qty; i++) {
       await addProduceToInventory(guildId, userId, crop);
     }
@@ -459,6 +503,10 @@ module.exports = {
   plantCrop,
   harvestField,
   canRegrow,
+  getFieldSize,
+  getFieldPlotCount,
+  getYieldRangeForField,
+  getTaskDurationMs,
   isFieldTaskActive,
   getFieldTask,
   startFieldTask,
