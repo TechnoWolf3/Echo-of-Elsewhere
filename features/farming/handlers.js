@@ -6,6 +6,7 @@ const market = require("../../utils/farming/market");
 const machineEngine = require("../../utils/farming/machineEngine");
 const weather = require("../../utils/farming/weather");
 const farmingUi = require("./ui");
+const { ensureUser, tryDebitBank, creditBank } = require("../../utils/economy");
 
 function isFarmingInteraction(actionId) {
   return (
@@ -121,17 +122,16 @@ async function handleFarmingInteraction({
     }
 
     const cost = farming.getNextFieldCost(farm.fields.length);
-    const debit = await pool.query(
-      `UPDATE user_balances
-       SET balance = balance - $1
-       WHERE user_id=$2 AND guild_id=$3 AND balance >= $1
-       RETURNING balance`,
-      [cost, userId, guildId]
-    );
+    await ensureUser(guildId, userId);
+    const debit = await tryDebitBank(guildId, userId, cost, "farming_field_purchase", {
+      feature: "farming",
+      purchase: "field",
+      fieldNumber: (farm.fields?.length || 0) + 1,
+    });
 
-    if (debit.rowCount === 0) {
+    if (!debit.ok) {
       await interaction.followUp({
-        content: `❌ You need $${cost.toLocaleString()}`,
+        content: `❌ You need $${cost.toLocaleString()} in your bank to buy this field.`,
         flags: MessageFlags.Ephemeral,
       }).catch(() => {});
       return true;
@@ -139,10 +139,11 @@ async function handleFarmingInteraction({
 
     const result = await farming.buyField(guildId, userId, farm);
     if (result?.ok === false) {
-      await pool.query(
-        `UPDATE user_balances SET balance = balance + $1 WHERE user_id=$2 AND guild_id=$3`,
-        [cost, userId, guildId]
-      );
+      await creditBank(guildId, userId, cost, "farming_field_purchase_refund", {
+        feature: "farming",
+        purchase: "field",
+        reason: result.reasonText,
+      });
       await interaction.followUp({
         content: `❌ ${result.reasonText}`,
         flags: MessageFlags.Ephemeral,
@@ -296,16 +297,21 @@ async function handleFarmingInteraction({
   if (actionId.startsWith("farm_upgrade:")) {
     const fieldIndex = Number(actionId.split(":")[1]);
     const farm = await farming.ensureFarm(guildId, userId);
-    const cost = farming.getUpgradeCost(farm.fields?.[fieldIndex]?.level || 1);
+    const fieldLevel = farm.fields?.[fieldIndex]?.level || 1;
+    const cost = farming.getUpgradeCost(fieldLevel);
 
-    const bal = await pool.query(
-      `SELECT balance FROM user_balances WHERE user_id=$1 AND guild_id=$2`,
-      [userId, guildId]
-    );
+    await ensureUser(guildId, userId);
+    const debit = await tryDebitBank(guildId, userId, cost, "farming_field_upgrade", {
+      feature: "farming",
+      purchase: "field_upgrade",
+      fieldNumber: fieldIndex + 1,
+      fromLevel: fieldLevel,
+      toLevel: fieldLevel + 1,
+    });
 
-    if ((bal.rows[0]?.balance || 0) < cost) {
+    if (!debit.ok) {
       await interaction.followUp({
-        content: `❌ You need $${cost.toLocaleString()} to upgrade this field.`,
+        content: `❌ You need $${cost.toLocaleString()} in your bank to upgrade this field.`,
         flags: MessageFlags.Ephemeral,
       }).catch(() => {});
       return true;
@@ -313,17 +319,18 @@ async function handleFarmingInteraction({
 
     const result = await farming.upgradeField(guildId, userId, farm, fieldIndex);
     if (!result.ok) {
+      await creditBank(guildId, userId, cost, "farming_field_upgrade_refund", {
+        feature: "farming",
+        purchase: "field_upgrade",
+        fieldNumber: fieldIndex + 1,
+        reason: result.reasonText,
+      });
       await interaction.followUp({
         content: `❌ ${result.reasonText}`,
         flags: MessageFlags.Ephemeral,
       }).catch(() => {});
       return true;
     }
-
-    await pool.query(
-      `UPDATE user_balances SET balance = balance - $1 WHERE user_id=$2 AND guild_id=$3`,
-      [cost, userId, guildId]
-    );
 
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await msg.edit({

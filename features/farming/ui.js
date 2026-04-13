@@ -663,11 +663,12 @@ function buildFieldComponents(farm, fieldIndex) {
   }
 
   if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation && (field.level || 1) < config.MAX_FIELD_LEVEL) {
+    const upgradeCost = farming.getUpgradeCost(field.level || 1);
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`farm_upgrade:${fieldIndex}`)
-          .setLabel("⬆ Upgrade Field")
+          .setLabel(`⬆ Upgrade Field ($${upgradeCost.toLocaleString()})`)
           .setStyle(ButtonStyle.Primary)
       )
     );
