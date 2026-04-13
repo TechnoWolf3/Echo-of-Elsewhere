@@ -290,19 +290,19 @@ async function collectTrucker({ session, msg, payUser, scheduleReturnToCategory 
   session.view = "95";
   session.trucker = null;
   await msg.edit({
-    content: null,
-    embeds: [buildCompletionEmbed({
-      title: truckerCfg.completeTitle || "✅ Delivery Complete",
-      lines: [
-        `**Freight:** ${manifest.freight}`,
-        `**Trailer Config:** ${manifest.truckType}`,
-        `**Route:** ${nineToFiveUi.formatRoutePlace(manifest.route.from)} -> ${nineToFiveUi.formatRoutePlace(manifest.route.to)}`,
-        `**Distance:** ${manifest.distanceKm.toLocaleString()} km`,
-      ],
-      paid,
-    })],
-    components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
-  }).catch(() => {});
+  content: null,
+  embeds: [buildCompletionEmbed({
+    title: truckerCfg.completeTitle || "✅ Delivery Complete",
+    lines: [
+      `**Freight:** ${manifest.freight}`,
+      `**Trailer Config:** ${manifest.truckType}`,
+      `**Route:** ${nineToFiveUi.formatRoutePlace(manifest.route.from)} -> ${nineToFiveUi.formatRoutePlace(manifest.route.to)}`,
+      `**Distance:** ${manifest.distanceKm.toLocaleString()} km`,
+    ],
+    paid,
+  })],
+  components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+}).catch(() => {});
   scheduleReturnToCategory(5000);
   return true;
 }
