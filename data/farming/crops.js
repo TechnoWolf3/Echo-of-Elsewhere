@@ -44,7 +44,31 @@ module.exports = {
     regrow: true,
     debrisChance: 0,
   },
-// Level 2 Crops
+
+  lettuce: {
+    id: "lettuce",
+    name: "Lettuce",
+    level: 1,
+    growthHours: 3,
+    yield: [2, 5],
+    seasons: ["spring", "autumn"],
+    regrow: false,
+    debrisChance: 0.25,
+  },
+
+  peas: {
+    id: "peas",
+    name: "Peas",
+    level: 1,
+    growthHours: 4,
+    regrowHours: 2,
+    yield: [2, 5],
+    seasons: ["spring"],
+    regrow: true,
+    debrisChance: 0,
+  },
+
+  // Level 2 Crops
   potatoes: {
     id: "potatoes",
     name: "Potatoes",
@@ -66,7 +90,30 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
-// Level 3 Crops
+
+  beetroot: {
+    id: "beetroot",
+    name: "Beetroot",
+    level: 2,
+    growthHours: 5,
+    yield: [4, 8],
+    seasons: ["spring", "autumn"],
+    regrow: false,
+    debrisChance: 0.25,
+  },
+
+  garlic: {
+    id: "garlic",
+    name: "Garlic",
+    level: 2,
+    growthHours: 6,
+    yield: [4, 7],
+    seasons: ["winter", "spring"],
+    regrow: false,
+    debrisChance: 0.2,
+  },
+
+  // Level 3 Crops
   corn: {
     id: "corn",
     name: "Corn",
@@ -89,7 +136,32 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
-// Level 4 Crops
+
+  zucchini: {
+    id: "zucchini",
+    name: "Zucchini",
+    level: 3,
+    growthHours: 7,
+    regrowHours: 4,
+    yield: [5, 10],
+    seasons: ["spring", "summer"],
+    regrow: true,
+    debrisChance: 0,
+  },
+
+  green_beans: {
+    id: "green_beans",
+    name: "Green Beans",
+    level: 3,
+    growthHours: 6,
+    regrowHours: 3,
+    yield: [5, 9],
+    seasons: ["spring", "summer"],
+    regrow: true,
+    debrisChance: 0,
+  },
+
+  // Level 4 Crops
   carrots: {
     id: "carrots",
     name: "Carrots",
@@ -111,7 +183,30 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
-// Level 5 Crops
+
+  cauliflower: {
+    id: "cauliflower",
+    name: "Cauliflower",
+    level: 4,
+    growthHours: 8,
+    yield: [7, 12],
+    seasons: ["autumn", "winter"],
+    regrow: false,
+    debrisChance: 0.25,
+  },
+
+  turnips: {
+    id: "turnips",
+    name: "Turnips",
+    level: 4,
+    growthHours: 7,
+    yield: [6, 11],
+    seasons: ["spring", "autumn"],
+    regrow: false,
+    debrisChance: 0.25,
+  },
+
+  // Level 5 Crops
   tomatoes: {
     id: "tomatoes",
     name: "Tomatoes",
@@ -123,6 +218,7 @@ module.exports = {
     regrow: true,
     debrisChance: 0,
   },
+
   cabbage: {
     id: "cabbage",
     name: "Cabbage",
@@ -133,7 +229,31 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
-// Level 6 Crops
+
+  cucumbers: {
+    id: "cucumbers",
+    name: "Cucumbers",
+    level: 5,
+    growthHours: 9,
+    regrowHours: 5,
+    yield: [7, 13],
+    seasons: ["spring", "summer"],
+    regrow: true,
+    debrisChance: 0,
+  },
+
+  eggplant: {
+    id: "eggplant",
+    name: "Eggplant",
+    level: 5,
+    growthHours: 10,
+    yield: [8, 14],
+    seasons: ["summer", "autumn"],
+    regrow: false,
+    debrisChance: 0.25,
+  },
+
+  // Level 6 Crops
   pumpkins: {
     id: "pumpkins",
     name: "Pumpkins",
@@ -144,6 +264,7 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
+
   strawberries: {
     id: "strawberries",
     name: "Strawberries",
@@ -155,7 +276,31 @@ module.exports = {
     regrow: true,
     debrisChance: 0,
   },
-// Level 7 Crops
+
+  celery: {
+    id: "celery",
+    name: "Celery",
+    level: 6,
+    growthHours: 10,
+    yield: [8, 13],
+    seasons: ["spring", "autumn"],
+    regrow: false,
+    debrisChance: 0.2,
+  },
+
+  blueberries: {
+    id: "blueberries",
+    name: "Blueberries",
+    level: 6,
+    growthHours: 11,
+    regrowHours: 6,
+    yield: [7, 12],
+    seasons: ["spring", "summer"],
+    regrow: true,
+    debrisChance: 0,
+  },
+
+  // Level 7 Crops
   rice: {
     id: "rice",
     name: "Rice",
@@ -166,6 +311,7 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
+
   sugarcane: {
     id: "sugarcane",
     name: "Sugarcane",
@@ -177,7 +323,30 @@ module.exports = {
     regrow: true,
     debrisChance: 0,
   },
-// Level 8 Crops
+
+  cotton: {
+    id: "cotton",
+    name: "Cotton",
+    level: 7,
+    growthHours: 12,
+    yield: [9, 16],
+    seasons: ["spring", "summer"],
+    regrow: false,
+    debrisChance: 0.2,
+  },
+
+  sunflowers: {
+    id: "sunflowers",
+    name: "Sunflowers",
+    level: 7,
+    growthHours: 11,
+    yield: [8, 14],
+    seasons: ["spring", "summer"],
+    regrow: false,
+    debrisChance: 0.2,
+  },
+
+  // Level 8 Crops
   watermelon: {
     id: "watermelon",
     name: "Watermelon",
@@ -188,6 +357,7 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
+
   broccoli: {
     id: "broccoli",
     name: "Broccoli",
@@ -198,7 +368,32 @@ module.exports = {
     regrow: false,
     debrisChance: 0.25,
   },
-// Level 9 Crops
+
+  asparagus: {
+    id: "asparagus",
+    name: "Asparagus",
+    level: 8,
+    growthHours: 12,
+    regrowHours: 6,
+    yield: [9, 15],
+    seasons: ["spring"],
+    regrow: true,
+    debrisChance: 0,
+  },
+
+  capsicum: {
+    id: "capsicum",
+    name: "Capsicum",
+    level: 8,
+    growthHours: 13,
+    regrowHours: 7,
+    yield: [10, 16],
+    seasons: ["spring", "summer"],
+    regrow: true,
+    debrisChance: 0,
+  },
+
+  // Level 9 Crops
   grapes: {
     id: "grapes",
     name: "Grapes",
@@ -210,6 +405,7 @@ module.exports = {
     regrow: true,
     debrisChance: 0,
   },
+
   chillies: {
     id: "chillies",
     name: "Chillies",
@@ -221,7 +417,30 @@ module.exports = {
     regrow: true,
     debrisChance: 0,
   },
-// Level 10 Crops
+
+  artichokes: {
+    id: "artichokes",
+    name: "Artichokes",
+    level: 9,
+    growthHours: 14,
+    yield: [10, 17],
+    seasons: ["spring", "autumn"],
+    regrow: false,
+    debrisChance: 0.2,
+  },
+
+  leeks: {
+    id: "leeks",
+    name: "Leeks",
+    level: 9,
+    growthHours: 13,
+    yield: [10, 16],
+    seasons: ["winter", "spring"],
+    regrow: false,
+    debrisChance: 0.2,
+  },
+
+  // Level 10 Crops
   hops: {
     id: "hops",
     name: "Hops",
@@ -233,6 +452,7 @@ module.exports = {
     regrow: true,
     debrisChance: 0,
   },
+
   saffron: {
     id: "saffron",
     name: "Saffron",
@@ -242,5 +462,28 @@ module.exports = {
     seasons: ["autumn"],
     regrow: false,
     debrisChance: 0.15,
+  },
+
+  lavender: {
+    id: "lavender",
+    name: "Lavender",
+    level: 10,
+    growthHours: 15,
+    yield: [8, 13],
+    seasons: ["spring", "summer"],
+    regrow: false,
+    debrisChance: 0.15,
+  },
+
+  tea_leaf: {
+    id: "tea_leaf",
+    name: "Tea Leaf",
+    level: 10,
+    growthHours: 17,
+    regrowHours: 8,
+    yield: [9, 14],
+    seasons: ["spring", "summer"],
+    regrow: true,
+    debrisChance: 0,
   },
 };

@@ -39,6 +39,27 @@ module.exports = {
       winter: [50, 62],
     },
   },
+
+  lettuce: {
+    basePrice: 54,
+    seasonalRanges: {
+      spring: [48, 58],
+      summer: [56, 66],
+      autumn: [50, 60],
+      winter: [58, 70],
+    },
+  },
+
+  peas: {
+    basePrice: 60,
+    seasonalRanges: {
+      spring: [50, 60],
+      summer: [62, 74],
+      autumn: [60, 72],
+      winter: [66, 78],
+    },
+  },
+
   // Level 2 Crops
   potatoes: {
     basePrice: 82,
@@ -59,6 +80,27 @@ module.exports = {
       winter: [102, 118],
     },
   },
+
+  beetroot: {
+    basePrice: 86,
+    seasonalRanges: {
+      spring: [78, 90],
+      summer: [88, 102],
+      autumn: [74, 88],
+      winter: [92, 108],
+    },
+  },
+
+  garlic: {
+    basePrice: 96,
+    seasonalRanges: {
+      spring: [84, 98],
+      summer: [98, 114],
+      autumn: [92, 108],
+      winter: [80, 96],
+    },
+  },
+
   // Level 3 Crops
   corn: {
     basePrice: 118,
@@ -79,6 +121,27 @@ module.exports = {
       winter: [138, 160],
     },
   },
+
+  zucchini: {
+    basePrice: 122,
+    seasonalRanges: {
+      spring: [108, 122],
+      summer: [116, 132],
+      autumn: [126, 142],
+      winter: [136, 154],
+    },
+  },
+
+  green_beans: {
+    basePrice: 128,
+    seasonalRanges: {
+      spring: [112, 128],
+      summer: [120, 136],
+      autumn: [132, 148],
+      winter: [142, 160],
+    },
+  },
+
   // Level 4 Crops
   carrots: {
     basePrice: 158,
@@ -90,7 +153,7 @@ module.exports = {
     },
   },
 
-    onions: {
+  onions: {
     basePrice: 166,
     seasonalRanges: {
       spring: [174, 194],
@@ -99,6 +162,27 @@ module.exports = {
       winter: [188, 214],
     },
   },
+
+  cauliflower: {
+    basePrice: 162,
+    seasonalRanges: {
+      spring: [172, 192],
+      summer: [176, 198],
+      autumn: [146, 162],
+      winter: [184, 210],
+    },
+  },
+
+  turnips: {
+    basePrice: 154,
+    seasonalRanges: {
+      spring: [138, 154],
+      summer: [160, 180],
+      autumn: [140, 156],
+      winter: [170, 194],
+    },
+  },
+
   // Level 5 Crops
   tomatoes: {
     basePrice: 188,
@@ -119,6 +203,27 @@ module.exports = {
       winter: [204, 228],
     },
   },
+
+  cucumbers: {
+    basePrice: 192,
+    seasonalRanges: {
+      spring: [170, 192],
+      summer: [178, 198],
+      autumn: [194, 214],
+      winter: [208, 232],
+    },
+  },
+
+  eggplant: {
+    basePrice: 198,
+    seasonalRanges: {
+      spring: [206, 226],
+      summer: [182, 198],
+      autumn: [190, 208],
+      winter: [214, 238],
+    },
+  },
+
   // Level 6 Crops
   pumpkins: {
     basePrice: 214,
@@ -139,6 +244,27 @@ module.exports = {
       winter: [246, 272],
     },
   },
+
+  celery: {
+    basePrice: 218,
+    seasonalRanges: {
+      spring: [196, 218],
+      summer: [222, 244],
+      autumn: [200, 220],
+      winter: [232, 258],
+    },
+  },
+
+  blueberries: {
+    basePrice: 234,
+    seasonalRanges: {
+      spring: [210, 234],
+      summer: [220, 244],
+      autumn: [238, 260],
+      winter: [252, 278],
+    },
+  },
+
   // Level 7 Crops
   rice: {
     basePrice: 248,
@@ -159,6 +285,27 @@ module.exports = {
       winter: [286, 312],
     },
   },
+
+  cotton: {
+    basePrice: 256,
+    seasonalRanges: {
+      spring: [230, 256],
+      summer: [238, 264],
+      autumn: [262, 286],
+      winter: [278, 304],
+    },
+  },
+
+  sunflowers: {
+    basePrice: 252,
+    seasonalRanges: {
+      spring: [226, 252],
+      summer: [234, 260],
+      autumn: [258, 284],
+      winter: [272, 298],
+    },
+  },
+
   // Level 8 Crops
   watermelon: {
     basePrice: 292,
@@ -179,6 +326,27 @@ module.exports = {
       winter: [252, 278],
     },
   },
+
+  asparagus: {
+    basePrice: 286,
+    seasonalRanges: {
+      spring: [258, 286],
+      summer: [296, 322],
+      autumn: [290, 316],
+      winter: [308, 338],
+    },
+  },
+
+  capsicum: {
+    basePrice: 296,
+    seasonalRanges: {
+      spring: [266, 296],
+      summer: [276, 304],
+      autumn: [300, 328],
+      winter: [320, 350],
+    },
+  },
+
   // Level 9 Crops
   grapes: {
     basePrice: 324,
@@ -199,6 +367,27 @@ module.exports = {
       winter: [368, 398],
     },
   },
+
+  artichokes: {
+    basePrice: 332,
+    seasonalRanges: {
+      spring: [298, 332],
+      summer: [342, 370],
+      autumn: [304, 336],
+      winter: [360, 392],
+    },
+  },
+
+  leeks: {
+    basePrice: 328,
+    seasonalRanges: {
+      spring: [294, 328],
+      summer: [338, 366],
+      autumn: [320, 350],
+      winter: [290, 328],
+    },
+  },
+
   // Level 10 Crops
   hops: {
     basePrice: 366,
@@ -217,6 +406,26 @@ module.exports = {
       summer: [458, 494],
       autumn: [388, 428],
       winter: [470, 512],
+    },
+  },
+
+  lavender: {
+    basePrice: 382,
+    seasonalRanges: {
+      spring: [344, 382],
+      summer: [356, 392],
+      autumn: [390, 424],
+      winter: [408, 444],
+    },
+  },
+
+  tea_leaf: {
+    basePrice: 396,
+    seasonalRanges: {
+      spring: [356, 396],
+      summer: [368, 406],
+      autumn: [404, 438],
+      winter: [420, 458],
     },
   },
 };
