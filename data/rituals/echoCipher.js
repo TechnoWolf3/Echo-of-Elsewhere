@@ -21,7 +21,6 @@ const MAX_ATTEMPTS = 6;
 
 const BTN_GUESS = "rituals:cipher:guess";
 const BTN_GIVE_UP = "rituals:cipher:giveup";
-const BTN_REOPEN = "rituals:cipher:reopen";
 const MODAL_ID = "rituals:cipher:modal";
 const INPUT_ID = "cipher_guess";
 
@@ -124,9 +123,9 @@ function buildEmbed(session, latestMessage = null) {
   return embed;
 }
 
-function buildModal() {
+function buildModal(userId) {
   return new ModalBuilder()
-    .setCustomId(MODAL_ID)
+    .setCustomId(`${MODAL_ID}:${userId}`)
     .setTitle("Echo Cipher Guess")
     .addComponents(
       new ActionRowBuilder().addComponents(
@@ -145,6 +144,15 @@ function buildModal() {
 function getSession(guildId, userId) {
   pruneSessions();
   return sessions.get(sessionKey(guildId, userId)) || null;
+}
+
+function getSessionByMessageId(messageId) {
+  pruneSessions();
+  if (!messageId) return null;
+  for (const session of sessions.values()) {
+    if (session?.messageId === messageId) return session;
+  }
+  return null;
 }
 
 function setSession(session) {
@@ -180,13 +188,6 @@ async function updateSessionMessage(session, interaction, payload) {
     await message.edit(payload).catch(() => {});
     return message;
   }
-
-  if (interaction.deferred || interaction.replied) {
-    await interaction.editReply(payload).catch(() => {});
-    return null;
-  }
-
-  await interaction.reply(payload).catch(() => {});
   return null;
 }
 
@@ -323,15 +324,24 @@ module.exports = {
     }
 
     await interaction.deferUpdate().catch(() => {});
-    await interaction.editReply({
+
+    const existingMessage = await getSessionMessage(session, interaction);
+    if (existingMessage) {
+      await existingMessage.edit({
+        embeds: [buildEmbed(session)],
+        components: buildComponents(),
+      }).catch(() => {});
+      return true;
+    }
+
+    const publicMessage = await interaction.channel?.send({
       embeds: [buildEmbed(session)],
       components: buildComponents(),
-    }).catch(() => {});
+    }).catch(() => null);
 
-    const reply = await interaction.fetchReply().catch(() => null);
-    if (reply) {
-      session.channelId = reply.channelId;
-      session.messageId = reply.id;
+    if (publicMessage) {
+      session.channelId = publicMessage.channelId;
+      session.messageId = publicMessage.id;
       setSession(session);
     }
 
@@ -340,11 +350,10 @@ module.exports = {
 
   async handleInteraction(interaction) {
     const cid = String(interaction.customId || "");
-    const relevant =
-      (interaction.isButton?.() && (cid === BTN_GUESS || cid === BTN_GIVE_UP || cid === BTN_REOPEN)) ||
-      (interaction.isModalSubmit?.() && cid === MODAL_ID);
+    const isCipherButton = interaction.isButton?.() && (cid === BTN_GUESS || cid === BTN_GIVE_UP);
+    const isCipherModal = interaction.isModalSubmit?.() && cid.startsWith(`${MODAL_ID}:`);
+    if (!isCipherButton && !isCipherModal) return false;
 
-    if (!relevant) return false;
     if (!interaction.inGuild()) {
       await interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
@@ -352,20 +361,36 @@ module.exports = {
 
     const guildId = interaction.guildId;
     const userId = interaction.user.id;
-    const session = getSession(guildId, userId);
 
     if (interaction.isButton()) {
-      if (!session && cid !== BTN_REOPEN) {
-        await interaction.deferUpdate().catch(() => {});
-        await interaction.editReply({
-          embeds: [new EmbedBuilder().setColor(0x7a2bff).setTitle("🔐 Echo Cipher").setDescription("There is no active Echo Cipher session right now. Open it again from **/rituals**.")],
-          components: [],
+      const messageSession = getSessionByMessageId(interaction.message?.id);
+      if (!messageSession) {
+        await interaction.reply({
+          content: "❌ That Echo Cipher session is gone. Open it again from **/rituals**.",
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+        return true;
+      }
+
+      if (messageSession.userId !== userId) {
+        await interaction.reply({
+          content: "❌ This Echo Cipher belongs to someone else.",
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+        return true;
+      }
+
+      const session = getSession(guildId, userId);
+      if (!session) {
+        await interaction.reply({
+          content: "❌ That Echo Cipher session is gone. Open it again from **/rituals**.",
+          flags: MessageFlags.Ephemeral,
         }).catch(() => {});
         return true;
       }
 
       if (cid === BTN_GUESS) {
-        await interaction.showModal(buildModal()).catch(() => {});
+        await interaction.showModal(buildModal(userId)).catch(() => {});
         return true;
       }
 
@@ -380,6 +405,16 @@ module.exports = {
     }
 
     if (interaction.isModalSubmit()) {
+      const modalUserId = cid.split(":").pop();
+      if (modalUserId !== userId) {
+        await interaction.reply({
+          content: "❌ This Echo Cipher belongs to someone else.",
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+        return true;
+      }
+
+      const session = getSession(guildId, userId);
       if (!session) {
         await interaction.reply({
           content: "❌ That Echo Cipher session is gone. Open it again from **/rituals**.",
@@ -405,29 +440,35 @@ module.exports = {
         return true;
       }
 
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
       const feedback = buildFeedback(session.secret, rawGuess);
       session.history.push({ guess: rawGuess, ...feedback });
       setSession(session);
 
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-
       if (rawGuess === session.secret) {
-        return winSession({ session, interaction });
+        await winSession({ session, interaction });
+        await interaction.deleteReply().catch(() => {});
+        return true;
       }
 
       if (session.history.length >= MAX_ATTEMPTS) {
-        return failSession({
+        await failSession({
           session,
           interaction,
           reason: "❌ Six attempts spent. The lock slams shut.",
         });
+        await interaction.deleteReply().catch(() => {});
+        return true;
       }
 
       const latest = `\`${rawGuess}\` → ${feedback.markers}\nExact digits: **${feedback.correctSpot}** • Misplaced digits: **${feedback.wrongSpot}**`;
-      await interaction.editReply({
+      await updateSessionMessage(session, interaction, {
         embeds: [buildEmbed(session, latest)],
         components: buildComponents(),
-      }).catch(() => {});
+      });
+
+      await interaction.deleteReply().catch(() => {});
       return true;
     }
 
