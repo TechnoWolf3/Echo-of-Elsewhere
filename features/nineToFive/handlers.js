@@ -242,23 +242,27 @@ async function startTrucker({ interaction, session, msg, checkCooldownOrTell }) 
 
   const tickMs = Math.max(5_000, (truckerCfg.updateEverySeconds || 30) * 1000);
   session.trucker.interval = setInterval(async () => {
-    try {
-      const done = Date.now() - session.trucker.startMs >= session.trucker.durationMs;
-      if (done) session.trucker.ready = true;
+  try {
+    const done = Date.now() - session.trucker.startMs >= session.trucker.durationMs;
+    if (done) session.trucker.ready = true;
 
-      await msg.edit({
-        content: done ? `<@${session.userId}> your delivery is complete — collect your pay.` : null,
-        embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
-        components: nineToFiveUi.buildTruckerButtons(session.trucker),
-        allowedMentions: done ? { users: [session.userId] } : { parse: [] },
+    await msg.edit({
+      content: null,
+      embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
+      components: nineToFiveUi.buildTruckerButtons(session.trucker),
+    }).catch(() => {});
+
+    if (done) {
+      clearInterval(session.trucker.interval);
+      session.trucker.interval = null;
+
+      await msg.channel.send({
+        content: `<@${session.userId}> your delivery is complete — collect your pay.`,
+        allowedMentions: { users: [session.userId] },
       }).catch(() => {});
-
-      if (done) {
-        clearInterval(session.trucker.interval);
-        session.trucker.interval = null;
-      }
-    } catch {}
-  }, tickMs);
+    }
+  } catch {}
+}, tickMs);
 
   return true;
 }
