@@ -15,6 +15,7 @@ const { creditUserWithEffects, awardEffect } = require("../../utils/effectSystem
 const { setJail } = require("../../utils/jail");
 
 const SESSION_TTL_MS = 30 * 60 * 1000;
+const CLEANUP_DELAY_MS = 60 * 1000;
 const CODE_LENGTH = 5;
 const MAX_ATTEMPTS = 6;
 
@@ -156,6 +157,39 @@ function clearSession(guildId, userId) {
   sessions.delete(sessionKey(guildId, userId));
 }
 
+function scheduleCleanup(message, delayMs = CLEANUP_DELAY_MS) {
+  if (!message || typeof message.delete !== "function") return;
+  setTimeout(() => {
+    message.delete().catch(() => {});
+  }, delayMs);
+}
+
+async function getSessionMessage(session, interaction) {
+  const channel = interaction.channel || interaction.client?.channels?.cache?.get(session.channelId);
+  if (!channel || typeof channel.messages?.fetch !== "function" || !session.messageId) return null;
+  try {
+    return await channel.messages.fetch(session.messageId);
+  } catch {
+    return null;
+  }
+}
+
+async function updateSessionMessage(session, interaction, payload) {
+  const message = await getSessionMessage(session, interaction);
+  if (message) {
+    await message.edit(payload).catch(() => {});
+    return message;
+  }
+
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply(payload).catch(() => {});
+    return null;
+  }
+
+  await interaction.reply(payload).catch(() => {});
+  return null;
+}
+
 async function setCooldown(guildId, userId, nextClaimAt) {
   await pool.query(
     `INSERT INTO cooldowns (guild_id, user_id, key, next_claim_at)
@@ -185,7 +219,6 @@ async function failSession({ session, interaction, reason }) {
 
   const nextClaimAt = nextSydneyMidnightUTC();
   await setCooldown(session.guildId, session.userId, nextClaimAt);
-  clearSession(session.guildId, session.userId);
 
   const lines = [
     reason || "❌ The lock slams shut before you can break it.",
@@ -194,19 +227,13 @@ async function failSession({ session, interaction, reason }) {
   ];
   if (curseNotice) lines.push("", curseNotice);
 
-  if (interaction.deferred || interaction.replied) {
-    await interaction.editReply({
-      embeds: [buildEmbed({ ...session, finished: true }, lines.join("\n"))],
-      components: [],
-    }).catch(() => {});
-  } else {
-    await interaction.reply({
-      embeds: [buildEmbed({ ...session, finished: true }, lines.join("\n"))],
-      components: [],
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
-  }
+  const message = await updateSessionMessage(session, interaction, {
+    embeds: [buildEmbed({ ...session, finished: true }, lines.join("\n"))],
+    components: [],
+  });
 
+  clearSession(session.guildId, session.userId);
+  scheduleCleanup(message);
   return true;
 }
 
@@ -226,27 +253,19 @@ async function winSession({ session, interaction }) {
     awardSource: "echo_cipher",
   });
 
-  clearSession(session.guildId, session.userId);
-
   const lines = [
     `✅ The vault opens. You cracked the code in **${attemptsUsed}/${MAX_ATTEMPTS}** attempts.`,
     `Echo grants **$${Number(payout.finalAmount || amount).toLocaleString()}**.`,
   ];
   if (payout?.awardResult?.notice) lines.push("", payout.awardResult.notice);
 
-  if (interaction.deferred || interaction.replied) {
-    await interaction.editReply({
-      embeds: [buildEmbed({ ...session, finished: true }, lines.join("\n"))],
-      components: [],
-    }).catch(() => {});
-  } else {
-    await interaction.reply({
-      embeds: [buildEmbed({ ...session, finished: true }, lines.join("\n"))],
-      components: [],
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
-  }
+  const message = await updateSessionMessage(session, interaction, {
+    embeds: [buildEmbed({ ...session, finished: true }, lines.join("\n"))],
+    components: [],
+  });
 
+  clearSession(session.guildId, session.userId);
+  scheduleCleanup(message);
   return true;
 }
 
@@ -308,6 +327,14 @@ module.exports = {
       embeds: [buildEmbed(session)],
       components: buildComponents(),
     }).catch(() => {});
+
+    const reply = await interaction.fetchReply().catch(() => null);
+    if (reply) {
+      session.channelId = reply.channelId;
+      session.messageId = reply.id;
+      setSession(session);
+    }
+
     return true;
   },
 
