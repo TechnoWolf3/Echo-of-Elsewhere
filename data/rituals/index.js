@@ -3,8 +3,9 @@ const weekly = require("./weekly");
 const monthly = require("./monthly");
 const echoCipher = require("./echoCipher");
 const echoWheel = require("./echoWheel");
+const veilSequence = require("./veilSequence");
 
-const rituals = [daily, weekly, monthly, echoWheel, echoCipher];
+const rituals = [daily, weekly, monthly, echoWheel, echoCipher, veilSequence];
 
 function getRitual(id) {
   return rituals.find((ritual) => ritual.id === id) || null;
