@@ -368,6 +368,7 @@ module.exports = {
     await interaction.editReply("✅ Job board posted.");
 
     const session = {
+      userId,
       view: "hub",
 
       // remembers last category for auto-return

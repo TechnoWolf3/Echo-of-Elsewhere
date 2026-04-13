@@ -50,8 +50,10 @@ async function handleNineToFiveInteraction({
     if (!session.trucker || session.trucker.startMs) return true;
     session.trucker.manifest = nineToFiveUi.generateTruckerManifest();
     await msg.edit({
-      embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker)],
+      content: done ? `<@${session.userId}> your delivery is complete — collect your pay.` : null,
+      embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
       components: nineToFiveUi.buildTruckerButtons(session.trucker),
+      allowedMentions: done ? { users: [session.userId] } : { parse: [] },
     }).catch(() => {});
     return true;
   }
@@ -288,6 +290,7 @@ async function collectTrucker({ session, msg, payUser, scheduleReturnToCategory 
   session.view = "95";
   session.trucker = null;
   await msg.edit({
+    content: null,
     embeds: [buildCompletionEmbed({
       title: truckerCfg.completeTitle || "✅ Delivery Complete",
       lines: [
