@@ -133,7 +133,8 @@ function getNextFieldCost(fieldCount) {
 }
 
 function getUpgradeCost(currentLevel) {
-  return config.UPGRADE_COSTS[currentLevel] || 0;
+  const nextLevel = Number(currentLevel || 1) + 1;
+  return Number(config.UPGRADE_COSTS?.[nextLevel] || 0);
 }
 
 function getAvailableCrops(fieldLevel) {

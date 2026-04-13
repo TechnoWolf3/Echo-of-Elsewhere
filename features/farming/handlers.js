@@ -6,7 +6,7 @@ const market = require("../../utils/farming/market");
 const machineEngine = require("../../utils/farming/machineEngine");
 const weather = require("../../utils/farming/weather");
 const farmingUi = require("./ui");
-const { ensureUser, tryDebitBank, creditBank } = require("../../utils/economy");
+const { tryDebitBank, creditBank } = require("../../utils/economy");
 
 function isFarmingInteraction(actionId) {
   return (
@@ -122,16 +122,15 @@ async function handleFarmingInteraction({
     }
 
     const cost = farming.getNextFieldCost(farm.fields.length);
-    await ensureUser(guildId, userId);
     const debit = await tryDebitBank(guildId, userId, cost, "farming_field_purchase", {
-      feature: "farming",
-      purchase: "field",
-      fieldNumber: (farm.fields?.length || 0) + 1,
+      enterprise: "farming",
+      action: "buy_field",
+      fieldCountBefore: farm.fields.length,
     });
 
     if (!debit.ok) {
       await interaction.followUp({
-        content: `❌ You need $${cost.toLocaleString()} in your bank to buy this field.`,
+        content: `❌ You need $${cost.toLocaleString()} in your bank.`,
         flags: MessageFlags.Ephemeral,
       }).catch(() => {});
       return true;
@@ -140,9 +139,9 @@ async function handleFarmingInteraction({
     const result = await farming.buyField(guildId, userId, farm);
     if (result?.ok === false) {
       await creditBank(guildId, userId, cost, "farming_field_purchase_refund", {
-        feature: "farming",
-        purchase: "field",
-        reason: result.reasonText,
+        enterprise: "farming",
+        action: "buy_field_refund",
+        reason: result.reasonText || "purchase_failed",
       });
       await interaction.followUp({
         content: `❌ ${result.reasonText}`,
@@ -297,16 +296,23 @@ async function handleFarmingInteraction({
   if (actionId.startsWith("farm_upgrade:")) {
     const fieldIndex = Number(actionId.split(":")[1]);
     const farm = await farming.ensureFarm(guildId, userId);
-    const fieldLevel = farm.fields?.[fieldIndex]?.level || 1;
-    const cost = farming.getUpgradeCost(fieldLevel);
+    const currentLevel = farm.fields?.[fieldIndex]?.level || 1;
+    const cost = farming.getUpgradeCost(currentLevel);
 
-    await ensureUser(guildId, userId);
+    if (cost <= 0) {
+      await interaction.followUp({
+        content: "❌ This field cannot be upgraded right now.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return true;
+    }
+
     const debit = await tryDebitBank(guildId, userId, cost, "farming_field_upgrade", {
-      feature: "farming",
-      purchase: "field_upgrade",
-      fieldNumber: fieldIndex + 1,
-      fromLevel: fieldLevel,
-      toLevel: fieldLevel + 1,
+      enterprise: "farming",
+      action: "upgrade_field",
+      fieldIndex,
+      fromLevel: currentLevel,
+      toLevel: currentLevel + 1,
     });
 
     if (!debit.ok) {
@@ -320,10 +326,10 @@ async function handleFarmingInteraction({
     const result = await farming.upgradeField(guildId, userId, farm, fieldIndex);
     if (!result.ok) {
       await creditBank(guildId, userId, cost, "farming_field_upgrade_refund", {
-        feature: "farming",
-        purchase: "field_upgrade",
-        fieldNumber: fieldIndex + 1,
-        reason: result.reasonText,
+        enterprise: "farming",
+        action: "upgrade_field_refund",
+        fieldIndex,
+        reason: result.reasonText || "upgrade_failed",
       });
       await interaction.followUp({
         content: `❌ ${result.reasonText}`,
