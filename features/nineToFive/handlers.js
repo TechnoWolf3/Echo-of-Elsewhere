@@ -47,16 +47,14 @@ async function handleNineToFiveInteraction({
   }
 
   if (actionId === "job_trucker_refresh") {
-    if (!session.trucker || session.trucker.startMs) return true;
-    session.trucker.manifest = nineToFiveUi.generateTruckerManifest();
-    await msg.edit({
-      content: done ? `<@${session.userId}> your delivery is complete — collect your pay.` : null,
-      embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
-      components: nineToFiveUi.buildTruckerButtons(session.trucker),
-      allowedMentions: done ? { users: [session.userId] } : { parse: [] },
-    }).catch(() => {});
-    return true;
-  }
+  if (!session.trucker || session.trucker.startMs) return true;
+  session.trucker.manifest = nineToFiveUi.generateTruckerManifest();
+  await msg.edit({
+    embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
+    components: nineToFiveUi.buildTruckerButtons(session.trucker),
+  }).catch(() => {});
+  return true;
+}
 
   if (actionId === "job_trucker_start") {
     return startTrucker({
@@ -249,8 +247,10 @@ async function startTrucker({ interaction, session, msg, checkCooldownOrTell }) 
       if (done) session.trucker.ready = true;
 
       await msg.edit({
+        content: done ? `<@${session.userId}> your delivery is complete — collect your pay.` : null,
         embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
         components: nineToFiveUi.buildTruckerButtons(session.trucker),
+        allowedMentions: done ? { users: [session.userId] } : { parse: [] },
       }).catch(() => {});
 
       if (done) {
