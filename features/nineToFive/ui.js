@@ -11,6 +11,7 @@ const contractCfg = require("../../data/work/categories/nineToFive/transportCont
 const skillCfg = require("../../data/work/categories/nineToFive/skillCheck");
 const shiftCfg = require("../../data/work/categories/nineToFive/shift");
 const truckerCfg = require("../../data/work/categories/nineToFive/trucker");
+const { emailSorterCfg, folderMeta } = require("./emailSorter");
 const { renderProgressBar } = require("../../utils/progressBar");
 const ui = require("../../utils/ui");
 
@@ -351,6 +352,105 @@ function buildTruckerEmbed(run, { completed = false } = {}) {
     .setFooter({ text: truckerCfg.footer || "Start the run, let the kilometres roll, then collect the cheque." });
 }
 
+
+function buildEmailSorterEmbed(run) {
+  const total = run?.emails?.length || 0;
+  const index = Math.max(0, Number(run?.currentIndex || 0));
+  const email = run?.emails?.[index];
+  if (!email) {
+    return new EmbedBuilder()
+      .setTitle(emailSorterCfg.title || "📧 Email Sorter")
+      .setDescription("No email is currently loaded.")
+      .setFooter({ text: emailSorterCfg.footer || "Read carefully." });
+  }
+
+  return new EmbedBuilder()
+    .setTitle(`${emailSorterCfg.title || "📧 Email Sorter"} — Email ${index + 1}/${total}`)
+    .setDescription(email.body)
+    .addFields(
+      { name: "From", value: `\`${email.from}\`` },
+      { name: "Subject", value: email.subject }
+    )
+    .setFooter({ text: emailSorterCfg.footer || "Read carefully." });
+}
+
+function buildEmailSorterButtons(disabled = false) {
+  const folderIds = ["urgent", "todo", "spam", "scam"];
+  return [
+    new ActionRowBuilder().addComponents(
+      ...folderIds.map((folderId) => {
+        const meta = folderMeta(folderId);
+        return new ButtonBuilder()
+          .setCustomId(`job_email:${folderId}`)
+          .setLabel(meta.label)
+          .setEmoji(meta.emoji)
+          .setStyle(folderId === 'scam' ? ButtonStyle.Danger : ButtonStyle.Primary)
+          .setDisabled(disabled);
+      })
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:95").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
+function buildEmailSorterSummaryEmbed(run, { paid = null } = {}) {
+  const totalEmails = run?.emails?.length || 0;
+  const totals = run?.totals || {};
+  const lines = [];
+
+  for (let i = 0; i < (run?.results?.length || 0); i += 1) {
+    const result = run.results[i];
+    const chosen = folderMeta(result.chosen);
+    const actual = folderMeta(result.actual);
+    let status = '❌';
+    let extra = '';
+
+    if (result.outcome === 'correct') {
+      status = '✅';
+    } else if (result.outcome === 'scam_to_spam') {
+      status = '⚠️';
+      extra = ` — penalty -$${Number(result.penalty || 0).toLocaleString()}`;
+    } else if (result.outcome === 'mission_fail') {
+      status = '💥';
+      extra = ' — compromised';
+    }
+
+    lines.push(
+      `${status} **${i + 1}. ${result.subject}**`,
+      `Sorted: ${chosen.emoji} ${chosen.label} | Actual: ${actual.emoji} ${actual.label}${extra}`
+    );
+  }
+
+  const summary = [
+    `Processed: **${totalEmails}**`,
+    `Correct: **${Number(totals.correct || 0)}/${totalEmails}**`,
+    run?.failed ? `Failure: **${run.failedReason || 'Yes'}**` : 'Failure: **No**',
+    '',
+    ...lines,
+    '',
+  ];
+
+  if (run?.failed) {
+    summary.push('💥 **Mission failed. No payout awarded.**');
+  } else {
+    summary.push(
+      `Base shift pay: **$${Number(totals.subtotal || 0).toLocaleString()}**`,
+      Number(totals.perfectBonus || 0) > 0 ? `Perfect bonus: **+$${Number(totals.perfectBonus || 0).toLocaleString()}**` : null,
+      Number(totals.penalties || 0) > 0 ? `Penalties: **-$${Number(totals.penalties || 0).toLocaleString()}**` : null,
+      paid ? `Final paid: **$${Number(paid.amount || 0).toLocaleString()}**` : `Total earned: **$${Number(totals.total || 0).toLocaleString()}**`,
+      paid ? `⏳ Next payout: <t:${Math.floor(paid.nextClaim.getTime() / 1000)}:R>` : null,
+      paid?.prog?.leveledUp ? `🎉 Level up! You are now **Level ${paid.prog.level}**` : null
+    );
+  }
+
+  return new EmbedBuilder()
+    .setTitle(run?.failed ? '📧 Email Sorter — Shift Failed' : '📧 Email Sorter — Shift Summary')
+    .setDescription(summary.filter(Boolean).join('\n'))
+    .setColor(run?.failed ? ui.colors.danger : ui.colors.success);
+}
+
 function buildTruckerButtons(run = {}) {
   const started = Boolean(run?.startMs);
   const ready = Boolean(run?.ready);
@@ -392,6 +492,9 @@ module.exports = {
   buildSkillButtons,
   buildShiftEmbed,
   buildShiftButtons,
+  buildEmailSorterEmbed,
+  buildEmailSorterButtons,
+  buildEmailSorterSummaryEmbed,
   formatRoutePlace,
   generateTruckerManifest,
   buildTruckerEmbed,

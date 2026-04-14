@@ -4,6 +4,7 @@ const contractCfg = require("../../data/work/categories/nineToFive/transportCont
 const skillCfg = require("../../data/work/categories/nineToFive/skillCheck");
 const shiftCfg = require("../../data/work/categories/nineToFive/shift");
 const truckerCfg = require("../../data/work/categories/nineToFive/trucker");
+const { emailSorterCfg, generateRun, scoreRun } = require("./emailSorter");
 const ui = require("../../utils/ui");
 const nineToFiveUi = require("./ui");
 
@@ -13,6 +14,7 @@ function isNineToFiveInteraction(actionId) {
     actionId.startsWith("job_contract:") ||
     actionId.startsWith("job_skill:") ||
     actionId.startsWith("job_leg:") ||
+    actionId.startsWith("job_email:") ||
     actionId === "job_shift_collect" ||
     actionId === "job_trucker_refresh" ||
     actionId === "job_trucker_start" ||
@@ -99,6 +101,18 @@ async function handleNineToFiveInteraction({
     });
   }
 
+  if (actionId.startsWith("job_email:")) {
+    return handleEmailSorterClick({
+      actionId,
+      interaction,
+      session,
+      msg,
+      payUser,
+      checkCooldownOrTell,
+      scheduleReturnToCategory,
+    });
+  }
+
   if (actionId === "job_shift_collect") {
     return collectShift({
       interaction,
@@ -178,6 +192,18 @@ async function handleNineToFiveEntry({
         }
       } catch {}
     }, tickMs);
+    return true;
+  }
+
+
+  if (mode === "emailSorter") {
+    session.view = "emailSorter";
+    session.emailSorter = generateRun();
+
+    await msg.edit({
+      embeds: [nineToFiveUi.buildEmailSorterEmbed(session.emailSorter)],
+      components: nineToFiveUi.buildEmailSorterButtons(false),
+    }).catch(() => {});
     return true;
   }
 
@@ -426,6 +452,73 @@ async function handleSkillClick({
     components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
   }).catch(() => {});
   scheduleReturnToCategory(5000);
+  return true;
+}
+
+
+async function handleEmailSorterClick({
+  actionId,
+  interaction,
+  session,
+  msg,
+  payUser,
+  checkCooldownOrTell,
+  scheduleReturnToCategory,
+}) {
+  if (await checkCooldownOrTell(interaction)) return true;
+  if (!session.emailSorter?.emails?.length) return true;
+
+  const chosenFolder = actionId.split(':')[1];
+  const run = session.emailSorter;
+  const email = run.emails[run.currentIndex];
+  if (!email) return true;
+
+  run.results.push({
+    emailId: email.id,
+    subject: email.subject,
+    actual: email.category,
+    chosen: chosenFolder,
+  });
+  run.currentIndex += 1;
+
+  const finished = run.currentIndex >= run.emails.length;
+  if (!finished) {
+    await msg.edit({
+      embeds: [nineToFiveUi.buildEmailSorterEmbed(run)],
+      components: nineToFiveUi.buildEmailSorterButtons(false),
+    }).catch(() => {});
+    return true;
+  }
+
+  scoreRun(run);
+
+  let paid = null;
+  if (!run.failed && run.totals.total > 0) {
+    paid = await payUser(
+      run.totals.total,
+      'job_95_email_sorter',
+      run.totals.correct === run.emails.length ? (emailSorterCfg.xp?.success ?? 0) : (emailSorterCfg.xp?.partial ?? 0),
+      {
+        results: run.results.map((result) => ({
+          subject: result.subject,
+          actual: result.actual,
+          chosen: result.chosen,
+          outcome: result.outcome,
+          penalty: result.penalty || 0,
+        })),
+        totals: run.totals,
+      },
+      { countJob: true, allowLegendarySpawn: true, activityEffects: emailSorterCfg.activityEffects }
+    );
+  }
+
+  session.view = '95';
+  session.emailSorter = null;
+  await msg.edit({
+    embeds: [nineToFiveUi.buildEmailSorterSummaryEmbed(run, { paid })],
+    components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
+  }).catch(() => {});
+  scheduleReturnToCategory(7000);
   return true;
 }
 

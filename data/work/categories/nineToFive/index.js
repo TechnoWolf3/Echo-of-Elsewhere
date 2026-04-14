@@ -28,6 +28,12 @@ module.exports = {
       button: { id: "job_95:shift", label: "🕒 Shift" },
     },
     {
+      key: "emailSorter",
+      title: "📧 Email Sorter",
+      desc: "Read the email, trust the clues, sort the folder.",
+      button: { id: "job_95:emailSorter", label: "📧 Email Sorter" },
+    },
+    {
       key: "trucker",
       title: "🚛 Trucker",
       desc: "Random freight manifest. Long haul, bigger pay.",
