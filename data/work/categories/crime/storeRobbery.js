@@ -489,7 +489,7 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       if (outcome === "clean" || outcome === "spotted") {
         const payout = computeSuccessPayout(outcome) + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
-        await addUserWallet(guildId, userId, finalPayout, mode === "major" ? "crime_major_heist_success" : "crime_heist_success", { job: mode });
+        await addUserWallet(guildId, userId, finalPayout, "crime_store_success", { job: "store_robbery" });
 
         resultLines.push(
           outcome === "clean"
@@ -501,7 +501,7 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       } else if (outcome === "partial") {
         const payout = computeSuccessPayout("partial") + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
-        await addUserWallet(guildId, userId, finalPayout, mode === "major" ? "crime_major_heist_success" : "crime_heist_success", { job: mode });
+        await addUserWallet(guildId, userId, finalPayout, "crime_store_success", { job: "store_robbery" });
 
         resultLines.push(`😬 You got something, but not much. You pocket **$${finalPayout.toLocaleString()}**.`);
       } else {
