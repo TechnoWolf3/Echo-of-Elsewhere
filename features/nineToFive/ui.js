@@ -366,13 +366,17 @@ function buildEmailSorterEmbed(run) {
 
   return new EmbedBuilder()
     .setTitle(`${emailSorterCfg.title || "📧 Email Sorter"} — Email ${index + 1}/${total}`)
-    .setDescription(email.body)
-    .addFields(
-      { name: "From", value: `\`${email.from}\`` },
-      { name: "Subject", value: email.subject }
+    .setDescription(
+      [
+        `📨 **From:** \`${email.from}\``,
+        `📌 **Subject:** ${email.subject}`,
+        `━━━━━━━━━━━━━━━━━━`,
+        ``,
+        email.body,
+      ].join("\n")
     )
-    .setFooter({ text: emailSorterCfg.footer || "Read carefully." });
-}
+    .setFooter({ text: emailSorterCfg.footer || "Read carefully. One bad phishing call can wreck the shift." });
+  }
 
 function buildEmailSorterButtons(disabled = false) {
   const folderIds = ["urgent", "todo", "spam", "scam"];
