@@ -198,6 +198,10 @@ class BlackjackSession {
     this.turnIndex = 0;
   }
 
+  dealerHasBlackjack() {
+    return isBlackjack(this.dealerHand);
+  }
+
   playerHasPlayableHand(p) {
     if (!p?.hands?.length) return false;
     return p.hands.some((h) => h.status === "Playing");
@@ -227,6 +231,11 @@ class BlackjackSession {
 
     this.state = "playing";
     this.dealInitial();
+
+    if (this.dealerHasBlackjack()) {
+      await this.finishGame();
+      return;
+    }
 
     if (this.turnOrder.length === 0) {
       await this.finishGame();
