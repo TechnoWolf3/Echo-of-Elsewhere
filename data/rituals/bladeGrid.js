@@ -336,8 +336,6 @@ module.exports = {
       return true;
     }
 
-    await recordRitualContractProgress(session.guildId, session.userId, payout?.finalAmount || 0);
-
     await interaction.deferUpdate().catch(() => {});
     const message = await interaction.followUp({
       embeds: [buildIntroEmbed(session)],
