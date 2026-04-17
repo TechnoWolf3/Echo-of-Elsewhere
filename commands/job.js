@@ -16,6 +16,7 @@ const { creditUserWithEffects } = require("../utils/effectSystem");
 const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); // jail blocks ALL jobs while active
 const { unlockAchievement } = require("../utils/achievementEngine");
 const ui = require("../utils/ui");
+const { recordProgress: recordContractProgress } = require("../utils/contracts");
 
 // ✅ UPDATED: add getCrimeHeatInfo for bar + timer UI
 const { getCrimeHeatInfo } = require("../utils/crimeHeat");
@@ -492,6 +493,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
         activityEffects,
         awardSource: reason,
       });
+
+      await recordContractProgress({ guildId, userId, metric: "job_earnings", amount }).catch(() => {});
+      if (countJob) {
+        await recordContractProgress({ guildId, userId, metric: "jobs_completed", amount: 1 }).catch(() => {});
+      }
 
       const progUpdate = await addXpAndMaybeLevel(guildId, userId, xpGain, countJob);
 

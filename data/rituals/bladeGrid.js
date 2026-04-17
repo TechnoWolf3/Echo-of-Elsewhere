@@ -12,6 +12,21 @@ const { pool } = require('../../utils/db');
 const { getRitualStatus, nextSydneyMidnightUTC, getSydneyParts } = require('../../utils/rituals');
 const { creditUserWithEffects } = require('../../utils/effectSystem');
 
+let recordProgress = async () => {};
+try {
+  ({ recordProgress } = require('../../utils/contracts'));
+} catch (_) {}
+
+async function recordRitualContractProgress(guildId, userId, earnings = 0) {
+  try {
+    await recordProgress({ guildId, userId, metric: 'rituals_completed', amount: 1 });
+    const cash = Math.max(0, Math.floor(Number(earnings || 0)));
+    if (cash > 0) {
+      await recordProgress({ guildId, userId, metric: 'ritual_earnings', amount: cash });
+    }
+  } catch (_) {}
+}
+
 const BTN_PREFIX = 'rituals:blade_grid:tile:';
 const ROWS = 3;
 const COLS = 5;
@@ -321,6 +336,8 @@ module.exports = {
       return true;
     }
 
+    await recordRitualContractProgress(session.guildId, session.userId, payout?.finalAmount || 0);
+
     await interaction.deferUpdate().catch(() => {});
     const message = await interaction.followUp({
       embeds: [buildIntroEmbed(session)],
@@ -418,6 +435,8 @@ module.exports = {
         awardSource: 'blade_grid',
       });
     }
+
+    await recordRitualContractProgress(session.guildId, session.userId, payout?.finalAmount || 0);
 
     await interaction.deferUpdate().catch(() => {});
     await editSessionMessage(interaction, session, {

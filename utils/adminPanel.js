@@ -23,6 +23,7 @@ const {
   clearStockFloor,
   resetStockToLaunch,
 } = require('./ese/engine');
+const contracts = require('./contracts');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -42,6 +43,7 @@ const CATEGORIES = [
   { value: 'botgames', label: 'Bot Games' },
   { value: 'rift', label: 'Echo Rift' },
   { value: 'ese', label: 'Echo Stock Exchange' },
+  { value: 'contracts', label: 'Contracts' },
   { value: 'misc', label: 'Misc' },
 ];
 
@@ -113,6 +115,15 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'ese:setfloor', label: 'Set Floor', style: ButtonStyle.Secondary, modal: true },
     { id: 'ese:clearfloor', label: 'Clear Floor', style: ButtonStyle.Secondary, modal: true },
     { id: 'ese:reset', label: 'Reset Stock', style: ButtonStyle.Danger, modal: true },
+  ],
+  contracts: [
+    { id: 'contracts:status', label: 'Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'contracts:toggle_auto', label: 'Toggle Auto', style: ButtonStyle.Primary, modal: false },
+    { id: 'contracts:settings', label: 'Settings', style: ButtonStyle.Secondary, modal: true },
+    { id: 'contracts:start', label: 'Start Manual', style: ButtonStyle.Primary, modal: true },
+    { id: 'contracts:stop', label: 'Stop Active', style: ButtonStyle.Danger, modal: false },
+    { id: 'contracts:rotate', label: 'Rotate', style: ButtonStyle.Secondary, modal: false },
+    { id: 'contracts:post_daily', label: 'Post Daily Now', style: ButtonStyle.Secondary, modal: false },
   ],
   misc: [
     { id: 'misc:ping', label: 'Ping', style: ButtonStyle.Secondary, modal: false },
@@ -553,6 +564,34 @@ function buildModal(actionId) {
     }
   }
 
+  // Contracts
+  if (actionId.startsWith('contracts:')) {
+    const sub = actionId.split(':')[1];
+    modal.setTitle(`Contracts: ${sub}`);
+
+    if (sub === 'settings') {
+      modal.addComponents(
+        addInput('auto_enabled', 'Auto contracts? (true/false)', TextInputStyle.Short, true, 'true'),
+        addInput('auto_rotate', 'Auto rotate? (true/false)', TextInputStyle.Short, true, 'true'),
+        addInput('community_mode', 'Mode (random / co_op / competitive)', TextInputStyle.Short, true, 'random'),
+        addInput('daily_post_channel_id', 'Daily post channel ID', TextInputStyle.Short, false, '1449217901306581074'),
+        addInput('personal', 'Personal enabled=true/false | slots=3', TextInputStyle.Paragraph, true, 'enabled=true\nslots=3')
+      );
+      return modal;
+    }
+
+    if (sub === 'start') {
+      modal.addComponents(
+        addInput('template_id', 'Template ID (blank = random from mode)', TextInputStyle.Short, false, 'co_op_shift_surge'),
+        addInput('mode', 'Mode (random / co_op / competitive)', TextInputStyle.Short, false, 'random'),
+        addInput('duration_hours', 'Duration hours (blank = template)', TextInputStyle.Short, false, '48'),
+        addInput('numbers', 'target=100\nreward_pool=25000\npenalty_amount=2000', TextInputStyle.Paragraph, false, 'target=100\nreward_pool=25000'),
+        addInput('title', 'Title override (blank = template)', TextInputStyle.Short, false, 'Citywide Push')
+      );
+      return modal;
+    }
+  }
+
   // Rift
   if (actionId.startsWith('rift:')) {
     modal.setTitle(`Rift: ${actionId.split(':')[1]}`);
@@ -695,6 +734,86 @@ async function runActionFromId({ interaction, actionId, fields }) {
       } catch (_) {}
     }
   };
+
+  // CONTRACTS
+  if (actionId.startsWith('contracts:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'status') {
+      const settings = await contracts.getSettings(guild.id);
+      const active = await contracts.getActiveCommunityContract(guild.id);
+      const lines = [
+        `📜 **Contracts Status**`,
+        `• Auto contracts: **${settings.autoEnabled ? 'ON' : 'OFF'}**`,
+        `• Auto rotate: **${settings.autoRotate ? 'ON' : 'OFF'}**`,
+        `• Mode: **${settings.communityMode}**`,
+        `• Daily posts: **${settings.dailyPostEnabled ? 'ON' : 'OFF'}**`,
+        `• Daily channel: ${settings.dailyPostChannelId ? `<#${settings.dailyPostChannelId}>` : 'Not set'}`,
+        `• Personal contracts: **${settings.personalEnabled ? 'ON' : 'OFF'}** (${settings.personalSlots} slots)`,
+      ];
+      if (active) {
+        lines.push('', `**Active Community Contract**`, `• ${active.title} (${active.type})`, `• Metric: ${active.metric}`, `• Progress: ${active.progress}/${active.target}`, `• Ends: <t:${Math.floor(new Date(active.ends_at).getTime() / 1000)}:R>`);
+      } else {
+        lines.push('', 'No active community contract.');
+      }
+      return safeReply(lines.join('\n'));
+    }
+
+    if (sub === 'toggle_auto') {
+      const current = await contracts.getSettings(guild.id);
+      const next = await contracts.updateSettings(guild.id, { autoEnabled: !current.autoEnabled });
+      return safeReply(`✅ Auto contracts are now **${next.autoEnabled ? 'ON' : 'OFF'}**.`);
+    }
+
+    if (sub === 'settings') {
+      const kv = parseKeyValueLines(fields.personal || '');
+      const next = await contracts.updateSettings(guild.id, {
+        autoEnabled: parseBool(fields.auto_enabled, true),
+        autoRotate: parseBool(fields.auto_rotate, true),
+        communityMode: String(fields.community_mode || 'random').trim() || 'random',
+        dailyPostChannelId: String(fields.daily_post_channel_id || '').trim() || null,
+        personalEnabled: parseBool(kv.enabled, true),
+        personalSlots: Number(kv.slots || 3),
+      });
+      return safeReply(`✅ Contracts settings updated.\n• Auto: **${next.autoEnabled ? 'ON' : 'OFF'}**\n• Rotate: **${next.autoRotate ? 'ON' : 'OFF'}**\n• Mode: **${next.communityMode}**\n• Daily channel: ${next.dailyPostChannelId ? `<#${next.dailyPostChannelId}>` : 'Not set'}\n• Personal: **${next.personalEnabled ? 'ON' : 'OFF'}** (${next.personalSlots} slots)`);
+    }
+
+    if (sub === 'start') {
+      const nums = parseKeyValueLines(fields.numbers || '');
+      const res = await contracts.createCommunityContract(guild.id, {
+        templateId: String(fields.template_id || '').trim() || null,
+        mode: String(fields.mode || '').trim() || 'random',
+        durationHours: fields.duration_hours ? Number(fields.duration_hours) : undefined,
+        target: nums.target ? Number(nums.target) : undefined,
+        rewardPool: nums.reward_pool ? Number(nums.reward_pool) : undefined,
+        penaltyAmount: nums.penalty_amount ? Number(nums.penalty_amount) : undefined,
+        title: String(fields.title || '').trim() || undefined,
+      });
+      if (!res.ok) {
+        if (res.reason === 'already_active') return safeReply('⚠️ A community contract is already active. Stop or rotate it first.');
+        return safeReply(`❌ Could not start a contract: ${res.reason}`);
+      }
+      return safeReply(`✅ Started **${res.contract.title}** (${res.contract.type}).`);
+    }
+
+    if (sub === 'stop') {
+      const res = await contracts.stopCommunityContract(guild.id);
+      if (!res.ok) return safeReply('⚠️ There is no active community contract to stop.');
+      return safeReply('🛑 Active community contract stopped.');
+    }
+
+    if (sub === 'rotate') {
+      const res = await contracts.forceRotateCommunity(guild.id);
+      if (res?.contract) return safeReply(`🔄 Rotated contracts. New active contract: **${res.contract.title}**.`);
+      return safeReply('🔄 Rotation triggered, but no new contract could be started.');
+    }
+
+    if (sub === 'post_daily') {
+      const res = await contracts.postDailyUpdate(interaction.client, guild.id, true);
+      if (!res.ok) return safeReply(`⚠️ Could not post the daily contract update: ${res.reason}`);
+      return safeReply('✅ Daily contract update posted.');
+    }
+  }
 
   // BOT GAMES (Random Events)
   if (actionId.startsWith('botgames:')) {

@@ -14,6 +14,21 @@ const { setJail } = require("../../utils/jail");
 const { grantInventoryQty } = require("../../utils/store");
 const lottery = require("../../utils/lottery");
 
+let recordProgress = async () => {};
+try {
+  ({ recordProgress } = require('../../utils/contracts'));
+} catch (_) {}
+
+async function recordRitualContractProgress(guildId, userId, earnings = 0) {
+  try {
+    await recordProgress({ guildId, userId, metric: 'rituals_completed', amount: 1 });
+    const cash = Math.max(0, Math.floor(Number(earnings || 0)));
+    if (cash > 0) {
+      await recordProgress({ guildId, userId, metric: 'ritual_earnings', amount: cash });
+    }
+  } catch (_) {}
+}
+
 const COST = 30000;
 const BTN_SPIN = "rituals:wheel:spin";
 const BTN_BACK = "rituals:wheel:back";
@@ -419,11 +434,14 @@ async function resolveSpin({ interaction, session }) {
     category: outcome.category,
     title: result.title,
     body: result.body,
+    contractEarnings: Math.max(0, Math.floor(Number(result?.contractEarnings || 0))),
   };
 
   if (!session.canRespin) {
     await setCooldown(session.guildId, session.userId, nextSydneyMidnightUTC());
   }
+
+  await recordRitualContractProgress(session.guildId, session.userId, final.contractEarnings || 0);
 
   session.lastResult = final;
   setSession(session);

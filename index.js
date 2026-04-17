@@ -12,6 +12,8 @@ const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
 const bankCommand = require("./commands/bank");
 const ritualsCommand = require("./commands/rituals");
+const contractsCommand = require("./commands/contracts");
+const contracts = require("./utils/contracts");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -721,6 +723,7 @@ client.once(Events.ClientReady, async () => {
       await ensureAchievementTables(client.db);
       await ensureEconomyTables(client.db);
       await ensureEseSchema();
+      await contracts.ensureSchema();
       console.log("[ESE] schema ready");
 
       // Start Bot Games AFTER DB tables exist
@@ -731,6 +734,9 @@ client.once(Events.ClientReady, async () => {
 
       // 🕳️ Echo Rift (daily random event)
       echoRift.startScheduler(client);
+
+      // 📜 Contracts
+      contracts.startScheduler(client);
 
       const count = await syncAchievements(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements/*`);
@@ -866,6 +872,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     console.error("[BANK] handler failed:", e);
   }
 
+
+  // 📜 Contracts interactions
+  try {
+    const handled = await contractsCommand.handleInteraction?.(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[CONTRACTS] handler failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ Contracts failed to handle that interaction.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ Contracts failed to handle that interaction.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
+  }
 
   // 🕯️ Ritual hub interactions
   try {

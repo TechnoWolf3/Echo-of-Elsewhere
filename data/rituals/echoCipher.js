@@ -14,6 +14,21 @@ const { nextSydneyMidnightUTC, getRitualStatus } = require("../../utils/rituals"
 const { creditUserWithEffects, awardEffect } = require("../../utils/effectSystem");
 const { setJail } = require("../../utils/jail");
 
+let recordProgress = async () => {};
+try {
+  ({ recordProgress } = require('../../utils/contracts'));
+} catch (_) {}
+
+async function recordRitualContractProgress(guildId, userId, earnings = 0) {
+  try {
+    await recordProgress({ guildId, userId, metric: 'rituals_completed', amount: 1 });
+    const cash = Math.max(0, Math.floor(Number(earnings || 0)));
+    if (cash > 0) {
+      await recordProgress({ guildId, userId, metric: 'ritual_earnings', amount: cash });
+    }
+  } catch (_) {}
+}
+
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_DELAY_MS = 60 * 1000;
 const CODE_LENGTH = 5;
@@ -221,6 +236,8 @@ async function failSession({ session, interaction, reason }) {
   const nextClaimAt = nextSydneyMidnightUTC();
   await setCooldown(session.guildId, session.userId, nextClaimAt);
 
+  await recordRitualContractProgress(session.guildId, session.userId, 0);
+
   const lines = [
     reason || "❌ The lock slams shut before you can break it.",
     `The code was **${session.secret}**.`,
@@ -253,6 +270,8 @@ async function winSession({ session, interaction }) {
     activityEffects: module.exports.successEffects,
     awardSource: "echo_cipher",
   });
+
+  await recordRitualContractProgress(session.guildId, session.userId, payout.finalAmount || amount);
 
   const lines = [
     `✅ The vault opens. You cracked the code in **${attemptsUsed}/${MAX_ATTEMPTS}** attempts.`,
