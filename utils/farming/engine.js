@@ -2,6 +2,11 @@ const { pool } = require("../db");
 const crops = require("../../data/farming/crops");
 const config = require("../../data/farming/config");
 const weather = require("./weather");
+const { recordProgress: recordContractProgress } = require("../contracts");
+
+async function recordFarmContractProgress(guildId, userId, metric, amount) {
+  await recordContractProgress({ guildId, userId, metric, amount }).catch(() => {});
+}
 
 function getCurrentSeason(now = Date.now()) {
   const index = Math.floor(now / config.SEASON_LENGTH_MS) % config.SEASONS.length;
@@ -255,6 +260,7 @@ async function plantCrop(guildId, userId, farm, fieldIndex, cropId) {
   weather.maybeApplyActiveEventToField(field, weatherState);
 
   await saveFarm(guildId, userId, farm);
+  await recordFarmContractProgress(guildId, userId, "farm_fields_planted", 1);
   return { ok: true, field };
 }
 
@@ -301,6 +307,7 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
   }
 
   await saveFarm(guildId, userId, farm);
+  await recordFarmContractProgress(guildId, userId, "farm_crops_harvested", qty);
   return { ok: true, qty, cropName: crop.name };
 }
 
@@ -436,6 +443,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     weather.maybeApplyActiveEventToField(field, weatherState, now);
 
     await saveFarm(guildId, userId, farm);
+    await recordFarmContractProgress(guildId, userId, "farm_fields_planted", 1);
     return { ok: true, completedTask: taskKey };
   }
 
@@ -474,6 +482,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     }
 
     await saveFarm(guildId, userId, farm);
+    await recordFarmContractProgress(guildId, userId, "farm_crops_harvested", qty);
     return { ok: true, completedTask: taskKey, qty, cropName: crop.name };
   }
 

@@ -30,6 +30,7 @@ const { previewMoneyEffect, consumeEffectUse, maybeAwardEffectFromActivity, hand
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
+const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 
 const {
   getUserCasinoSecurity,
@@ -40,6 +41,12 @@ const {
 } = require("../../utils/casinoSecurity");
 
 const MIN_BET = 500;
+
+async function recordCasinoContractProgress(guildId, userId, { played = 0, wins = 0, profit = 0 } = {}) {
+  if (played > 0) await recordContractProgress({ guildId, userId, metric: "casino_games_played", amount: played }).catch(() => {});
+  if (wins > 0) await recordContractProgress({ guildId, userId, metric: "casino_wins", amount: wins }).catch(() => {});
+  if (profit > 0) await recordContractProgress({ guildId, userId, metric: "casino_profit", amount: Math.floor(profit) }).catch(() => {});
+}
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -703,6 +710,11 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       const paidText = paid > 0 ? ` → Paid **$${paid.toLocaleString()}**` : "";
       const jailText = jailNote ? `
 ↳ ${jailNote}` : "";
+      await recordCasinoContractProgress(guildId, p.userId, {
+        played: 1,
+        wins: (p.result === "win" || p.result === "blackjack_win") && paid > B ? 1 : 0,
+        profit: Math.max(0, paid - B),
+      });
       resultsLines.push(`${p.user}${handTag} — **${pv}** — ${label}${paidText}${jailText}`);
     }
 

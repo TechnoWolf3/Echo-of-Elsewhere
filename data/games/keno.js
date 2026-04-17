@@ -30,6 +30,7 @@ const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const economy = require("../../utils/economy");
 const { creditUserWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
+const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -42,6 +43,12 @@ const ACTIVITY_EFFECTS = {
 const TABLE_IDLE_MS = 15 * 60 * 1000;
 const BETTING_MS = 30 * 1000;
 const REVEAL_EVERY_MS = 2 * 1000;
+
+async function recordCasinoContractProgress(guildId, userId, { played = 0, wins = 0, profit = 0 } = {}) {
+  if (played > 0) await recordContractProgress({ guildId, userId, metric: "casino_games_played", amount: played }).catch(() => {});
+  if (wins > 0) await recordContractProgress({ guildId, userId, metric: "casino_wins", amount: wins }).catch(() => {});
+  if (profit > 0) await recordContractProgress({ guildId, userId, metric: "casino_profit", amount: Math.floor(profit) }).catch(() => {});
+}
 const DRAW_COUNT = 20;
 
 const tablesById = new Map(); // tableId -> session
@@ -456,6 +463,7 @@ async function processResults(session) {
 
   // Resolve each bet
   for (const [userId, bet] of session.bets.entries()) {
+    await recordCasinoContractProgress(session.guildId, userId, { played: 1 });
     if (bet.kind === "HTD") {
       const win = bet.choice.toUpperCase() === outcome;
       if (win) {
@@ -477,6 +485,7 @@ async function processResults(session) {
           activityEffects: ACTIVITY_EFFECTS,
           awardSource: "keno",
         });
+        await recordCasinoContractProgress(session.guildId, userId, { wins: 1, profit: Math.max(0, profit) });
         winners.push({ userId, label: `${bet.choice.toUpperCase()} (x${mult})`, profit });
       } else {
         const triggerJail = await handleTriggeredEffectEvent({
@@ -512,6 +521,7 @@ async function processResults(session) {
           activityEffects: ACTIVITY_EFFECTS,
           awardSource: "keno",
         });
+        await recordCasinoContractProgress(session.guildId, userId, { wins: 1, profit: Math.max(0, profit) });
         winners.push({ userId, label: `${hits}/${picks} (x${mult})`, profit });
       } else {
         const triggerJail = await handleTriggeredEffectEvent({

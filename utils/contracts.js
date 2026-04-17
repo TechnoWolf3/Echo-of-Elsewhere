@@ -60,13 +60,21 @@ function formatMetricLabel(metric) {
     case 'job_earnings': return 'Job Earnings';
     case 'rituals_completed': return 'Rituals Completed';
     case 'ritual_earnings': return 'Ritual Earnings';
+    case 'casino_games_played': return 'Casino Games Played';
+    case 'casino_wins': return 'Casino Wins';
+    case 'casino_profit': return 'Casino Profit';
+    case 'farm_crops_harvested': return 'Crops Harvested';
+    case 'farm_fields_planted': return 'Fields Planted';
+    case 'stock_trades': return 'Stock Trades';
+    case 'stock_volume': return 'Stock Volume';
+    case 'rift_entries': return 'Rift Entries';
     default: return metric || 'Progress';
   }
 }
 
 function formatValue(metric, value) {
   const num = clampInt(value, 0, 0);
-  if (String(metric || '').includes('earnings')) {
+  if (String(metric || '').includes('earnings') || ['casino_profit', 'stock_volume'].includes(String(metric || ''))) {
     return `$${num.toLocaleString('en-AU')}`;
   }
   return num.toLocaleString('en-AU');

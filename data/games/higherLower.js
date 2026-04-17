@@ -22,6 +22,7 @@ const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../uti
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
+const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 
 const {
   getUserCasinoSecurity,
@@ -32,6 +33,12 @@ const {
 } = require("../../utils/casinoSecurity");
 
 const MIN_BET = 500;
+
+async function recordCasinoContractProgress(guildId, userId, { played = 0, wins = 0, profit = 0 } = {}) {
+  if (played > 0) await recordContractProgress({ guildId, userId, metric: "casino_games_played", amount: played }).catch(() => {});
+  if (wins > 0) await recordContractProgress({ guildId, userId, metric: "casino_wins", amount: wins }).catch(() => {});
+  if (profit > 0) await recordContractProgress({ guildId, userId, metric: "casino_profit", amount: Math.floor(profit) }).catch(() => {});
+}
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -361,6 +368,11 @@ async function cashOut(interaction, table) {
     });
     await sendEphemeral(interaction, "⚠️ Server bank couldn’t cover the payout — your stake was refunded.");
   } else {
+    await recordCasinoContractProgress(guildId, userId, {
+      played: 1,
+      wins: 1,
+      profit: Math.max(0, Number(pay.finalAmount || wanted) - stake),
+    });
     await sendEphemeral(
       interaction,
       `✅ Cashed out! Streak **${streak}** → **x${mult.toFixed(1)}** payout: **$${(pay.finalAmount || wanted).toLocaleString()}**`
@@ -415,6 +427,7 @@ async function resolveRound(table) {
       if (triggerJail?.triggered && triggerJail.notice) {
         await table.channel.send(`↳ <@${p.userId}> ${triggerJail.notice}`).catch(() => {});
       }
+      await recordCasinoContractProgress(table.guildId, p.userId, { played: 1 });
       try { await unlockAchievement(table.channel, table.guildId, p.userId, ACH.FIRST_BUST); } catch {}
     }
   }

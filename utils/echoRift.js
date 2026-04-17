@@ -14,6 +14,7 @@ const { pool } = require('./db');
 const economy = require('./economy');
 const jail = require('./jail');
 const echoCurses = require('./echoCurses');
+const { recordProgress: recordContractProgress } = require('./contracts');
 
 // ====== CONFIG ======
 // NOTE: channel/role IDs are hard-coded here for now.
@@ -575,6 +576,7 @@ async function handleInteraction(interaction) {
       risk: 0,
       state: JSON.stringify(state),
     });
+    await recordContractProgress({ guildId, userId, metric: 'rift_entries', amount: 1 }).catch(() => {});
 
     await interaction.message.edit({
       embeds: [buildScenarioEmbed({ userId, step: 0, maxSteps, prompt: first.prompt, lastResult: null })],

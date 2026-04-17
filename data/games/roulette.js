@@ -30,6 +30,7 @@ const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../uti
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
+const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 
 const {
   getUserCasinoSecurity,
@@ -49,6 +50,12 @@ const ACTIVITY_EFFECTS = {
 
 const MIN_BET = 500;
 const MAX_BET = 250000;
+
+async function recordCasinoContractProgress(guildId, userId, { played = 0, wins = 0, profit = 0 } = {}) {
+  if (played > 0) await recordContractProgress({ guildId, userId, metric: "casino_games_played", amount: played }).catch(() => {});
+  if (wins > 0) await recordContractProgress({ guildId, userId, metric: "casino_wins", amount: wins }).catch(() => {});
+  if (profit > 0) await recordContractProgress({ guildId, userId, metric: "casino_profit", amount: Math.floor(profit) }).catch(() => {});
+}
 
 // tableId -> table (for routing ephemeral selects/modals via index.js)
 const tablesById = new Map();
@@ -662,6 +669,12 @@ async function spinRound({ interaction, table }) {
     const betDesc = p.betType === "number" ? `number (${p.betValue})` : p.betType;
     const result = win ? `✅ Win → Paid **$${paid.toLocaleString()}**` : "❌ Lose";
     lines.push(`${p.user} — **$${stake.toLocaleString()}** on **${betDesc}** — ${result}`);
+
+    await recordCasinoContractProgress(guildId, p.userId, {
+      played: 1,
+      wins: win ? 1 : 0,
+      profit: win ? Math.max(0, paid - stake) : 0,
+    });
 
     // reset for next round (keep last bet)
     p.paid = false;

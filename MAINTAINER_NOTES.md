@@ -179,7 +179,7 @@ Farming specifics:
 - Hub command: `commands/games.js`
 - Category loader: `data/games/index.js`
 - Categories: `data/games/categories/*`
-- Casino games with global handlers: blackjack, roulette, higher/lower, bullshit, keno.
+- Casino games with global handlers: blackjack, roulette, higher/lower, bullshit, keno, scratchcards.
 - Smaller games are mostly local collector driven.
 
 ### Achievements
@@ -196,6 +196,18 @@ Farming specifics:
 - Lottery: `utils/lottery.js`, weekly Powerball using configured timezone.
 - Echo Rift: `utils/echoRift.js`, scheduled random rift event.
 - Echo Stock Exchange: `utils/ese/engine.js`, ticked by `index.js` interval.
+
+### Contracts
+
+- UI and scheduler live in `utils/contracts.js`; slash entry is `commands/contracts.js`.
+- Template definitions live in `data/contracts/config.js`.
+- Progress is recorded by system code, not by the admin panel.
+- Current progress hooks cover jobs, rituals, casino games, farming plant/harvest completions, ESE stock trades/volume, and successful rift entries.
+- Lottery, Bot Games, and achievements intentionally do not feed contracts. Lottery is excluded by design, Bot Games are too random to make fair goals, and achievement unlocks should stay milestone-only.
+- Casino contract metrics count settled paid casino play: `casino_games_played`, `casino_wins`, and positive `casino_profit`.
+- Farming contract metrics count completed field work: `farm_fields_planted` when a crop is planted and `farm_crops_harvested` by harvested quantity.
+- Stock contract metrics count completed buy/sell actions: `stock_trades` and gross `stock_volume`.
+- Rift entry contracts use `rift_entries` and should keep long durations because rifts are scarce.
 
 ### Admin Panel
 

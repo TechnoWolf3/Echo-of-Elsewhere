@@ -16,6 +16,7 @@ const { tryDebitUser } = require('../../utils/economy');
 const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require('../../utils/effectSystem');
 const { guardNotJailedComponent } = require('../../utils/jail');
 const { guardGamesComponent } = require('../../utils/echoRift/curseGuard');
+const { recordProgress: recordContractProgress } = require('../../utils/contracts');
 const { loadCategories, getCategory } = require('./index');
 
 const ACTIVITY_EFFECTS = {
@@ -31,6 +32,12 @@ const ACTIVITY_EFFECTS = {
     curseWeights: {},
   },
 };
+
+async function recordCasinoContractProgress(guildId, userId, { played = 0, wins = 0, profit = 0 } = {}) {
+  if (played > 0) await recordContractProgress({ guildId, userId, metric: 'casino_games_played', amount: played }).catch(() => {});
+  if (wins > 0) await recordContractProgress({ guildId, userId, metric: 'casino_wins', amount: wins }).catch(() => {});
+  if (profit > 0) await recordContractProgress({ guildId, userId, metric: 'casino_profit', amount: Math.floor(profit) }).catch(() => {});
+}
 
 const SESSION_IDLE_MS = 30 * 60 * 1000;
 const TILE_COUNT = 9;
@@ -610,6 +617,11 @@ async function settleRound(interaction, session, options = {}) {
       payoutNote = triggerJail.notice;
     }
   }
+  await recordCasinoContractProgress(session.guildId, session.hostId, {
+    played: 1,
+    wins: finalPayout > 0 ? 1 : 0,
+    profit: Math.max(0, finalPayout - Number(round.card.cost || 0)),
+  });
 
   session.lastMode = 'result';
   await session.message.edit({
