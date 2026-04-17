@@ -205,23 +205,68 @@ function parseKeyValueLines(text) {
   return out;
 }
 
+function parseBool(value, fallback = false) {
+  if (value === true || value === false) return value;
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (['true', '1', 'yes', 'y', 'on', 'enabled'].includes(raw)) return true;
+  if (['false', '0', 'no', 'n', 'off', 'disabled'].includes(raw)) return false;
+  return fallback;
+}
+
+class AdminPanelValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'AdminPanelValidationError';
+  }
+}
+
+function parseOptionalNumber(value, fieldName, { min = -Infinity, max = Infinity } = {}) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    throw new AdminPanelValidationError(`${fieldName} must be a number${Number.isFinite(min) ? ` >= ${min}` : ''}${Number.isFinite(max) ? ` and <= ${max}` : ''}.`);
+  }
+  return n;
+}
+
+function parseCsvNumbers(value, fieldName) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return undefined;
+  const nums = raw.split(',').map((part) => parseOptionalNumber(part, fieldName, { min: 0 }));
+  if (!nums.length || nums.some((n) => n === undefined)) {
+    throw new AdminPanelValidationError(`${fieldName} must be comma-separated numbers.`);
+  }
+  return nums;
+}
+
+function normalizeContractMode(value) {
+  const mode = String(value || 'random').trim().toLowerCase();
+  return ['random', 'co_op', 'competitive'].includes(mode) ? mode : 'random';
+}
+
+function cleanId(value) {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
 async function fetchUserSafe(client, userId) {
   if (!userId) return null;
-  const id = String(userId).replace(/[^0-9]/g, '');
+  const id = cleanId(userId);
   if (!id) return null;
   return client.users.fetch(id).catch(() => null);
 }
 
 async function fetchChannelSafe(guild, channelId) {
   if (!channelId) return null;
-  const id = String(channelId).replace(/[^0-9]/g, '');
+  const id = cleanId(channelId);
   if (!id) return null;
   return guild.channels.fetch(id).catch(() => null);
 }
 
 async function fetchRoleSafe(guild, roleId) {
   if (!roleId) return null;
-  const id = String(roleId).replace(/[^0-9]/g, '');
+  const id = cleanId(roleId);
   if (!id) return null;
   return guild.roles.fetch(id).catch(() => null);
 }
@@ -321,21 +366,26 @@ async function runLegacyCommand({ interaction, commandFile, subcommand = null, v
 }
 
 function buildModal(actionId) {
+  const MAX_MODAL_TITLE = 45;
+  const MAX_INPUT_LABEL = 45;
+  const MAX_INPUT_PLACEHOLDER = 100;
+  const trimForDiscord = (value, max) => String(value ?? '').slice(0, max);
   const modal = new ModalBuilder().setCustomId(`adminpanel:modal:${actionId}`).setTitle('Admin Panel');
+  const setTitle = (title) => modal.setTitle(trimForDiscord(title, MAX_MODAL_TITLE));
 
   const addInput = (customId, label, style, required = true, placeholder = '') =>
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId(customId)
-        .setLabel(label)
+        .setLabel(trimForDiscord(label, MAX_INPUT_LABEL))
         .setStyle(style)
         .setRequired(required)
-        .setPlaceholder(placeholder)
+        .setPlaceholder(trimForDiscord(placeholder, MAX_INPUT_PLACEHOLDER))
     );
 
   // Economy
   if (actionId === 'economy:addbalance') {
-    modal.setTitle('Add Balance');
+    setTitle('Add Balance');
     modal.addComponents(
       addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'),
       addInput('amount', 'Amount', TextInputStyle.Short, true, '1000'),
@@ -345,7 +395,7 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'economy:addserverbal') {
-    modal.setTitle('Add Server Bank');
+    setTitle('Add Server Bank');
     modal.addComponents(addInput('amount', 'Amount', TextInputStyle.Short, true, '5000'));
     return modal;
   }
@@ -353,7 +403,7 @@ function buildModal(actionId) {
 
   // Effects
   if (actionId === 'effects:give') {
-    modal.setTitle('Give Effect');
+    setTitle('Give Effect');
     modal.addComponents(
       addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'),
       addInput('effect_id', 'Effect ID', TextInputStyle.Short, true, 'echo_blessing_minor_percent'),
@@ -365,26 +415,26 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'effects:view') {
-    modal.setTitle('View Active Effect');
+    setTitle('View Active Effect');
     modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'));
     return modal;
   }
 
   if (actionId === 'effects:clear') {
-    modal.setTitle('Clear Active Effect');
+    setTitle('Clear Active Effect');
     modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'));
     return modal;
   }
 
   // Moderation
   if (actionId === 'moderation:purge') {
-    modal.setTitle('Purge Messages');
+    setTitle('Purge Messages');
     modal.addComponents(addInput('amount', 'How many messages (1-200)', TextInputStyle.Short, true, '25'));
     return modal;
   }
 
   if (actionId === 'moderation:setheat') {
-    modal.setTitle('Set Heat');
+    setTitle('Set Heat');
     modal.addComponents(
       addInput('value', 'Heat value (0-100)', TextInputStyle.Short, true, '0'),
       addInput('user_id', 'User ID (blank = you)', TextInputStyle.Short, false, '123...'),
@@ -394,7 +444,7 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'moderation:setjail') {
-    modal.setTitle('Set Jail');
+    setTitle('Set Jail');
     modal.addComponents(
       addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'),
       addInput('minutes', 'Minutes (0 clears)', TextInputStyle.Short, true, '10'),
@@ -404,7 +454,7 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'moderation:cooldown_clear') {
-    modal.setTitle('Clear Cooldowns');
+    setTitle('Clear Cooldowns');
     modal.addComponents(
       addInput('user_id', 'User ID (blank = you)', TextInputStyle.Short, false, '123...'),
       addInput('key', 'Cooldown key (blank=all)', TextInputStyle.Short, false, 'job | crime_heist | all')
@@ -413,14 +463,14 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'moderation:resetach') {
-    modal.setTitle('Reset Achievements');
+    setTitle('Reset Achievements');
     modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'));
     return modal;
   }
 
   // Boards
   if (actionId.startsWith('boards:')) {
-    modal.setTitle(`Board: ${actionId.split(':')[1]}`);
+    setTitle(`Board: ${actionId.split(':')[1]}`);
     // For list: no modal
     if (actionId === 'boards:list') return null;
 
@@ -452,7 +502,7 @@ function buildModal(actionId) {
 
   // Bot Games
   if (actionId === 'botgames:force_spawn') {
-    modal.setTitle('Force Spawn Bot Game');
+    setTitle('Force Spawn Bot Game');
     modal.addComponents(
       addInput('event_id', 'Event ID (blank = random)', TextInputStyle.Short, false, 'mystery_box | risk_ladder | ...'),
       addInput('channel_id', 'Channel ID (blank = configured)', TextInputStyle.Short, false, '123...'),
@@ -464,7 +514,7 @@ function buildModal(actionId) {
 
   // Patchboard
   if (actionId.startsWith('patchboard:')) {
-    modal.setTitle(`Patchboard: ${actionId.split(':')[1]}`);
+    setTitle(`Patchboard: ${actionId.split(':')[1]}`);
     modal.addComponents(addInput('channel_id', 'Channel ID (blank = current channel)', TextInputStyle.Short, false, '123...'));
 
     if (actionId === 'patchboard:set') {
@@ -485,7 +535,7 @@ function buildModal(actionId) {
 
   // Shop / inv
   if (actionId.startsWith('shop:')) {
-    modal.setTitle(`Shop: ${actionId.split(':')[1]}`);
+    setTitle(`Shop: ${actionId.split(':')[1]}`);
 
     if (actionId === 'shop:inv_remove') {
       modal.addComponents(
@@ -531,7 +581,7 @@ function buildModal(actionId) {
   // Echo Stock Exchange
   if (actionId.startsWith('ese:')) {
     const sub = actionId.split(':')[1];
-    modal.setTitle(`ESE: ${sub}`);
+    setTitle(`ESE: ${sub}`);
 
     if (sub === 'view') {
       modal.addComponents(addInput('symbol', 'Stock symbol', TextInputStyle.Short, true, 'LOE'));
@@ -567,15 +617,15 @@ function buildModal(actionId) {
   // Contracts
   if (actionId.startsWith('contracts:')) {
     const sub = actionId.split(':')[1];
-    modal.setTitle(`Contracts: ${sub}`);
+    setTitle(`Contracts: ${sub}`);
 
     if (sub === 'settings') {
       modal.addComponents(
-        addInput('auto_enabled', 'Auto contracts? (true/false)', TextInputStyle.Short, true, 'true'),
-        addInput('auto_rotate', 'Auto rotate? (true/false)', TextInputStyle.Short, true, 'true'),
-        addInput('community_mode', 'Mode (random / co_op / competitive)', TextInputStyle.Short, true, 'random'),
-        addInput('daily_post_channel_id', 'Daily post channel ID', TextInputStyle.Short, false, '1449217901306581074'),
-        addInput('personal', 'Personal enabled=true/false | slots=3', TextInputStyle.Paragraph, true, 'enabled=true\nslots=3')
+        addInput('auto_enabled', 'Auto contracts', TextInputStyle.Short, true, 'true / false'),
+        addInput('auto_rotate', 'Auto rotate', TextInputStyle.Short, true, 'true / false'),
+        addInput('community_mode', 'Community mode', TextInputStyle.Short, true, 'random / co_op / competitive'),
+        addInput('daily', 'Daily post settings', TextInputStyle.Paragraph, false, 'enabled=true\nchannel_id=1449217901306581074'),
+        addInput('personal', 'Personal contract settings', TextInputStyle.Paragraph, true, 'enabled=true\nslots=3')
       );
       return modal;
     }
@@ -585,7 +635,7 @@ function buildModal(actionId) {
         addInput('template_id', 'Template ID (blank = random from mode)', TextInputStyle.Short, false, 'co_op_shift_surge'),
         addInput('mode', 'Mode (random / co_op / competitive)', TextInputStyle.Short, false, 'random'),
         addInput('duration_hours', 'Duration hours (blank = template)', TextInputStyle.Short, false, '48'),
-        addInput('numbers', 'target=100\nreward_pool=25000\npenalty_amount=2000', TextInputStyle.Paragraph, false, 'target=100\nreward_pool=25000'),
+        addInput('numbers', 'Numeric overrides', TextInputStyle.Paragraph, false, 'target=100\nreward_pool=25000\npenalty_amount=2000\nstandings_rewards=12000,7000,4000\nopt_in=false'),
         addInput('title', 'Title override (blank = template)', TextInputStyle.Short, false, 'Citywide Push')
       );
       return modal;
@@ -594,7 +644,7 @@ function buildModal(actionId) {
 
   // Rift
   if (actionId.startsWith('rift:')) {
-    modal.setTitle(`Rift: ${actionId.split(':')[1]}`);
+    setTitle(`Rift: ${actionId.split(':')[1]}`);
     if (actionId === 'rift:schedule') {
       modal.addComponents(addInput('unix', 'Next spawn unix (seconds)', TextInputStyle.Short, true, String(nowUnix() + 3600)));
       return modal;
@@ -703,6 +753,19 @@ async function handleInteraction(interaction) {
   } catch (e) {
     console.error('[ADMINPANEL] interaction failed:', e);
     try {
+      const content = e?.name === 'AdminPanelValidationError'
+        ? `❌ ${e.message}`
+        : '❌ Admin panel interaction failed. Check Railway logs.';
+      if (e?.name === 'AdminPanelValidationError') {
+        if (interaction.deferred) {
+          await interaction.editReply({ content, flags: MessageFlags.Ephemeral });
+        } else if (interaction.replied) {
+          await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+        } else {
+          await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+        }
+        return true;
+      }
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({ content: '❌ Admin panel interaction failed. Check Railway logs.', flags: MessageFlags.Ephemeral });
       } else {
@@ -767,27 +830,38 @@ async function runActionFromId({ interaction, actionId, fields }) {
 
     if (sub === 'settings') {
       const kv = parseKeyValueLines(fields.personal || '');
+      const daily = parseKeyValueLines(fields.daily || '');
+      const current = await contracts.getSettings(guild.id);
+      const dailyChannelRaw = daily.channel_id ?? fields.daily_post_channel_id ?? current.dailyPostChannelId ?? '';
+      const dailyChannelId = cleanId(dailyChannelRaw);
+      const personalSlots = parseOptionalNumber(kv.slots ?? current.personalSlots, 'personal slots', { min: 1, max: 10 }) ?? current.personalSlots;
       const next = await contracts.updateSettings(guild.id, {
-        autoEnabled: parseBool(fields.auto_enabled, true),
-        autoRotate: parseBool(fields.auto_rotate, true),
-        communityMode: String(fields.community_mode || 'random').trim() || 'random',
-        dailyPostChannelId: String(fields.daily_post_channel_id || '').trim() || null,
-        personalEnabled: parseBool(kv.enabled, true),
-        personalSlots: Number(kv.slots || 3),
+        autoEnabled: parseBool(fields.auto_enabled, current.autoEnabled),
+        autoRotate: parseBool(fields.auto_rotate, current.autoRotate),
+        communityMode: normalizeContractMode(fields.community_mode || current.communityMode),
+        dailyPostEnabled: parseBool(daily.enabled, current.dailyPostEnabled),
+        dailyPostChannelId: dailyChannelId || null,
+        personalEnabled: parseBool(kv.enabled, current.personalEnabled),
+        personalSlots,
       });
-      return safeReply(`✅ Contracts settings updated.\n• Auto: **${next.autoEnabled ? 'ON' : 'OFF'}**\n• Rotate: **${next.autoRotate ? 'ON' : 'OFF'}**\n• Mode: **${next.communityMode}**\n• Daily channel: ${next.dailyPostChannelId ? `<#${next.dailyPostChannelId}>` : 'Not set'}\n• Personal: **${next.personalEnabled ? 'ON' : 'OFF'}** (${next.personalSlots} slots)`);
+      return safeReply(`✅ Contracts settings updated.\n• Auto: **${next.autoEnabled ? 'ON' : 'OFF'}**\n• Rotate: **${next.autoRotate ? 'ON' : 'OFF'}**\n• Mode: **${next.communityMode}**\n• Daily posts: **${next.dailyPostEnabled ? 'ON' : 'OFF'}**\n• Daily channel: ${next.dailyPostChannelId ? `<#${next.dailyPostChannelId}>` : 'Not set'}\n• Personal: **${next.personalEnabled ? 'ON' : 'OFF'}** (${next.personalSlots} slots)`);
     }
 
     if (sub === 'start') {
       const nums = parseKeyValueLines(fields.numbers || '');
-      const res = await contracts.createCommunityContract(guild.id, {
+      const overrides = {
         templateId: String(fields.template_id || '').trim() || null,
-        mode: String(fields.mode || '').trim() || 'random',
-        durationHours: fields.duration_hours ? Number(fields.duration_hours) : undefined,
-        target: nums.target ? Number(nums.target) : undefined,
-        rewardPool: nums.reward_pool ? Number(nums.reward_pool) : undefined,
-        penaltyAmount: nums.penalty_amount ? Number(nums.penalty_amount) : undefined,
+        mode: normalizeContractMode(fields.mode),
+        durationHours: parseOptionalNumber(fields.duration_hours, 'duration_hours', { min: 1, max: 720 }),
+        target: parseOptionalNumber(nums.target, 'target', { min: 1 }),
+        rewardPool: parseOptionalNumber(nums.reward_pool, 'reward_pool', { min: 0 }),
+        penaltyAmount: parseOptionalNumber(nums.penalty_amount, 'penalty_amount', { min: 0 }),
+        standingsRewards: parseCsvNumbers(nums.standings_rewards, 'standings_rewards'),
+        optIn: nums.opt_in == null ? undefined : parseBool(nums.opt_in, false),
         title: String(fields.title || '').trim() || undefined,
+      };
+      const res = await contracts.createCommunityContract(guild.id, {
+        ...overrides,
       });
       if (!res.ok) {
         if (res.reason === 'already_active') return safeReply('⚠️ A community contract is already active. Stop or rotate it first.');

@@ -726,7 +726,8 @@ async function forceRotateCommunity(guildId) {
   if (active) {
     await finalizeCommunityContract(active, 'manual_rotate');
   }
-  return maybeAutoStartCommunity(guildId);
+  const settings = await getSettings(guildId);
+  return createCommunityContract(guildId, { mode: String(settings.communityMode || 'random') });
 }
 
 async function postDailyUpdateImpl(client, guildId, force = false) {
@@ -743,7 +744,8 @@ async function postDailyUpdateImpl(client, guildId, force = false) {
   const channel = await client.channels.fetch(String(settings.dailyPostChannelId)).catch(() => null);
   if (!channel || !channel.isTextBased?.()) return { ok: false, reason: 'bad_channel' };
   const payload = await buildDailyPostPayload(guildId);
-  await channel.send(payload).catch(() => null);
+  const sent = await channel.send(payload).catch(() => null);
+  if (!sent) return { ok: false, reason: 'send_failed' };
   await markDailyPost(guildId);
   return { ok: true };
 }

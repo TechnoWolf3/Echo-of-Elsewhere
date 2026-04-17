@@ -22,7 +22,7 @@ This is a working map for taking over the bot. Keep it updated when command rout
    - optionally posts a Railway deploy announcement,
    - ensures the persistent Bot Features hub,
    - creates/migrates DB tables via `ensureAchievementTables`, `ensureEconomyTables`, and `ensureEseSchema`,
-   - starts Bot Games, Lottery, and Echo Rift schedulers,
+   - starts Bot Games, Lottery, Echo Rift, and Contracts schedulers,
    - syncs achievements from `data/achievements`,
    - starts the Echo Stock Exchange market ticker.
 
@@ -34,6 +34,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `/adminpanel` - Bot Master control panel routed through `utils/adminPanel.js`.
 - `/bal` and `/balance` - wallet/bank/total balance aliases.
 - `/bank` - banking hub with deposit, withdraw, account transfer, and history.
+- `/contracts` - community/personal contracts dashboard routed through `utils/contracts.js`.
 - `/ese` - Echo Stock Exchange hub.
 - `/games` - Games Hub panel.
 - `/help` - help panel with local collectors.
@@ -55,6 +56,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `ese-*` and `ese-view-stock` go to `commands/ese.js`.
 - `adminpanel:*` goes to `utils/adminPanel.js`.
 - `bank:*` goes to `commands/bank.js`.
+- `contracts:*` goes to `commands/contracts.js`, which delegates to `utils/contracts.js`.
 - `rituals:*` and ritual-specific IDs go to `commands/rituals.js`.
 - Blood Tax buttons go to `utils/echoCurses.js`.
 - `features:*` goes to `data/features/index.js`.
@@ -107,6 +109,7 @@ Feature modules with their own table setup:
 - `utils/botGames.js`: `bot_games_schedule`
 - `utils/echoRift.js`: `echo_rift_schedule`, `echo_rifts`, `echo_chosen`
 - `utils/effectSystem.js`: `user_effects`
+- `utils/contracts.js`: `contract_settings`, `community_contracts`, `community_contract_participants`, `personal_contracts`
 - `data/features/store.js`: `persistent_messages`
 
 Money movement should go through `utils/economy.js` where possible:
@@ -199,7 +202,7 @@ Farming specifics:
 - Slash entry: `commands/adminpanel.js`
 - Implementation: `utils/adminPanel.js`
 - Gate: hard-coded Bot Master role ID `741251069002121236`
-- Some actions run legacy command files from `admin/legacy_commands`.
+- Some actions run legacy command files from `commands/_retired/admin`; `admin/legacy_commands` is a duplicate legacy folder and is not the active admin panel target.
 
 ## Known Risk Areas
 
@@ -208,7 +211,7 @@ Farming specifics:
 - Database schema is spread across `index.js` and feature modules. New table columns should include migration SQL.
 - Some files contain mojibake from emoji encoding. That is cosmetic until it touches Discord-visible labels or string comparisons.
 - Local verification cannot fully test DB-backed features without `DATABASE_URL`.
-- Retired command folders should not be deployed, but admin panel still depends on `admin/legacy_commands`.
+- Retired command folders should not be deployed as slash commands, but admin panel still depends on `commands/_retired/admin`.
 
 ## Verification Checklist
 
