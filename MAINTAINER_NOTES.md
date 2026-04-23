@@ -238,11 +238,12 @@ Farming specifics:
 
 Do not run `npm start` casually if the real Discord token is present; it logs the bot into Discord.
 
+### Scheduled Channel Purger
 
-## Scheduled Channel Purges
-- New helper: `utils/channelPurger.js`
-- Stores purge schedules in `channel_purge_schedules`.
-- Purges are true full wipes by cloning/recreating the channel, because Discord cannot bulk-delete messages older than 14 days.
-- Because of that, the channel ID changes after each purge and the scheduler updates the stored ID automatically for recurring purges.
-- Admin Panel > Moderation now includes Schedule Purge, Purge Status, and Disable Purge.
-- Frequency is aligned to Brisbane-time midnight boundaries. Example: a 24-hour purge set at 7pm will first run at the next midnight, then every midnight after.
+- Scheduler and purge logic live in `utils/channelPurger.js`.
+- Admin Panel controls are under **Moderation** in `utils/adminPanel.js`.
+- This version intentionally keeps the same channel ID.
+- Purges run inside the existing channel by fetching history, bulk-deleting recent messages, and individually deleting older messages that Discord will not bulk-delete.
+- Because Discord only bulk-deletes recent history, very large or very old channels may take longer to fully clear.
+- Schedule alignment is based on Australia/Brisbane local time boundaries from midnight. Example: `24` hours means the next midnight, then every midnight after that.
+- Data is stored in the `channel_purge_jobs` table and started from `index.js` on boot.

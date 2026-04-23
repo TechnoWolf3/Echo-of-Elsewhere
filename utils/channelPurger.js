@@ -1,314 +1,346 @@
-const { ChannelType, EmbedBuilder } = require("discord.js");
+const { ChannelType, PermissionFlagsBits } = require('discord.js');
 
 const BRISBANE_OFFSET_MS = 10 * 60 * 60 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
-const DAY_MS = 24 * HOUR_MS;
+const MIN_FREQUENCY_HOURS = 1;
+const MAX_FREQUENCY_HOURS = 24 * 30;
+const POLL_MS = 60 * 1000;
+const BULK_DELETE_MAX_AGE_MS = 13.5 * 24 * 60 * 60 * 1000;
 
-let loopHandle = null;
-let running = false;
+let pollHandle = null;
+let activeRun = false;
 
-function getNowMs() {
+function assertDb(client) {
+  if (!client?.db) throw new Error('Database is not available.');
+  return client.db;
+}
+
+function cleanId(value) {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
+function parseMode(value) {
+  const mode = String(value || 'recurring').trim().toLowerCase();
+  if (!['once', 'recurring'].includes(mode)) {
+    throw new Error('Mode must be once or recurring.');
+  }
+  return mode;
+}
+
+function parseFrequencyHours(value) {
+  const hours = Number(value);
+  if (!Number.isInteger(hours) || hours < MIN_FREQUENCY_HOURS || hours > MAX_FREQUENCY_HOURS) {
+    throw new Error(`Frequency must be a whole number between ${MIN_FREQUENCY_HOURS} and ${MAX_FREQUENCY_HOURS} hours.`);
+  }
+  return hours;
+}
+
+function nowMs() {
   return Date.now();
 }
 
-function toBrisbaneLocalMs(utcMs) {
-  return utcMs + BRISBANE_OFFSET_MS;
+function computeNextRunMs({ fromMs = nowMs(), frequencyHours }) {
+  const intervalMs = frequencyHours * 60 * 60 * 1000;
+  const localMs = fromMs + BRISBANE_OFFSET_MS;
+  const dayStartLocalMs = Math.floor(localMs / 86400000) * 86400000;
+  const elapsedTodayMs = localMs - dayStartLocalMs;
+  const stepIndex = Math.floor(elapsedTodayMs / intervalMs) + 1;
+  const nextLocalMs = dayStartLocalMs + (stepIndex * intervalMs);
+  return nextLocalMs - BRISBANE_OFFSET_MS;
 }
 
-function fromBrisbaneLocalMs(localMs) {
-  return localMs - BRISBANE_OFFSET_MS;
+function formatMode(mode) {
+  return mode === 'once' ? 'Once' : 'Recurring';
 }
 
-function computeNextBoundaryUtcMs(frequencyHours, fromUtcMs = getNowMs()) {
-  const intervalMs = Number(frequencyHours) * HOUR_MS;
-  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-    throw new Error("Frequency hours must be a positive number.");
-  }
-
-  const localNowMs = toBrisbaneLocalMs(fromUtcMs);
-  const startOfDayLocalMs = Math.floor(localNowMs / DAY_MS) * DAY_MS;
-  const elapsedTodayMs = localNowMs - startOfDayLocalMs;
-  const nextSlotIndex = Math.floor(elapsedTodayMs / intervalMs) + 1;
-  const nextLocalMs = startOfDayLocalMs + (nextSlotIndex * intervalMs);
-  return fromBrisbaneLocalMs(nextLocalMs);
+function formatScheduleLine(row) {
+  const nextUnix = row?.next_run_at ? Math.floor(new Date(row.next_run_at).getTime() / 1000) : null;
+  const lastUnix = row?.last_run_at ? Math.floor(new Date(row.last_run_at).getTime() / 1000) : null;
+  return [
+    `Channel: <#${row.channel_id}> (\`${row.channel_id}\`)`,
+    `Frequency: **${row.frequency_hours}h**`,
+    `Mode: **${formatMode(row.mode)}**`,
+    `Status: **${row.active ? 'Active' : 'Disabled'}**`,
+    nextUnix ? `Next purge: <t:${nextUnix}:F> (<t:${nextUnix}:R>)` : 'Next purge: —',
+    lastUnix ? `Last purge: <t:${lastUnix}:F> (<t:${lastUnix}:R>)` : 'Last purge: Never',
+    row.last_error ? `Last error: ${row.last_error}` : null,
+  ].filter(Boolean).join('\n');
 }
 
 async function ensureSchema(db) {
   await db.query(`
-    CREATE TABLE IF NOT EXISTS channel_purge_schedules (
-      guild_id TEXT NOT NULL,
+    CREATE TABLE IF NOT EXISTS channel_purge_jobs (
+      guild_id TEXT PRIMARY KEY,
       channel_id TEXT NOT NULL,
       frequency_hours INTEGER NOT NULL,
       mode TEXT NOT NULL DEFAULT 'recurring',
-      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
       next_run_at TIMESTAMPTZ NOT NULL,
       last_run_at TIMESTAMPTZ NULL,
+      last_error TEXT NULL,
       created_by TEXT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (guild_id, channel_id)
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS frequency_hours INTEGER NOT NULL DEFAULT 24;
+    ALTER TABLE channel_purge_jobs
+      ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'recurring';
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'recurring';
+    ALTER TABLE channel_purge_jobs
+      ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE channel_purge_jobs
+      ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ;
+    ALTER TABLE channel_purge_jobs
+      ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ NULL;
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ NULL;
+    ALTER TABLE channel_purge_jobs
+      ADD COLUMN IF NOT EXISTS last_error TEXT NULL;
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS created_by TEXT NULL;
+    ALTER TABLE channel_purge_jobs
+      ADD COLUMN IF NOT EXISTS created_by TEXT NULL;
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+    ALTER TABLE channel_purge_jobs
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 
-    ALTER TABLE channel_purge_schedules
-    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-
-    CREATE INDEX IF NOT EXISTS idx_channel_purge_schedules_enabled_next
-    ON channel_purge_schedules (enabled, next_run_at);
-  `);
-
-  await db.query(`
-    UPDATE channel_purge_schedules
-    SET next_run_at = COALESCE(next_run_at, NOW() + INTERVAL '1 hour')
-    WHERE next_run_at IS NULL
+    CREATE INDEX IF NOT EXISTS idx_channel_purge_jobs_next_run
+      ON channel_purge_jobs (active, next_run_at);
   `);
 }
 
-async function upsertSchedule({ db, guildId, channelId, frequencyHours, mode = 'recurring', actorId = null }) {
-  const normalizedMode = String(mode).trim().toLowerCase() === 'once' ? 'once' : 'recurring';
-  const nextRunUtcMs = computeNextBoundaryUtcMs(Number(frequencyHours));
-  const res = await db.query(
-    `INSERT INTO channel_purge_schedules (
-       guild_id, channel_id, frequency_hours, mode, enabled, next_run_at, created_by, updated_at
-     ) VALUES ($1, $2, $3, $4, TRUE, TO_TIMESTAMP($5 / 1000.0), $6, NOW())
-     ON CONFLICT (guild_id, channel_id)
-     DO UPDATE SET
-       frequency_hours = EXCLUDED.frequency_hours,
-       mode = EXCLUDED.mode,
-       enabled = TRUE,
-       next_run_at = EXCLUDED.next_run_at,
-       created_by = EXCLUDED.created_by,
-       updated_at = NOW()
-     RETURNING *`,
-    [guildId, channelId, Number(frequencyHours), normalizedMode, nextRunUtcMs, actorId]
-  );
-  return res.rows[0] ?? null;
-}
-
-async function getSchedulesForGuild(db, guildId) {
+async function getJob(db, guildId) {
   const res = await db.query(
     `SELECT *
-     FROM channel_purge_schedules
-     WHERE guild_id = $1
-     ORDER BY enabled DESC, next_run_at ASC, channel_id ASC`,
-    [guildId]
-  );
-  return res.rows;
-}
-
-async function getSchedule(db, guildId, channelId) {
-  const res = await db.query(
-    `SELECT * FROM channel_purge_schedules WHERE guild_id = $1 AND channel_id = $2 LIMIT 1`,
-    [guildId, channelId]
+       FROM channel_purge_jobs
+      WHERE guild_id = $1`,
+    [String(guildId)]
   );
   return res.rows[0] ?? null;
 }
 
-async function disableSchedule(db, guildId, channelId) {
+async function saveJob(client, { guildId, channelId, frequencyHours, mode, createdBy }) {
+  const db = assertDb(client);
+  const nextRunMs = computeNextRunMs({ frequencyHours });
   const res = await db.query(
-    `UPDATE channel_purge_schedules
-     SET enabled = FALSE, updated_at = NOW()
-     WHERE guild_id = $1 AND channel_id = $2
-     RETURNING *`,
-    [guildId, channelId]
+    `INSERT INTO channel_purge_jobs (
+        guild_id, channel_id, frequency_hours, mode, active, next_run_at, last_run_at, last_error, created_by, updated_at
+      ) VALUES ($1, $2, $3, $4, TRUE, TO_TIMESTAMP($5 / 1000.0), NULL, NULL, $6, NOW())
+      ON CONFLICT (guild_id)
+      DO UPDATE SET
+        channel_id = EXCLUDED.channel_id,
+        frequency_hours = EXCLUDED.frequency_hours,
+        mode = EXCLUDED.mode,
+        active = TRUE,
+        next_run_at = EXCLUDED.next_run_at,
+        last_error = NULL,
+        created_by = EXCLUDED.created_by,
+        updated_at = NOW()
+      RETURNING *`,
+    [String(guildId), String(channelId), frequencyHours, mode, nextRunMs, createdBy ? String(createdBy) : null]
+  );
+  return res.rows[0];
+}
+
+async function disableJob(client, guildId) {
+  const db = assertDb(client);
+  const res = await db.query(
+    `UPDATE channel_purge_jobs
+        SET active = FALSE,
+            updated_at = NOW()
+      WHERE guild_id = $1
+      RETURNING *`,
+    [String(guildId)]
   );
   return res.rows[0] ?? null;
 }
 
-function formatMode(mode) {
-  return String(mode).toLowerCase() === 'once' ? 'Once' : 'Recurring';
-}
-
-function formatNextRun(row) {
-  const unix = row?.next_run_at ? Math.floor(new Date(row.next_run_at).getTime() / 1000) : null;
-  return unix ? `<t:${unix}:F> (<t:${unix}:R>)` : 'Not scheduled';
-}
-
-function formatLastRun(row) {
-  const unix = row?.last_run_at ? Math.floor(new Date(row.last_run_at).getTime() / 1000) : null;
-  return unix ? `<t:${unix}:F> (<t:${unix}:R>)` : 'Never';
-}
-
-function buildStatusEmbed(rows, guild) {
-  const embed = new EmbedBuilder()
-    .setColor(0x0875AF)
-    .setTitle('🧹 Scheduled Channel Purges')
-    .setDescription(rows.length ? 'Configured purge schedules for this server.' : 'No scheduled purges are configured yet.')
-    .setFooter({ text: `Brisbane time alignment • ${guild?.name || 'Server'}` })
-    .setTimestamp();
-
-  for (const row of rows.slice(0, 10)) {
-    embed.addFields({
-      name: `${row.enabled ? '✅' : '⏸️'} <#${row.channel_id}>`,
-      value: [
-        `**Mode:** ${formatMode(row.mode)}`,
-        `**Frequency:** every ${row.frequency_hours} hour${Number(row.frequency_hours) === 1 ? '' : 's'}`,
-        `**Next purge:** ${formatNextRun(row)}`,
-        `**Last purge:** ${formatLastRun(row)}`,
-      ].join('\n'),
-      inline: false,
-    });
-  }
-
-  if (rows.length > 10) {
-    embed.addFields({ name: 'More', value: `Showing 10 of ${rows.length} configured schedules.`, inline: false });
-  }
-
-  return embed;
-}
-
-async function recreateChannel(channel, reason) {
-  if (!channel || typeof channel.clone !== 'function') {
-    throw new Error('Channel could not be cloned.');
-  }
-
-  const guild = channel.guild;
-  const clone = await channel.clone({
-    name: channel.name,
-    reason,
-  });
-
-  try {
-    await clone.setPosition(channel.position).catch(() => null);
-    if (channel.parentId && clone.parentId !== channel.parentId) {
-      await clone.setParent(channel.parentId).catch(() => null);
-    }
-    if ('topic' in channel && channel.topic !== clone.topic) {
-      await clone.setTopic(channel.topic ?? null).catch(() => null);
-    }
-    if ('rateLimitPerUser' in channel && clone.rateLimitPerUser !== channel.rateLimitPerUser) {
-      await clone.setRateLimitPerUser(channel.rateLimitPerUser).catch(() => null);
-    }
-    if ('nsfw' in channel && clone.nsfw !== channel.nsfw && typeof clone.setNSFW === 'function') {
-      await clone.setNSFW(channel.nsfw).catch(() => null);
-    }
-  } catch (_) {}
-
-  await channel.delete(reason).catch(async (err) => {
-    await clone.delete('Rollback failed channel purge clone').catch(() => null);
-    throw err;
-  });
-
-  return guild.channels.fetch(clone.id).catch(() => clone);
-}
-
-async function executeDueSchedule(client, row) {
-  const guild = await client.guilds.fetch(row.guild_id).catch(() => null);
-  if (!guild) {
-    await client.db.query(
-      `UPDATE channel_purge_schedules SET enabled = FALSE, updated_at = NOW() WHERE guild_id = $1 AND channel_id = $2`,
-      [row.guild_id, row.channel_id]
-    );
-    return;
-  }
-
-  const channel = await guild.channels.fetch(row.channel_id).catch(() => null);
-  if (!channel) {
-    await client.db.query(
-      `UPDATE channel_purge_schedules SET enabled = FALSE, updated_at = NOW() WHERE guild_id = $1 AND channel_id = $2`,
-      [row.guild_id, row.channel_id]
-    );
-    return;
-  }
-
-  if (![ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(channel.type)) {
-    await client.db.query(
-      `UPDATE channel_purge_schedules SET enabled = FALSE, updated_at = NOW() WHERE guild_id = $1 AND channel_id = $2`,
-      [row.guild_id, row.channel_id]
-    );
-    return;
-  }
-
-  const reason = `Scheduled channel purge (${row.mode}, every ${row.frequency_hours}h)`;
-  const replacement = await recreateChannel(channel, reason);
-  const nextRunMs = computeNextBoundaryUtcMs(Number(row.frequency_hours), Math.max(getNowMs(), new Date(row.next_run_at).getTime() + 1000));
-
-  if (String(row.mode).toLowerCase() === 'once') {
-    await client.db.query(
-      `DELETE FROM channel_purge_schedules WHERE guild_id = $1 AND channel_id = $2`,
-      [row.guild_id, row.channel_id]
-    );
-    return;
-  }
-
-  await client.db.query(
-    `DELETE FROM channel_purge_schedules WHERE guild_id = $1 AND channel_id = $2`,
-    [row.guild_id, row.channel_id]
+async function clearJobError(db, guildId) {
+  await db.query(
+    `UPDATE channel_purge_jobs
+        SET last_error = NULL,
+            updated_at = NOW()
+      WHERE guild_id = $1`,
+    [String(guildId)]
   );
+}
 
-  await client.db.query(
-    `INSERT INTO channel_purge_schedules (
-       guild_id, channel_id, frequency_hours, mode, enabled, next_run_at, last_run_at, created_by, created_at, updated_at
-     ) VALUES (
-       $1, $2, $3, $4, TRUE, TO_TIMESTAMP($5 / 1000.0), NOW(), $6, COALESCE($7, NOW()), NOW()
-     )`,
-    [row.guild_id, replacement.id, Number(row.frequency_hours), row.mode, nextRunMs, row.created_by, row.created_at]
+async function recordJobFailure(db, guildId, error) {
+  const message = String(error?.message || error || 'Unknown purge error').slice(0, 500);
+  await db.query(
+    `UPDATE channel_purge_jobs
+        SET last_error = $2,
+            updated_at = NOW()
+      WHERE guild_id = $1`,
+    [String(guildId), message]
   );
+}
+
+async function markJobRun(db, row) {
+  const nextRunMs = row.mode === 'once'
+    ? null
+    : computeNextRunMs({ fromMs: nowMs(), frequencyHours: Number(row.frequency_hours) });
+
+  await db.query(
+    `UPDATE channel_purge_jobs
+        SET last_run_at = NOW(),
+            next_run_at = COALESCE(TO_TIMESTAMP($2 / 1000.0), next_run_at),
+            active = CASE WHEN $3 = 'once' THEN FALSE ELSE TRUE END,
+            last_error = NULL,
+            updated_at = NOW()
+      WHERE guild_id = $1`,
+    [String(row.guild_id), nextRunMs, String(row.mode)]
+  );
+}
+
+function canPurgeChannel(channel) {
+  return !!channel && [ChannelType.GuildText, ChannelType.GuildAnnouncement].includes(channel.type);
+}
+
+async function verifyPermissions(channel) {
+  const me = channel.guild.members.me ?? await channel.guild.members.fetchMe().catch(() => null);
+  if (!me) throw new Error('Could not resolve the bot member in this guild.');
+
+  const perms = channel.permissionsFor(me);
+  if (!perms?.has(PermissionFlagsBits.ViewChannel)) throw new Error('Bot cannot view the target channel.');
+  if (!perms?.has(PermissionFlagsBits.ManageMessages)) throw new Error('Bot needs Manage Messages in the target channel.');
+  if (!perms?.has(PermissionFlagsBits.ReadMessageHistory)) throw new Error('Bot needs Read Message History in the target channel.');
+}
+
+async function deleteOldMessagesIndividually(messages) {
+  let deleted = 0;
+  for (const message of messages.values()) {
+    if (!message.deletable) continue;
+    try {
+      await message.delete();
+      deleted += 1;
+    } catch (error) {
+      // Keep going; one stubborn message should not kill the whole purge.
+    }
+  }
+  return deleted;
+}
+
+async function purgeChannelMessages(channel) {
+  await verifyPermissions(channel);
+
+  let totalDeleted = 0;
+  let batches = 0;
+  let before;
+  const seenOldest = new Set();
+
+  while (batches < 1000) {
+    const fetched = await channel.messages.fetch({ limit: 100, before }).catch(() => null);
+    if (!fetched || fetched.size === 0) break;
+
+    const oldest = fetched.last();
+    if (!oldest) break;
+    if (seenOldest.has(oldest.id)) break;
+    seenOldest.add(oldest.id);
+    before = oldest.id;
+
+    const recent = fetched.filter((message) => message.deletable && (nowMs() - message.createdTimestamp) < BULK_DELETE_MAX_AGE_MS);
+    const older = fetched.filter((message) => message.deletable && !recent.has(message.id));
+
+    if (recent.size) {
+      const bulkResult = await channel.bulkDelete(recent, true).catch(() => null);
+      totalDeleted += bulkResult?.size ?? 0;
+    }
+
+    if (older.size) {
+      totalDeleted += await deleteOldMessagesIndividually(older);
+    }
+
+    batches += 1;
+
+    if (fetched.size < 100) break;
+  }
+
+  return { totalDeleted, batches };
+}
+
+async function runJob(client, row) {
+  const guild = await client.guilds.fetch(String(row.guild_id)).catch(() => null);
+  if (!guild) throw new Error('Guild could not be resolved.');
+
+  const channel = await guild.channels.fetch(String(row.channel_id)).catch(() => null);
+  if (!channel) throw new Error('Configured channel could not be resolved.');
+  if (!canPurgeChannel(channel)) throw new Error('Target channel must be a standard text or announcement channel.');
+
+  return purgeChannelMessages(channel);
 }
 
 async function tick(client) {
-  if (running || !client?.db) return;
-  running = true;
+  if (activeRun) return;
+  activeRun = true;
+  const db = assertDb(client);
+
   try {
-    const due = await client.db.query(
+    const due = await db.query(
       `SELECT *
-       FROM channel_purge_schedules
-       WHERE enabled = TRUE
-         AND next_run_at <= NOW()
-       ORDER BY next_run_at ASC
-       LIMIT 10`
+         FROM channel_purge_jobs
+        WHERE active = TRUE
+          AND next_run_at <= NOW()
+        ORDER BY next_run_at ASC
+        LIMIT 10`
     );
 
     for (const row of due.rows) {
       try {
-        await executeDueSchedule(client, row);
-      } catch (err) {
-        console.error('[CHANNEL PURGER] Failed to execute schedule:', err);
+        await runJob(client, row);
+        await markJobRun(db, row);
+      } catch (error) {
+        console.error('[channelPurger] purge failed:', error);
+        await recordJobFailure(db, row.guild_id, error);
       }
     }
   } finally {
-    running = false;
+    activeRun = false;
   }
 }
 
 function startScheduler(client) {
-  if (loopHandle) clearInterval(loopHandle);
-  loopHandle = setInterval(() => {
-    tick(client).catch((err) => console.error('[CHANNEL PURGER] Tick failed:', err));
-  }, 30_000);
+  if (!client?.db) return;
+  if (pollHandle) clearInterval(pollHandle);
+  pollHandle = setInterval(() => {
+    tick(client).catch((error) => console.error('[channelPurger] scheduler tick failed:', error));
+  }, POLL_MS);
 
-  setTimeout(() => {
-    tick(client).catch((err) => console.error('[CHANNEL PURGER] Initial tick failed:', err));
-  }, 5_000);
+  tick(client).catch((error) => console.error('[channelPurger] initial tick failed:', error));
+}
+
+async function scheduleFromAdmin(interaction, { channel, frequencyHours, mode }) {
+  if (!interaction?.guild) throw new Error('This can only be used in a server.');
+  if (!channel) throw new Error('A valid channel is required.');
+  if (!canPurgeChannel(channel)) throw new Error('Target channel must be a standard text or announcement channel.');
+
+  const parsedHours = parseFrequencyHours(frequencyHours);
+  const parsedMode = parseMode(mode);
+  await verifyPermissions(channel);
+
+  const row = await saveJob(interaction.client, {
+    guildId: interaction.guild.id,
+    channelId: channel.id,
+    frequencyHours: parsedHours,
+    mode: parsedMode,
+    createdBy: interaction.user?.id,
+  });
+
+  await clearJobError(assertDb(interaction.client), interaction.guild.id);
+  return row;
+}
+
+async function getStatus(client, guildId) {
+  const db = assertDb(client);
+  return getJob(db, guildId);
 }
 
 module.exports = {
   ensureSchema,
-  upsertSchedule,
-  getSchedule,
-  getSchedulesForGuild,
-  disableSchedule,
-  buildStatusEmbed,
-  computeNextBoundaryUtcMs,
   startScheduler,
+  scheduleFromAdmin,
+  disableJob,
+  getStatus,
+  formatScheduleLine,
+  computeNextRunMs,
+  parseFrequencyHours,
+  parseMode,
 };

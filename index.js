@@ -740,7 +740,7 @@ client.once(Events.ClientReady, async () => {
       // 📜 Contracts
       contracts.startScheduler(client);
 
-      // 🧹 Scheduled channel purges
+      // 🧹 Scheduled channel purger
       channelPurger.startScheduler(client);
 
       const count = await syncAchievements(client.db);
