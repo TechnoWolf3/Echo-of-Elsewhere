@@ -14,6 +14,7 @@ const bankCommand = require("./commands/bank");
 const ritualsCommand = require("./commands/rituals");
 const contractsCommand = require("./commands/contracts");
 const contracts = require("./utils/contracts");
+const channelPurger = require("./utils/channelPurger");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -724,6 +725,7 @@ client.once(Events.ClientReady, async () => {
       await ensureEconomyTables(client.db);
       await ensureEseSchema();
       await contracts.ensureSchema();
+      await channelPurger.ensureSchema(client.db);
       console.log("[ESE] schema ready");
 
       // Start Bot Games AFTER DB tables exist
@@ -737,6 +739,9 @@ client.once(Events.ClientReady, async () => {
 
       // 📜 Contracts
       contracts.startScheduler(client);
+
+      // 🧹 Scheduled channel purges
+      channelPurger.startScheduler(client);
 
       const count = await syncAchievements(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements/*`);

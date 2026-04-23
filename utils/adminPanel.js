@@ -26,6 +26,7 @@ const {
 const contracts = require('./contracts');
 const farming = require('./farming/engine');
 const seasonControl = require('./farming/seasonControl');
+const channelPurger = require('./channelPurger');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -65,6 +66,9 @@ const ACTIONS_BY_CATEGORY = {
   ],
   moderation: [
     { id: 'moderation:purge', label: 'Purge Messages', style: ButtonStyle.Danger, modal: true },
+    { id: 'moderation:purge_schedule', label: 'Schedule Purge', style: ButtonStyle.Primary, modal: true },
+    { id: 'moderation:purge_status', label: 'Purge Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'moderation:purge_disable', label: 'Disable Purge', style: ButtonStyle.Secondary, modal: true },
     { id: 'moderation:setheat', label: 'Set Heat', style: ButtonStyle.Secondary, modal: true },
     { id: 'moderation:setjail', label: 'Set Jail', style: ButtonStyle.Secondary, modal: true },
     { id: 'moderation:cooldown_clear', label: 'Clear Cooldowns', style: ButtonStyle.Secondary, modal: true },
@@ -437,6 +441,22 @@ function buildModal(actionId) {
   if (actionId === 'moderation:purge') {
     setTitle('Purge Messages');
     modal.addComponents(addInput('amount', 'How many messages (1-200)', TextInputStyle.Short, true, '25'));
+    return modal;
+  }
+
+  if (actionId === 'moderation:purge_schedule') {
+    setTitle('Schedule Channel Purge');
+    modal.addComponents(
+      addInput('channel_id', 'Channel ID (or #channel)', TextInputStyle.Short, true, '123456789012345678'),
+      addInput('frequency_hours', 'Frequency in hours', TextInputStyle.Short, true, '24'),
+      addInput('mode', 'Mode: once or recurring', TextInputStyle.Short, true, 'recurring')
+    );
+    return modal;
+  }
+
+  if (actionId === 'moderation:purge_disable') {
+    setTitle('Disable Scheduled Purge');
+    modal.addComponents(addInput('channel_id', 'Channel ID (or #channel)', TextInputStyle.Short, true, '123456789012345678'));
     return modal;
   }
 
@@ -1166,6 +1186,55 @@ async function runActionFromId({ interaction, actionId, fields }) {
       commandFile: getLegacy('purge'),
       values: { amount: Number(fields.amount) },
     });
+  }
+
+  if (actionId === 'moderation:purge_schedule') {
+    const channel = await channelFromField('channel_id');
+    if (!channel) return interaction.editReply('❌ Could not resolve that channel. Use Channel ID or #channel mention.');
+
+    const frequencyHours = Number(fields.frequency_hours);
+    if (!Number.isInteger(frequencyHours) || frequencyHours < 1 || frequencyHours > 168) {
+      return interaction.editReply('❌ Frequency must be a whole number of hours between 1 and 168.');
+    }
+
+    const cleanMidnightAlignment = (24 % frequencyHours === 0) || (frequencyHours % 24 === 0);
+    if (!cleanMidnightAlignment) {
+      return interaction.editReply('❌ Frequency should divide cleanly into 24 hours, or be a whole multiple of 24, so midnight alignment stays consistent.');
+    }
+
+    const mode = String(fields.mode || 'recurring').trim().toLowerCase();
+    if (!['once', 'recurring'].includes(mode)) {
+      return interaction.editReply('❌ Mode must be **once** or **recurring**.');
+    }
+
+    if (!channel.manageable && !channel.permissionsFor(interaction.guild.members.me)?.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.editReply('❌ I need **Manage Channels** permission to recreate that channel when the purge runs.');
+    }
+
+    const row = await channelPurger.upsertSchedule({
+      db: interaction.client.db,
+      guildId: interaction.guildId,
+      channelId: channel.id,
+      frequencyHours,
+      mode,
+      actorId: interaction.user.id,
+    });
+
+    const nextUnix = Math.floor(new Date(row.next_run_at).getTime() / 1000);
+    return interaction.editReply(`✅ Scheduled a **${mode}** purge for <#${row.channel_id}>.\n**Frequency:** every ${row.frequency_hours} hour${row.frequency_hours === 1 ? '' : 's'}\n**Next purge:** <t:${nextUnix}:F> (<t:${nextUnix}:R>)\n⚠️ This is a full purge and will **recreate the channel**, so the channel ID will change each time it runs.`);
+  }
+
+  if (actionId === 'moderation:purge_status') {
+    const rows = await channelPurger.getSchedulesForGuild(interaction.client.db, interaction.guildId);
+    return interaction.editReply({ embeds: [channelPurger.buildStatusEmbed(rows, interaction.guild)], content: '' });
+  }
+
+  if (actionId === 'moderation:purge_disable') {
+    const channel = await channelFromField('channel_id');
+    if (!channel) return interaction.editReply('❌ Could not resolve that channel. Use Channel ID or #channel mention.');
+    const disabled = await channelPurger.disableSchedule(interaction.client.db, interaction.guildId, channel.id);
+    if (!disabled) return interaction.editReply('❌ No scheduled purge was found for that channel ID.');
+    return interaction.editReply(`🛑 Disabled the scheduled purge for <#${channel.id}>.`);
   }
 
   if (actionId === 'moderation:setheat') {
