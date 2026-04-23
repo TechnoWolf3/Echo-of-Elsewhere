@@ -2,15 +2,15 @@ const { pool } = require("../db");
 const crops = require("../../data/farming/crops");
 const config = require("../../data/farming/config");
 const weather = require("./weather");
+const seasonControl = require("./seasonControl");
 const { recordProgress: recordContractProgress } = require("../contracts");
 
 async function recordFarmContractProgress(guildId, userId, metric, amount) {
   await recordContractProgress({ guildId, userId, metric, amount }).catch(() => {});
 }
 
-function getCurrentSeason(now = Date.now()) {
-  const index = Math.floor(now / config.SEASON_LENGTH_MS) % config.SEASONS.length;
-  return config.SEASONS[index];
+function getCurrentSeason(guildId = null, now = Date.now()) {
+  return seasonControl.getCurrentSeason(guildId, now);
 }
 
 
@@ -101,6 +101,7 @@ function newField() {
 
 async function ensureFarm(guildId, userId) {
   await ensureTable();
+  await seasonControl.ensureSeasonStateLoaded(guildId);
 
   const res = await pool.query(
     `SELECT data FROM farms WHERE guild_id=$1 AND user_id=$2`,
@@ -174,11 +175,12 @@ function updateFieldRuntime(field) {
 
 async function applySeasonRollover(guildId, userId, farm) {
   let changed = false;
+  const currentSeason = getCurrentSeason(guildId);
 
   for (const field of farm.fields || []) {
     updateFieldRuntime(field);
 
-    if (field.cropId && !isCropValidForSeason(field.cropId)) {
+    if (field.cropId && !isCropValidForSeason(field.cropId, currentSeason)) {
       field.cropId = null;
       field.state = "spoiled";
       field.cultivated = false;
@@ -191,6 +193,24 @@ async function applySeasonRollover(guildId, userId, farm) {
 
   if (changed) await saveFarm(guildId, userId, farm);
   return farm;
+}
+
+async function applySeasonRolloverToAllFarms(guildId) {
+  await ensureTable();
+  await seasonControl.ensureSeasonStateLoaded(guildId);
+
+  const res = await pool.query(`SELECT user_id, data FROM farms WHERE guild_id=$1`, [guildId]);
+  let changedCount = 0;
+
+  for (const row of res.rows) {
+    const farm = row.data || { fields: [] };
+    if (!Array.isArray(farm.fields) || !farm.fields.length) continue;
+    const before = JSON.stringify(farm);
+    await applySeasonRollover(guildId, row.user_id, farm);
+    if (JSON.stringify(farm) !== before) changedCount += 1;
+  }
+
+  return { changedCount, season: getCurrentSeason(guildId) };
 }
 
 async function buyField(guildId, userId, farm) {
@@ -246,7 +266,7 @@ async function plantCrop(guildId, userId, farm, fieldIndex, cropId) {
   if (field.state !== "empty" && field.state !== "spoiled") {
     return { ok: false, reasonText: "That field is not ready to be planted." };
   }
-  if (!isCropValidForSeason(cropId)) {
+  if (!isCropValidForSeason(cropId, getCurrentSeason(guildId))) {
     return { ok: false, reasonText: "That crop cannot be planted in the current season." };
   }
 
@@ -348,7 +368,7 @@ async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durati
     if (crop.level > field.level) {
       return { ok: false, reasonText: "That field is not a high enough level for this crop." };
     }
-    if (!isCropValidForSeason(cropId)) {
+    if (!isCropValidForSeason(cropId, getCurrentSeason(guildId))) {
       return { ok: false, reasonText: "That crop cannot be planted in the current season." };
     }
   }
@@ -429,7 +449,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     if (field.state !== "empty") {
       return failAndSave("That field is not ready to be planted.");
     }
-    if (!isCropValidForSeason(cropId)) {
+    if (!isCropValidForSeason(cropId, getCurrentSeason(guildId))) {
       return failAndSave("That crop cannot be planted in the current season.");
     }
 
@@ -465,7 +485,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     const hasFieldDamage = Boolean(field.fieldCondition?.requiresCultivation);
     weather.clearHarvestWeather(field);
 
-    if (crop.regrow && isCropValidForSeason(field.cropId) && !hasFieldDamage) {
+    if (crop.regrow && isCropValidForSeason(field.cropId, getCurrentSeason(guildId)) && !hasFieldDamage) {
       const now = Date.now();
       field.state = "growing";
       field.plantedAt = now;
@@ -525,6 +545,7 @@ module.exports = {
   getAvailableCrops,
   isCropValidForSeason,
   applySeasonRollover,
+  applySeasonRolloverToAllFarms,
   buyField,
   cultivateField,
   upgradeField,

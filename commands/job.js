@@ -587,7 +587,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           const weatherChannel = farmWeather.buildWeatherChannel(weatherState);
 
           return await msg.edit({
-            embeds: [farmingUi.buildFarmingEmbed(farm, weatherChannel)],
+            embeds: [farmingUi.buildFarmingEmbed(farm, weatherChannel, guildId)],
             components
           });
         } catch (err) {
@@ -611,8 +611,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
         await farming.applyFieldTaskRollovers(guildId, userId, farm);
 
         return msg.edit({
-          embeds: [farmingUi.buildFieldEmbed(farm, session.fieldIndex)],
-          components: farmingUi.buildFieldComponents(farm, session.fieldIndex),
+          embeds: [farmingUi.buildFieldEmbed(farm, session.fieldIndex, guildId)],
+          components: farmingUi.buildFieldComponents(farm, session.fieldIndex, guildId),
         }).catch(() => {});
       }
 

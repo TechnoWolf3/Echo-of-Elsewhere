@@ -164,8 +164,8 @@ async function handleFarmingInteraction({
     session.fieldIndex = fieldIndex;
 
     await msg.edit({
-      embeds: [farmingUi.buildFieldEmbed(farm, fieldIndex)],
-      components: farmingUi.buildFieldComponents(farm, fieldIndex),
+      embeds: [farmingUi.buildFieldEmbed(farm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(farm, fieldIndex, guildId),
     });
     return true;
   }
@@ -340,8 +340,8 @@ async function handleFarmingInteraction({
 
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await msg.edit({
-      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex)],
-      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex),
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
     });
     return true;
   }
@@ -421,8 +421,8 @@ async function startMachineBackedFieldTask({
   }).catch(() => {});
 
   await msg.edit({
-    embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex)],
-    components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex),
+    embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+    components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
   });
 }
 

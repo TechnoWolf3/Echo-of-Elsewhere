@@ -24,6 +24,8 @@ const {
   resetStockToLaunch,
 } = require('./ese/engine');
 const contracts = require('./contracts');
+const farming = require('./farming/engine');
+const seasonControl = require('./farming/seasonControl');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -44,6 +46,7 @@ const CATEGORIES = [
   { value: 'rift', label: 'Echo Rift' },
   { value: 'ese', label: 'Echo Stock Exchange' },
   { value: 'contracts', label: 'Contracts' },
+  { value: 'enterprises', label: 'Enterprises' },
   { value: 'misc', label: 'Misc' },
 ];
 
@@ -124,6 +127,10 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'contracts:stop', label: 'Stop Active', style: ButtonStyle.Danger, modal: false },
     { id: 'contracts:rotate', label: 'Rotate', style: ButtonStyle.Secondary, modal: false },
     { id: 'contracts:post_daily', label: 'Post Daily Now', style: ButtonStyle.Secondary, modal: false },
+  ],
+  enterprises: [
+    { id: 'enterprises:season_status', label: 'Season Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'enterprises:next_season', label: 'Skip To Next Season', style: ButtonStyle.Primary, modal: false },
   ],
   misc: [
     { id: 'misc:ping', label: 'Ping', style: ButtonStyle.Secondary, modal: false },
@@ -1049,6 +1056,44 @@ async function runActionFromId({ interaction, actionId, fields }) {
       }
       return safeReply(`❌ Could not apply that effect to **${target.username}**.`);
     }
+  }
+
+
+  // ENTERPRISES
+  if (actionId.startsWith('enterprises:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'season_status') {
+      await seasonControl.ensureSeasonStateLoaded(guild.id);
+      const summary = seasonControl.getSeasonStateSummary(guild.id);
+      const lines = [
+        `🌾 **Enterprise Season Status**`,
+        `• Current season: **${summary.season}**`,
+        `• Next season: **${summary.nextSeason}**`,
+        `• Weekly rollover: <t:${Math.floor(summary.nextWeekStartUtcMs / 1000)}:F>`,
+        `• Timezone: **Australia/Brisbane**`,
+        `• Manual skips applied: **${summary.manualOffsetWeeks}**`,
+      ];
+      if (summary.lastAdvancedAt) {
+        lines.push(`• Last manual skip: <t:${Math.floor(Number(summary.lastAdvancedAt) / 1000)}:R>`);
+      }
+      return safeReply(lines.join('\n'));
+    }
+
+    if (sub === 'next_season') {
+      const before = await seasonControl.ensureSeasonStateLoaded(guild.id).then(() => seasonControl.getSeasonStateSummary(guild.id));
+      const after = await seasonControl.advanceToNextSeason(guild.id, 1);
+      const rollover = await farming.applySeasonRolloverToAllFarms(guild.id);
+      await require('./farming/weather').ensureDailyWeatherState(guild.id);
+      return safeReply([
+        `✅ Farming season advanced.`,
+        `• ${before.season} → **${after.season}**`,
+        `• Next weekly rollover: <t:${Math.floor(after.nextWeekStartUtcMs / 1000)}:F>`,
+        `• Farms updated: **${rollover.changedCount}**`,
+      ].join('\n'));
+    }
+
+    return safeReply('❌ Unknown enterprises admin action.');
   }
 
   // ECONOMY

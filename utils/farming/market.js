@@ -1,8 +1,11 @@
 const { pool } = require("../db");
 const marketConfig = require("../../data/farming/marketConfig");
 const { getCurrentSeason } = require("./engine");
+const seasonControl = require("./seasonControl");
 
-function getPrice(cropId, season = getCurrentSeason()) {
+function getPrice(cropId, seasonOrGuildId = null, maybeSeason = null) {
+  const knownSeasons = new Set(["spring", "summer", "autumn", "winter"]);
+  const season = maybeSeason || (knownSeasons.has(String(seasonOrGuildId)) ? seasonOrGuildId : getCurrentSeason(seasonOrGuildId));
   const cfg = marketConfig[cropId];
   if (!cfg) return 0;
 
@@ -16,6 +19,7 @@ function getPrice(cropId, season = getCurrentSeason()) {
 }
 
 async function getSellableFarmItems(guildId, userId) {
+  await seasonControl.ensureSeasonStateLoaded(guildId);
   const res = await pool.query(
     `
     SELECT ui.item_id, ui.qty, si.name
@@ -33,7 +37,7 @@ async function getSellableFarmItems(guildId, userId) {
   );
 
   return res.rows.map((row) => {
-    const unitPrice = getPrice(row.item_id);
+    const unitPrice = getPrice(row.item_id, guildId);
     return {
       itemId: row.item_id,
       name: row.name,

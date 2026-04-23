@@ -2,6 +2,7 @@ const { pool } = require('../db');
 const config = require('../../data/farming/config');
 const weatherConfig = require('../../data/farming/weather');
 const weatherChances = require('../../data/farming/weatherChances');
+const seasonControl = require('./seasonControl');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const AEST_OFFSET_MS = 10 * 60 * 60 * 1000;
@@ -71,7 +72,7 @@ function interpolate(template, replacements = {}) {
   return String(template || '').replace(/\{(\w+)\}/g, (_, key) => String(replacements[key] ?? `{${key}}`));
 }
 
-function rollNewWeatherState(now = Date.now(), season = getCurrentSeason(now)) {
+function rollNewWeatherState(guildId, now = Date.now(), season = getCurrentSeason(guildId, now)) {
   const base = weatherConfig.defaultDayCondition;
   const dayStart = getAestDayStart(now);
   const dayKey = getDayKey(now);
@@ -131,9 +132,8 @@ async function saveWeatherState(guildId, data) {
   return data;
 }
 
-function getCurrentSeason(now = Date.now()) {
-  const index = Math.floor(now / config.SEASON_LENGTH_MS) % config.SEASONS.length;
-  return config.SEASONS[index];
+function getCurrentSeason(guildId = null, now = Date.now()) {
+  return seasonControl.getCurrentSeason(guildId, now);
 }
 
 function hasBlockingWeatherState(field) {
@@ -242,10 +242,11 @@ async function applyEventToAllFarms(guildId, state) {
 async function ensureDailyWeatherState(guildId, now = Date.now()) {
   await ensureWeatherTable();
   let state = await getWeatherState(guildId);
-  const season = getCurrentSeason(now);
+  await seasonControl.ensureSeasonStateLoaded(guildId);
+  const season = getCurrentSeason(guildId, now);
 
   if (!state || state.dayKey !== getDayKey(now) || state.season !== season) {
-    state = rollNewWeatherState(now, season);
+    state = rollNewWeatherState(guildId, now, season);
     await saveWeatherState(guildId, state);
   }
 

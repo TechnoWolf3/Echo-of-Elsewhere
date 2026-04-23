@@ -301,9 +301,9 @@ function buildFarmingComponents(farm) {
   return rows;
 }
 
-function buildFarmingEmbed(farm, weatherChannel = null) {
+function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
   const fields = farm.fields || [];
-  const season = farming.getCurrentSeason();
+  const season = farming.getCurrentSeason(guildId);
   const nextCost = fields.length < config.MAX_FIELDS ? farming.getNextFieldCost(fields.length) : null;
 
   const counts = fields.reduce(
@@ -472,7 +472,7 @@ function renderFieldVisual(field) {
   return buildGrid("🟫");
 }
 
-function buildFieldEmbed(farm, fieldIndex) {
+function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   const field = (farm.fields || [])[fieldIndex];
   const visual = renderFieldVisual(field);
 
@@ -541,7 +541,7 @@ function buildFieldEmbed(farm, fieldIndex) {
         `🌿 **Crop:** ${cropName}`,
         yieldRange ? `📦 **Yield Range:** ${yieldRange[0]}-${yieldRange[1]}` : "",
         `🪴 **Condition:** ${cultivatedLine}`,
-        `🍂 **Season:** ${farming.getCurrentSeason()}`,
+        `🍂 **Season:** ${farming.getCurrentSeason(guildId)}`,
         `🚜 **Machine Need:** ${machineHint}`,
         ...weatherLines,
         taskLine,
@@ -552,7 +552,7 @@ function buildFieldEmbed(farm, fieldIndex) {
     .setFooter({ text: "Fields can only run one task at a time." });
 }
 
-function buildFieldComponents(farm, fieldIndex) {
+function buildFieldComponents(farm, fieldIndex, guildId = null) {
   const field = (farm.fields || [])[fieldIndex];
   const rows = [];
 
@@ -595,7 +595,7 @@ function buildFieldComponents(farm, fieldIndex) {
     return rows;
   }
 
-  const currentSeason = farming.getCurrentSeason();
+  const currentSeason = farming.getCurrentSeason(guildId);
   const cropOptions = farming
     .getAvailableCrops(field.level || 1)
     .filter((crop) => Array.isArray(crop.seasons) && crop.seasons.includes(currentSeason));
