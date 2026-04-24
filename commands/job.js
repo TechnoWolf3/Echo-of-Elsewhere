@@ -255,7 +255,8 @@ function buildHubEmbed(user, progress, cooldownUnix) {
           "🧠 **Night Walker** — Work to please the night",
           "🕒 **Grind** — Jobs that take time",
           "🕶️ **Crime** — High risk, heat & jail",
-          "🏭 **Enterprises** — Long-term business systems"
+          "🏭 **Enterprises** — Long-term business systems",
+          "🕶️ **The Underworld** — Illegal operations, suspicion, and raids"
         ].join("\n"),
       },
       {
@@ -275,7 +276,8 @@ function buildHubComponents(disabled = false) {
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );
@@ -302,7 +304,6 @@ function buildEnterprisesEmbed({ cooldownUnix } = {}) {
         "Build long-term operations that grow over time.",
         "",
         "🌾 **Farming** — Fields, machinery, contracts, and produce markets.",
-        "🕶️ **The Underworld** — Warehouses, illegal operations, suspicion, and raids.",
         "⛏️ **Mining** — Coming later.",
         "🏭 **Manufacturing** — Coming later.",
       ].join("\n")
@@ -319,7 +320,8 @@ function buildEnterprisesComponents(disabled = false) {
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "🏭 Enterprises", value: "job_cat:enterprises", emoji: "🏭", default: true }
+        { label: "🏭 Enterprises", value: "job_cat:enterprises", emoji: "🏭", default: true },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );
@@ -333,11 +335,6 @@ function buildEnterprisesComponents(disabled = false) {
           label: "Farming",
           value: "enterprise:farming",
           emoji: "🌾"
-        },
-        {
-          label: "The Underworld",
-          value: "enterprise:underworld",
-          emoji: "🕶️"
         }
       )
       .setDisabled(disabled)
@@ -836,6 +833,12 @@ function scheduleReturnToCategory(delayMs = 5000) {
         if (actionId === "job_cat:enterprises") {
           session.view = "enterprises";
           session.lastCategory = "enterprises";
+          await redraw();
+          return;
+        }
+        if (actionId === "job_cat:underworld") {
+          session.view = "underworld";
+          session.lastCategory = "underworld";
           await redraw();
           return;
         }

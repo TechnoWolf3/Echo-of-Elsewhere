@@ -75,7 +75,7 @@ function buildUnderworldHomeComponents() {
         .setLabel("Operations")
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
-        .setCustomId("job_cat:enterprises")
+        .setCustomId("job_back:hub")
         .setLabel(ui.nav.back.label)
         .setEmoji(ui.nav.back.emoji)
         .setStyle(ui.nav.back.style)

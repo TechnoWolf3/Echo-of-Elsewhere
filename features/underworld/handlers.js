@@ -42,7 +42,7 @@ async function handleUnderworldInteraction({
   if (actionId === "enterprise:underworld") {
     await load();
     session.view = "underworld";
-    session.lastCategory = "enterprises";
+    session.lastCategory = "underworld";
     await redraw();
     return true;
   }
