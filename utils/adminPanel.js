@@ -356,12 +356,22 @@ async function runLegacyCommand({ interaction, commandFile, subcommand = null, v
     const origReply = interaction.reply?.bind(interaction);
     const origEditReply = interaction.editReply?.bind(interaction);
     const origFollowUp = interaction.followUp?.bind(interaction);
+    const origDeferReply = interaction.deferReply?.bind(interaction);
 
     if (origReply && origEditReply) {
       interaction.reply = async (payload) => {
         if (interaction.deferred) return origEditReply(payload);
         if (interaction.replied) return origFollowUp ? origFollowUp(payload) : origEditReply(payload);
         return origReply(payload);
+      };
+    }
+
+    if (origDeferReply) {
+      interaction.deferReply = async (payload) => {
+        if (interaction.deferred || interaction.replied) {
+          return interaction;
+        }
+        return origDeferReply(payload);
       };
     }
 
