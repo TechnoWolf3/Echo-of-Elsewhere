@@ -247,3 +247,5 @@ Do not run `npm start` casually if the real Discord token is present; it logs th
 - Because Discord only bulk-deletes recent history, very large or very old channels may take longer to fully clear.
 - Schedule alignment is based on Australia/Brisbane local time boundaries from midnight. Example: `24` hours means the next midnight, then every midnight after that.
 - Data is stored in the `channel_purge_jobs` table and started from `index.js` on boot.
+- After each scheduled purge, `utils/channelPurger.js` asks `utils/lottery.js` to repost the current Powerball panel if the purged channel is the configured/current Powerball post channel.
+- The repost uses the normal lottery post builder/state, so ticket counts, jackpot, buttons, and stored `post_message_id` stay in sync.

@@ -1,4 +1,5 @@
 const { ChannelType, PermissionFlagsBits } = require('discord.js');
+const lottery = require('./lottery');
 
 const BRISBANE_OFFSET_MS = 10 * 60 * 60 * 1000;
 const MIN_FREQUENCY_HOURS = 1;
@@ -257,6 +258,16 @@ async function purgeChannelMessages(channel) {
   return { totalDeleted, batches };
 }
 
+async function runPostPurgeRestores(client, row) {
+  try {
+    await lottery.repostCurrentPost(client, String(row.guild_id), {
+      onlyIfChannelId: String(row.channel_id),
+    });
+  } catch (error) {
+    console.error('[channelPurger] post-purge Powerball repost failed:', error);
+  }
+}
+
 async function runJob(client, row) {
   const guild = await client.guilds.fetch(String(row.guild_id)).catch(() => null);
   if (!guild) throw new Error('Guild could not be resolved.');
@@ -265,7 +276,9 @@ async function runJob(client, row) {
   if (!channel) throw new Error('Configured channel could not be resolved.');
   if (!canPurgeChannel(channel)) throw new Error('Target channel must be a standard text or announcement channel.');
 
-  return purgeChannelMessages(channel);
+  const result = await purgeChannelMessages(channel);
+  await runPostPurgeRestores(client, row);
+  return result;
 }
 
 async function tick(client) {
