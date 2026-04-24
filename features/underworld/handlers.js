@@ -108,7 +108,7 @@ async function handleUnderworldInteraction({
   }
 
   if (actionId.startsWith("uw_convert:")) {
-    const [, , buildingIndexRaw, operationId] = actionId.split(":");
+    const [, buildingIndexRaw, operationId] = actionId.split(":");
     const buildingIndex = Number(buildingIndexRaw);
     const state = await load();
     const result = await engine.startConversion(guildId, userId, state, buildingIndex, operationId);
