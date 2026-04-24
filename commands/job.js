@@ -343,6 +343,68 @@ function buildEnterprisesComponents(disabled = false) {
   return [catRow, enterpriseRow];
 }
 
+function buildUnderworldEmbed({ cooldownUnix } = {}) {
+  return ui.applySystemStyle(new EmbedBuilder()
+    .setTitle("🕶️ The Underworld")
+    .setDescription(
+      [
+        statusLineFromCooldown(cooldownUnix),
+        "",
+        "Build illegal networks that make big money and attract the wrong kind of attention.",
+        "",
+        "🧪 **Operations** — Warehouses, labs, events, suspicion, and raids.",
+        "🚚 **Smuggling** — Coming later.",
+        "🏚️ **Fronts** — Coming later.",
+      ].join("\n")
+    ), "job");
+}
+
+function buildUnderworldComponents(disabled = false) {
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "🕶️ The Underworld", value: "job_cat:underworld", emoji: "🕶️", default: true }
+      )
+      .setDisabled(disabled)
+  );
+
+  const underworldRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:job")
+      .setPlaceholder("Choose an underworld branch...")
+      .addOptions(
+        {
+          label: "Operations",
+          value: "underworld:operations",
+          emoji: "🧪",
+          description: "Warehouses, labs, suspicion, and risky distribution",
+        },
+        {
+          label: "Smuggling",
+          value: "underworld:smuggling",
+          emoji: "🚚",
+          description: "Coming later",
+        },
+        {
+          label: "Fronts",
+          value: "underworld:fronts",
+          emoji: "🏚️",
+          description: "Coming later",
+        }
+      )
+      .setDisabled(disabled)
+  );
+
+  return [catRow, underworldRow];
+}
+
 /* ============================================================
    Main command
    ============================================================ */
@@ -658,12 +720,9 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "underworld") {
-        const state = await underworld.ensureState(guildId, userId);
-        await underworld.applyRuntime(guildId, userId, state);
-
         return msg.edit({
-          embeds: [underworldUi.buildUnderworldHomeEmbed(state)],
-          components: underworldUi.buildUnderworldHomeComponents(),
+          embeds: [buildUnderworldEmbed({ cooldownUnix: cd })],
+          components: buildUnderworldComponents(false),
         }).catch(() => {});
       }
 

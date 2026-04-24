@@ -5,6 +5,9 @@ const engine = require("../../utils/underworld/engine");
 function isUnderworldInteraction(actionId) {
   return (
     actionId === "enterprise:underworld" ||
+    actionId === "underworld:operations" ||
+    actionId === "underworld:smuggling" ||
+    actionId === "underworld:fronts" ||
     actionId === "uw_home" ||
     actionId === "uw_operations" ||
     actionId === "uw_refresh" ||
@@ -44,6 +47,19 @@ async function handleUnderworldInteraction({
     session.view = "underworld";
     session.lastCategory = "underworld";
     await redraw();
+    return true;
+  }
+
+  if (actionId === "underworld:operations") {
+    await load();
+    session.view = "underworld_operations";
+    session.lastCategory = "underworld";
+    await redraw();
+    return true;
+  }
+
+  if (actionId === "underworld:smuggling" || actionId === "underworld:fronts") {
+    await tell(interaction, "⚠️ That Underworld branch is scaffolded for later and is not live yet.");
     return true;
   }
 
