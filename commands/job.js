@@ -38,6 +38,9 @@ const market = require("../utils/farming/market");
 const machineEngine = require("../utils/farming/machineEngine");
 const farmingUi = require("../features/farming/ui");
 const { handleFarmingInteraction } = require("../features/farming/handlers");
+const underworld = require("../utils/underworld/engine");
+const underworldUi = require("../features/underworld/ui");
+const { handleUnderworldInteraction } = require("../features/underworld/handlers");
 const crimeUi = require("../features/crime/ui");
 const { handleCrimeInteraction } = require("../features/crime/handlers");
 const { CRIME_GLOBAL_KEY, CRIME_KEYS } = require("../features/crime/constants");
@@ -299,6 +302,7 @@ function buildEnterprisesEmbed({ cooldownUnix } = {}) {
         "Build long-term operations that grow over time.",
         "",
         "🌾 **Farming** — Fields, machinery, contracts, and produce markets.",
+        "🕶️ **The Underworld** — Warehouses, illegal operations, suspicion, and raids.",
         "⛏️ **Mining** — Coming later.",
         "🏭 **Manufacturing** — Coming later.",
       ].join("\n")
@@ -329,6 +333,11 @@ function buildEnterprisesComponents(disabled = false) {
           label: "Farming",
           value: "enterprise:farming",
           emoji: "🌾"
+        },
+        {
+          label: "The Underworld",
+          value: "enterprise:underworld",
+          emoji: "🕶️"
         }
       )
       .setDisabled(disabled)
@@ -651,6 +660,49 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
       }
 
+      if (session.view === "underworld") {
+        const state = await underworld.ensureState(guildId, userId);
+        await underworld.applyRuntime(guildId, userId, state);
+
+        return msg.edit({
+          embeds: [underworldUi.buildUnderworldHomeEmbed(state)],
+          components: underworldUi.buildUnderworldHomeComponents(),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_operations") {
+        const state = await underworld.ensureState(guildId, userId);
+        await underworld.applyRuntime(guildId, userId, state);
+
+        return msg.edit({
+          embeds: [underworldUi.buildOperationsEmbed(state)],
+          components: underworldUi.buildOperationsComponents(state),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_building") {
+        const state = await underworld.ensureState(guildId, userId);
+        await underworld.applyRuntime(guildId, userId, state);
+
+        const buildingCount = state.buildings?.length || 0;
+        if (!buildingCount) {
+          session.view = "underworld_operations";
+          session.underworldBuildingIndex = null;
+          return msg.edit({
+            embeds: [underworldUi.buildOperationsEmbed(state)],
+            components: underworldUi.buildOperationsComponents(state),
+          }).catch(() => {});
+        }
+
+        const maxIndex = Math.max(0, buildingCount - 1);
+        session.underworldBuildingIndex = Math.min(Number(session.underworldBuildingIndex || 0), maxIndex);
+
+        return msg.edit({
+          embeds: [underworldUi.buildBuildingEmbed(state, session.underworldBuildingIndex)],
+          components: underworldUi.buildBuildingComponents(state, session.underworldBuildingIndex),
+        }).catch(() => {});
+      }
+
       if (session.view === "enterprises") {
         return msg.edit({
           embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
@@ -787,6 +839,15 @@ function scheduleReturnToCategory(delayMs = 5000) {
           await redraw();
           return;
         }
+        if (await handleUnderworldInteraction({
+          actionId,
+          interaction: btn,
+          session,
+          guildId,
+          userId,
+          redraw,
+        })) return;
+
         if (await handleFarmingInteraction({
           actionId,
           interaction: btn,
@@ -877,7 +938,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "underworld", "underworld_operations", "underworld_building"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);

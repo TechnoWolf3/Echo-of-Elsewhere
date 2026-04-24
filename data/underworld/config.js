@@ -1,0 +1,56 @@
+module.exports = {
+  MAX_BUILDINGS: 5,
+  MAX_SUSPICION: 100,
+  SUSPICION_DECAY_PER_HOUR: 0.75,
+  STORAGE_PASSIVE_SUSPICION_PER_HOUR: 0.45,
+  EVENT_WINDOW_MS: 25 * 60 * 1000,
+  LIQUIDATION_RETURN_RATE: 0.3,
+  EMERGENCY_LIQUIDATION_RETURN_RATE: 0.15,
+  LIQUIDATION_MIN_SUSPICION_SCALAR: 0.2,
+  CLEAN_RUN_SUSPICION_REDUCTION: 2,
+  FULL_BUST_JAIL_MINUTES: 60,
+  REFRESH_INTERVAL_MS: 10_000,
+  DISTRIBUTION_MODES: {
+    safe: {
+      id: "safe",
+      name: "Safe",
+      payoutMultiplier: 0.82,
+      suspicionDelta: -2,
+      raidChanceDelta: -0.08,
+    },
+    standard: {
+      id: "standard",
+      name: "Standard",
+      payoutMultiplier: 1,
+      suspicionDelta: 2,
+      raidChanceDelta: 0,
+    },
+    aggressive: {
+      id: "aggressive",
+      name: "Aggressive",
+      payoutMultiplier: 1.24,
+      suspicionDelta: 8,
+      raidChanceDelta: 0.1,
+    },
+  },
+  RAID_OUTCOMES: {
+    minor: {
+      id: "minor",
+      name: "Minor Raid",
+      payoutMultiplier: 0.65,
+      suspicionDelta: 8,
+    },
+    major: {
+      id: "major",
+      name: "Major Raid",
+      payoutMultiplier: 0,
+      suspicionDelta: 15,
+    },
+    full_bust: {
+      id: "full_bust",
+      name: "Full Bust",
+      payoutMultiplier: 0,
+      suspicionDelta: 22,
+    },
+  },
+};
