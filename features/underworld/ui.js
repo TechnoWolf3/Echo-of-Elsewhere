@@ -18,10 +18,10 @@ function suspicionMeter(value) {
 
 function formatStatus(building) {
   const status = engine.getBuildingStatus(building);
-  if (status === "converting") return `Converting until <t:${Math.floor(Number(building.conversion.completeAt) / 1000)}:R>`;
-  if (status === "event") return `Event live until <t:${Math.floor(Number(building.activeRun.pendingEvent.deadlineAt) / 1000)}:R>`;
+  if (status === "converting") return `Converting, Completes <t:${Math.floor(Number(building.conversion.completeAt) / 1000)}:R>`;
+  if (status === "event") return `Event live, Closes <t:${Math.floor(Number(building.activeRun.pendingEvent.deadlineAt) / 1000)}:R>`;
   if (status === "distribution") return "Awaiting distribution";
-  if (status === "running") return `Run finishes <t:${Math.floor(Number(building.activeRun.readyAt) / 1000)}:R>`;
+  if (status === "running") return `Running, Completes <t:${Math.floor(Number(building.activeRun.readyAt) / 1000)}:R>`;
   if (status === "ready") return "Ready to run";
   return "Empty shell";
 }
@@ -196,12 +196,14 @@ function buildBuildingEmbed(state, buildingIndex) {
   ];
 
   if (building.conversion?.completeAt) {
-    lines.push(`**Conversion completes:** <t:${Math.floor(Number(building.conversion.completeAt) / 1000)}:F>`);
+    lines.push(`**Conversion completes:** <t:${Math.floor(Number(building.conversion.completeAt) / 1000)}:R>`);
+    lines.push(`**At:** <t:${Math.floor(Number(building.conversion.completeAt) / 1000)}:F>`);
   }
 
   if (run?.status === "running") {
     lines.push(`**Batch cost:** ${ui.money(run.batchCost)}`);
-    lines.push(`**Ready:** <t:${Math.floor(Number(run.readyAt) / 1000)}:F>`);
+    lines.push(`**Completes:** <t:${Math.floor(Number(run.readyAt) / 1000)}:R>`);
+    lines.push(`**At:** <t:${Math.floor(Number(run.readyAt) / 1000)}:F>`);
   }
 
   if (run?.status === "awaiting_distribution") {
@@ -212,7 +214,7 @@ function buildBuildingEmbed(state, buildingIndex) {
     const lockedUntil = Number(building.storage?.sellLockedUntil || 0);
     lines.push(`**Stored goods:** ${storageStock}`);
     if (lockedUntil > Date.now()) {
-      lines.push(`**Fence cooldown:** <t:${Math.floor(lockedUntil / 1000)}:R>`);
+      lines.push(`**Fence cooldown ends:** <t:${Math.floor(lockedUntil / 1000)}:R>`);
     }
   }
 
@@ -231,6 +233,7 @@ function buildBuildingEmbed(state, buildingIndex) {
         pendingEvent.description,
         "",
         `Window closes <t:${Math.floor(Number(run.pendingEvent.deadlineAt) / 1000)}:R>.`,
+        `At <t:${Math.floor(Number(run.pendingEvent.deadlineAt) / 1000)}:F>.`,
       ].join("\n"),
     });
   } else if (run?.eventLog?.length) {

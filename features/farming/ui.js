@@ -338,7 +338,7 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
       if (field.fieldCondition?.label) status = field.fieldCondition.label;
 
       if (farming.isFieldTaskActive(field)) {
-        status = `${field.task.key} until <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
+        status = `${field.task.key}, Completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
       }
 
       const crop = field.cropId ? ` - ${field.cropId}` : "";
@@ -499,7 +499,7 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   const taskLine =
     task?.key && task?.endsAt && Date.now() < Number(task.endsAt)
       ? `🛠️ **Task:** ${task.key}
-⏳ **Done:** <t:${Math.floor(Number(task.endsAt) / 1000)}:R>
+⏳ **Completes:** <t:${Math.floor(Number(task.endsAt) / 1000)}:R>
 🕒 **At:** <t:${Math.floor(Number(task.endsAt) / 1000)}:F>`
       : "";
 
