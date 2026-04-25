@@ -189,7 +189,7 @@ async function handleNineToFiveEntry({
     setTimeout(async () => {
       if (session.view !== "skill" || session.skillExpiresAt !== expiresAt) return;
       await msg.edit({
-        embeds: [nineToFiveUi.buildSkillEmbed(skillCfg.title || "ðŸ§  Skill Check", target, session.skillExpiresAt, { progress: 0, total: patternLength })],
+        embeds: [nineToFiveUi.buildSkillEmbed(skillCfg.title || "ðŸ§  Skill Check", target, session.skillExpiresAt, { revealPattern: false, progress: 0, total: patternLength })],
         components: nineToFiveUi.buildSkillButtons(target, false, "job_skill"),
       }).catch(() => {});
     }, Math.max(1000, Number(skillCfg.memoriseMs || 3500)));
@@ -474,7 +474,7 @@ async function handleSkillClick({
     session.skillInput = [...skillInput, chosen];
     if (session.skillInput.length < targetPattern.length) {
       await msg.edit({
-        embeds: [nineToFiveUi.buildSkillEmbed(skillCfg.title || "ðŸ§  Skill Check", targetPattern, session.skillExpiresAt, { progress: session.skillInput.length, total: targetPattern.length })],
+        embeds: [nineToFiveUi.buildSkillEmbed(skillCfg.title || "ðŸ§  Skill Check", targetPattern, session.skillExpiresAt, { revealPattern: false, progress: session.skillInput.length, total: targetPattern.length })],
         components: nineToFiveUi.buildSkillButtons(targetPattern, false, "job_skill"),
       }).catch(() => {});
       return true;
