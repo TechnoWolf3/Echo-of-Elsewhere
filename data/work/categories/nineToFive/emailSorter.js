@@ -40,6 +40,7 @@ module.exports = {
 
   emailsPerRun: 3,
   guaranteedScamEmailsPerRun: 1,
+  cooldownSeconds: 8 * 60,
 
   xp: {
     success: 16,
@@ -48,9 +49,9 @@ module.exports = {
   },
 
   payout: {
-    runCompletion: { min: 450, max: 700 },
-    correctEmail: { min: 420, max: 760 },
-    perfectBonusPct: 0.22,
+    runCompletion: { min: 750, max: 1500 },
+    correctEmail: { min: 1000, max: 2000 },
+    perfectBonusPct: 0,
     scamInSpamPenalty: { min: 180, max: 360 },
   },
 

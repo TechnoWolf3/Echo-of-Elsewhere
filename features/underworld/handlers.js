@@ -1,13 +1,15 @@
 const { MessageFlags } = require("discord.js");
 
 const engine = require("../../utils/underworld/engine");
+const { creditUserWithEffects } = require("../../utils/effectSystem");
+const branches = require("../../data/underworld/branches");
+
+const BRANCH_MAP = Object.fromEntries(branches.map((branch) => [branch.value, branch]));
 
 function isUnderworldInteraction(actionId) {
   return (
     actionId === "enterprise:underworld" ||
-    actionId === "underworld:operations" ||
-    actionId === "underworld:smuggling" ||
-    actionId === "underworld:fronts" ||
+    actionId.startsWith("underworld:") ||
     actionId === "uw_home" ||
     actionId === "uw_operations" ||
     actionId === "uw_refresh" ||
@@ -50,16 +52,22 @@ async function handleUnderworldInteraction({
     return true;
   }
 
-  if (actionId === "underworld:operations") {
+  if (actionId.startsWith("underworld:")) {
+    const branch = BRANCH_MAP[actionId];
+    if (!branch) {
+      await tell(interaction, "❌ That Underworld branch is not recognized.");
+      return true;
+    }
+
+    if (!branch.available || !branch.sessionView) {
+      await tell(interaction, "⚠️ That Underworld branch is scaffolded for later and is not live yet.");
+      return true;
+    }
+
     await load();
-    session.view = "underworld_operations";
+    session.view = branch.sessionView;
     session.lastCategory = "underworld";
     await redraw();
-    return true;
-  }
-
-  if (actionId === "underworld:smuggling" || actionId === "underworld:fronts") {
-    await tell(interaction, "⚠️ That Underworld branch is scaffolded for later and is not live yet.");
     return true;
   }
 
@@ -84,10 +92,10 @@ async function handleUnderworldInteraction({
   }
 
   if (actionId.startsWith("uw_select:")) {
-    const buildingIndex = Number(actionId.split(":")[1]);
+    const buildingId = actionId.split(":")[1];
     await load();
     session.view = "underworld_building";
-    session.underworldBuildingIndex = buildingIndex;
+    session.underworldBuildingId = buildingId;
     await redraw();
     return true;
   }
@@ -108,17 +116,16 @@ async function handleUnderworldInteraction({
   }
 
   if (actionId.startsWith("uw_convert:")) {
-    const [, buildingIndexRaw, operationId] = actionId.split(":");
-    const buildingIndex = Number(buildingIndexRaw);
+    const [, buildingId, operationId] = actionId.split(":");
     const state = await load();
-    const result = await engine.startConversion(guildId, userId, state, buildingIndex, operationId);
+    const result = await engine.startConversion(guildId, userId, state, buildingId, operationId);
     if (!result.ok) {
       await tell(interaction, `❌ ${result.reasonText}`);
       return true;
     }
 
     session.view = "underworld_building";
-    session.underworldBuildingIndex = buildingIndex;
+    session.underworldBuildingId = buildingId;
     await tell(
       interaction,
       `✅ ${result.operation.name} conversion started. It completes <t:${Math.floor(Number(result.building.conversion.completeAt) / 1000)}:R>.`
@@ -128,16 +135,16 @@ async function handleUnderworldInteraction({
   }
 
   if (actionId.startsWith("uw_start:")) {
-    const buildingIndex = Number(actionId.split(":")[1]);
+    const buildingId = actionId.split(":")[1];
     const state = await load();
-    const result = await engine.startRun(guildId, userId, state, buildingIndex);
+    const result = await engine.startRun(guildId, userId, state, buildingId);
     if (!result.ok) {
       await tell(interaction, `❌ ${result.reasonText}`);
       return true;
     }
 
     session.view = "underworld_building";
-    session.underworldBuildingIndex = buildingIndex;
+    session.underworldBuildingId = buildingId;
     await tell(
       interaction,
       `✅ ${result.operation.name} run started. Production wraps <t:${Math.floor(Number(result.building.activeRun.readyAt) / 1000)}:R>.`
@@ -147,10 +154,9 @@ async function handleUnderworldInteraction({
   }
 
   if (actionId.startsWith("uw_event:")) {
-    const [, , buildingIndexRaw, choiceId] = actionId.split(":");
-    const buildingIndex = Number(buildingIndexRaw);
+    const [, buildingId, choiceId] = actionId.split(":");
     const state = await load();
-    const result = await engine.resolveEventChoice(guildId, userId, state, buildingIndex, choiceId);
+    const result = await engine.resolveEventChoice(guildId, userId, state, buildingId, choiceId);
     if (!result.ok) {
       await tell(interaction, `❌ ${result.reasonText}`);
       return true;
@@ -159,16 +165,24 @@ async function handleUnderworldInteraction({
     const costText = result.cost > 0 ? ` for $${Number(result.cost).toLocaleString()}` : "";
     await tell(interaction, `✅ ${result.choice.label}${costText}.`);
     session.view = "underworld_building";
-    session.underworldBuildingIndex = buildingIndex;
+    session.underworldBuildingId = buildingId;
     await redraw();
     return true;
   }
 
   if (actionId.startsWith("uw_distribution:")) {
-    const [, , buildingIndexRaw, modeId] = actionId.split(":");
-    const buildingIndex = Number(buildingIndexRaw);
+    const [, buildingId, modeId] = actionId.split(":");
     const state = await load();
-    const result = await engine.chooseDistribution(guildId, userId, state, buildingIndex, modeId);
+    const result = await engine.chooseDistribution(guildId, userId, state, buildingId, modeId, {
+      payoutFn: (amount, meta) => creditUserWithEffects({
+        guildId,
+        userId,
+        amount,
+        type: "underworld_operation_payout",
+        meta,
+        awardSource: "underworld_operation_payout",
+      }),
+    });
     if (!result.ok) {
       await tell(interaction, `❌ ${result.reasonText}`);
       return true;
@@ -176,7 +190,7 @@ async function handleUnderworldInteraction({
 
     if (result.buildingLost) {
       session.view = "underworld_operations";
-      session.underworldBuildingIndex = null;
+      session.underworldBuildingId = null;
       await tell(
         interaction,
         `💥 Full bust. The building is gone and you are jailed for ${result.jailedMinutes} minutes.`
@@ -191,16 +205,16 @@ async function handleUnderworldInteraction({
       `✅ Distribution completed. Payout: $${Number(result.payout || 0).toLocaleString()}.${raidLine}`
     );
     session.view = "underworld_building";
-    session.underworldBuildingIndex = buildingIndex;
+    session.underworldBuildingId = buildingId;
     await redraw();
     return true;
   }
 
   if (actionId.startsWith("uw_dismantle:") || actionId.startsWith("uw_emergency:")) {
     const emergency = actionId.startsWith("uw_emergency:");
-    const buildingIndex = Number(actionId.split(":")[1]);
+    const buildingId = actionId.split(":")[1];
     const state = await load();
-    const result = await engine.dismantleOperation(guildId, userId, state, buildingIndex, { emergency });
+    const result = await engine.dismantleOperation(guildId, userId, state, buildingId, { emergency });
     if (!result.ok) {
       await tell(interaction, `❌ ${result.reasonText}`);
       return true;
@@ -211,7 +225,7 @@ async function handleUnderworldInteraction({
       `✅ Setup dismantled. Refund returned to bank: $${Number(result.refund || 0).toLocaleString()}.`
     );
     session.view = "underworld_building";
-    session.underworldBuildingIndex = buildingIndex;
+    session.underworldBuildingId = buildingId;
     await redraw();
     return true;
   }

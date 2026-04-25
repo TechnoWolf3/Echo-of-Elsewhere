@@ -168,7 +168,7 @@ const OPERATIONS = [
   {
     id: "storage_house",
     name: "Storage House",
-    description: "A quiet stash point for fenced goods. Deeper systems can plug into this later.",
+    description: "A quiet stash point that turns paid runs into cooled-off fenced goods for later sale.",
     conversionCost: 450000,
     conversionHours: 1,
     baseRunCost: 180000,

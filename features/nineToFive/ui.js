@@ -191,17 +191,23 @@ function buildContractButtons(stepIndex, level, disabled = false) {
   return rows;
 }
 
-function buildSkillEmbed(title, targetEmoji, expiresAtMs) {
+function buildSkillEmbed(title, targetEmoji, expiresAtMs, { revealPattern = Array.isArray(targetEmoji), progress = 0, total = 1 } = {}) {
   const unix = Math.floor(expiresAtMs / 1000);
+  const pattern = Array.isArray(targetEmoji) ? targetEmoji : [targetEmoji];
+  const prompt = revealPattern
+    ? `Memorise this pattern:\n\n${pattern.join(" ")}`
+    : `Repeat the colour pattern from memory.\nProgress: **${progress}/${total || pattern.length}**`;
   return new EmbedBuilder()
     .setTitle(title)
-    .setDescription(`Click **${targetEmoji}** before time runs out!\n⏳ Ends: <t:${unix}:R>`)
+    .setDescription(`${prompt}\n⏳ Ends: <t:${unix}:R>`)
     .setFooter({ text: "Failing doesn't pay, but browsing is still allowed." });
 }
 
 function buildSkillButtons(targetEmoji, disabled = false, prefix = "job_skill") {
-  const decoys = sampleUnique(skillCfg.emojis.filter((emoji) => emoji !== targetEmoji), 4);
-  const options = sampleUnique([targetEmoji, ...decoys], 5);
+  const targets = Array.isArray(targetEmoji) ? targetEmoji : [targetEmoji];
+  const options = skillCfg.emojis.length <= 5
+    ? [...skillCfg.emojis]
+    : sampleUnique([...new Set([...targets, ...sampleUnique(skillCfg.emojis.filter((emoji) => !targets.includes(emoji)), 5)])], 5);
   const row = new ActionRowBuilder();
 
   for (const emoji of options) {
@@ -262,12 +268,10 @@ function formatRoutePlace(place) {
 }
 
 function durationMinutesForRoute(distanceKm) {
-  const tiers = Array.isArray(truckerCfg.durationTiers) ? truckerCfg.durationTiers : [];
   const km = Math.max(1, Math.round(Number(distanceKm) || 1));
-  for (const tier of tiers) {
-    if (km <= Number(tier.maxKm)) return Math.max(1, Math.round(Number(tier.minutes) || 1));
-  }
-  return 5;
+  const minutesPerKm = Number(truckerCfg.duration?.minutesPerKm || 0.01);
+  const minMinutes = Number(truckerCfg.duration?.minMinutes || 3);
+  return Math.max(minMinutes, Math.ceil(km * minutesPerKm));
 }
 
 function generateTruckerManifest() {
@@ -275,7 +279,9 @@ function generateTruckerManifest() {
   const freightEntry = pick(truckerCfg.freightPool || []);
   const freightName = typeof freightEntry === "string" ? freightEntry : (freightEntry?.name || "General Freight");
   const freightCategory = typeof freightEntry === "string" ? "generalPalletised" : (freightEntry?.category || "generalPalletised");
-  const payoutModifier = Math.max(0.5, Number(freightEntry?.payoutModifier ?? 1));
+  const payoutModifier = truckerCfg.payout?.useFreightModifiers === false
+    ? 1
+    : Math.max(0.5, Number(freightEntry?.payoutModifier ?? 1));
   const compatibleTrailers = Array.isArray(truckerCfg.trailerConfigs?.[freightCategory])
     ? truckerCfg.trailerConfigs[freightCategory]
     : [];
@@ -283,12 +289,8 @@ function generateTruckerManifest() {
   const flavorLine = pick(truckerCfg.manifestLines || []) || "";
   const distanceKm = Math.max(1, Math.round(Number(route?.distanceKm) || randInt(120, 1200)));
   const durationMinutes = durationMinutesForRoute(distanceKm);
-  const perKm = (Math.random() * ((truckerCfg.payout?.perKmMax ?? 2.4) - (truckerCfg.payout?.perKmMin ?? 1.7))) + (truckerCfg.payout?.perKmMin ?? 1.7);
-  const longHaulBonus = randInt(
-    truckerCfg.payout?.longHaulBonusMin ?? 0,
-    Math.max(truckerCfg.payout?.longHaulBonusMin ?? 0, Math.min(truckerCfg.payout?.longHaulBonusMax ?? 500, Math.floor(distanceKm / 6)))
-  );
-  const payoutBase = Math.max(100, Math.round((distanceKm * perKm + longHaulBonus) * payoutModifier));
+  const perKm = Number(truckerCfg.payout?.perKm ?? truckerCfg.payout?.perKmMin ?? 12);
+  const payoutBase = Math.max(100, Math.round(distanceKm * perKm * payoutModifier));
 
   return {
     freight: freightName,

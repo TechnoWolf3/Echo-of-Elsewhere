@@ -8,6 +8,17 @@ const { emailSorterCfg, generateRun, scoreRun } = require("./emailSorter");
 const ui = require("../../utils/ui");
 const nineToFiveUi = require("./ui");
 
+const JOB_COOLDOWNS = {
+  contract: { key: "job:95:contract", label: "Transport Contract", seconds: contractCfg.cooldownSeconds ?? 10 * 60 },
+  skill: { key: "job:95:skill", label: "Skill Check", seconds: skillCfg.cooldownSeconds ?? 5 * 60 },
+  shift: { key: "job:95:shift", label: "Shift Work", seconds: shiftCfg.cooldownSeconds ?? 6 * 60 },
+  emailSorter: { key: "job:95:email_sorter", label: "Email Sorter", seconds: emailSorterCfg.cooldownSeconds ?? 8 * 60 },
+};
+
+function cooldownFor(mode) {
+  return JOB_COOLDOWNS[mode] || { key: "job", label: "payout", seconds: 45 };
+}
+
 function isNineToFiveInteraction(actionId) {
   return (
     actionId.startsWith("job_95:") ||
@@ -31,6 +42,7 @@ async function handleNineToFiveInteraction({
   userId,
   payUser,
   checkCooldownOrTell,
+  startCooldown,
   scheduleReturnToCategory,
   legendary,
 }) {
@@ -84,6 +96,7 @@ async function handleNineToFiveInteraction({
       msg,
       payUser,
       checkCooldownOrTell,
+      startCooldown,
       scheduleReturnToCategory,
     });
   }
@@ -96,6 +109,7 @@ async function handleNineToFiveInteraction({
       msg,
       payUser,
       checkCooldownOrTell,
+      startCooldown,
       scheduleReturnToCategory,
       legendary,
     });
@@ -109,6 +123,7 @@ async function handleNineToFiveInteraction({
       msg,
       payUser,
       checkCooldownOrTell,
+      startCooldown,
       scheduleReturnToCategory,
     });
   }
@@ -135,7 +150,12 @@ async function handleNineToFiveEntry({
   checkCooldownOrTell,
   legendary,
 }) {
-  if (await checkCooldownOrTell(interaction)) return true;
+  if (mode !== "trucker" && mode !== "legendary") {
+    const cooldown = cooldownFor(mode);
+    if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
+  } else if (mode === "legendary" && await checkCooldownOrTell(interaction)) {
+    return true;
+  }
 
   if (mode === "contract") {
     session.view = "contract";
@@ -153,14 +173,25 @@ async function handleNineToFiveEntry({
 
   if (mode === "skill") {
     session.view = "skill";
-    const target = pick(skillCfg.emojis);
+    const patternLength = Math.max(1, Number(skillCfg.patternLength || 3));
+    const target = Array.from({ length: patternLength }, () => pick(skillCfg.emojis));
     session.skillTarget = target;
-    session.skillExpiresAt = Date.now() + (skillCfg.timeLimitMs || 12_000);
+    session.skillInput = [];
+    session.skillExpiresAt = Date.now() + (skillCfg.timeLimitMs || 18_000);
 
     await msg.edit({
       embeds: [nineToFiveUi.buildSkillEmbed(skillCfg.title || "🧠 Skill Check", target, session.skillExpiresAt)],
-      components: nineToFiveUi.buildSkillButtons(target, false, "job_skill"),
+      components: nineToFiveUi.buildSkillButtons(target, true, "job_skill"),
     }).catch(() => {});
+
+    const expiresAt = session.skillExpiresAt;
+    setTimeout(async () => {
+      if (session.view !== "skill" || session.skillExpiresAt !== expiresAt) return;
+      await msg.edit({
+        embeds: [nineToFiveUi.buildSkillEmbed(skillCfg.title || "ðŸ§  Skill Check", target, session.skillExpiresAt, { progress: 0, total: patternLength })],
+        components: nineToFiveUi.buildSkillButtons(target, false, "job_skill"),
+      }).catch(() => {});
+    }, Math.max(1000, Number(skillCfg.memoriseMs || 3500)));
     return true;
   }
 
@@ -244,7 +275,6 @@ async function handleNineToFiveEntry({
 }
 
 async function startTrucker({ interaction, session, msg, checkCooldownOrTell }) {
-  if (await checkCooldownOrTell(interaction)) return true;
   if (!session.trucker) {
     session.trucker = {
       manifest: nineToFiveUi.generateTruckerManifest(),
@@ -309,7 +339,7 @@ async function collectTrucker({ session, msg, payUser, scheduleReturnToCategory 
       distanceKm: manifest.distanceKm,
       durationMinutes: manifest.durationMinutes,
     },
-    { countJob: true, allowLegendarySpawn: true, activityEffects: truckerCfg.activityEffects }
+    { countJob: true, allowLegendarySpawn: true, activityEffects: truckerCfg.activityEffects, cooldownKey: "job:95:trucker", cooldownSeconds: 0 }
   );
 
   if (session.trucker?.interval) {
@@ -344,9 +374,11 @@ async function handleContractClick({
   msg,
   payUser,
   checkCooldownOrTell,
+  startCooldown,
   scheduleReturnToCategory,
 }) {
-  if (await checkCooldownOrTell(interaction)) return true;
+  const cooldown = cooldownFor("contract");
+  if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
 
   const parts = actionId.split(":");
   const stepIndex = Number(parts[1]);
@@ -364,6 +396,7 @@ async function handleContractClick({
   if (nextStep >= contractCfg.steps.length) {
     const failRoll = Math.random() < session.contractRiskTotal;
     if (failRoll) {
+      if (startCooldown) await startCooldown(cooldown.key, cooldown.seconds);
       session.view = "95";
       await msg.edit({
         embeds: [buildFailureEmbed("📦 Transport Contract - Failed", "The contract went sideways.")],
@@ -373,14 +406,14 @@ async function handleContractClick({
       return true;
     }
 
-    const base = randInt(contractCfg.payout?.min ?? 2000, contractCfg.payout?.max ?? 5000);
+    const base = randInt(contractCfg.basePay?.min ?? 1575, contractCfg.basePay?.max ?? 2625);
     const amountBase = base + session.contractBonusTotal;
     const paid = await payUser(
       amountBase,
       "job_95_contract",
       contractCfg.xp?.success ?? 0,
       { picks: session.contractPicks, bonusTotal: session.contractBonusTotal, riskTotal: session.contractRiskTotal },
-      { countJob: true, allowLegendarySpawn: true, activityEffects: contractCfg.activityEffects }
+      { countJob: true, allowLegendarySpawn: true, activityEffects: contractCfg.activityEffects, cooldownKey: cooldown.key, cooldownSeconds: cooldown.seconds }
     );
 
     session.view = "95";
@@ -407,15 +440,23 @@ async function handleSkillClick({
   msg,
   payUser,
   checkCooldownOrTell,
+  startCooldown,
   scheduleReturnToCategory,
   legendary,
 }) {
   const isLegendary = actionId.startsWith("job_leg:");
   const chosen = actionId.split(":")[1];
   const expired = Date.now() > session.skillExpiresAt;
-  const wrongChoice = session.skillTarget && chosen !== session.skillTarget;
+  const targetPattern = Array.isArray(session.skillTarget) ? session.skillTarget : [session.skillTarget];
+  const skillInput = Array.isArray(session.skillInput) ? session.skillInput : [];
+  const expected = isLegendary ? session.skillTarget : targetPattern[skillInput.length];
+  const wrongChoice = expected && chosen !== expected;
 
   if (expired || !chosen || wrongChoice) {
+    if (!isLegendary && startCooldown) {
+      const cooldown = cooldownFor("skill");
+      await startCooldown(cooldown.key, cooldown.seconds);
+    }
     session.view = "95";
     await msg.edit({
       embeds: [buildFailureEmbed(
@@ -428,11 +469,22 @@ async function handleSkillClick({
     return true;
   }
 
-  if (await checkCooldownOrTell(interaction)) return true;
+  if (!isLegendary) {
+    session.skillInput = [...skillInput, chosen];
+    if (session.skillInput.length < targetPattern.length) {
+      await msg.edit({
+        embeds: [nineToFiveUi.buildSkillEmbed(skillCfg.title || "ðŸ§  Skill Check", targetPattern, session.skillExpiresAt, { progress: session.skillInput.length, total: targetPattern.length })],
+        components: nineToFiveUi.buildSkillButtons(targetPattern, false, "job_skill"),
+      }).catch(() => {});
+      return true;
+    }
+  }
+
+  if (isLegendary && await checkCooldownOrTell(interaction)) return true;
 
   const base = isLegendary
     ? randInt(legendary.min, legendary.max)
-    : randInt(skillCfg.payout?.min ?? 1000, skillCfg.payout?.max ?? 2000);
+    : randInt(skillCfg.payout?.success?.min ?? 2000, skillCfg.payout?.success?.max ?? 4000);
 
   const paid = await payUser(
     base,
@@ -443,6 +495,8 @@ async function handleSkillClick({
       countJob: true,
       allowLegendarySpawn: true,
       activityEffects: isLegendary ? (skillCfg.legendaryActivityEffects || skillCfg.activityEffects) : skillCfg.activityEffects,
+      cooldownKey: isLegendary ? "job" : cooldownFor("skill").key,
+      cooldownSeconds: isLegendary ? undefined : cooldownFor("skill").seconds,
     }
   );
 
@@ -465,7 +519,8 @@ async function handleEmailSorterClick({
   checkCooldownOrTell,
   scheduleReturnToCategory,
 }) {
-  if (await checkCooldownOrTell(interaction)) return true;
+  const cooldown = cooldownFor("emailSorter");
+  if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
   if (!session.emailSorter?.emails?.length) return true;
 
   const chosenFolder = actionId.split(':')[1];
@@ -508,7 +563,7 @@ async function handleEmailSorterClick({
         })),
         totals: run.totals,
       },
-      { countJob: true, allowLegendarySpawn: true, activityEffects: emailSorterCfg.activityEffects }
+      { countJob: true, allowLegendarySpawn: true, activityEffects: emailSorterCfg.activityEffects, cooldownKey: cooldown.key, cooldownSeconds: cooldown.seconds }
     );
   }
 
@@ -531,7 +586,8 @@ async function collectShift({
   scheduleReturnToCategory,
 }) {
   if (!session.shiftReady) return true;
-  if (await checkCooldownOrTell(interaction)) return true;
+  const cooldown = cooldownFor("shift");
+  if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
 
   const base = randInt(shiftCfg.payout?.min ?? 1200, shiftCfg.payout?.max ?? 2500);
   const paid = await payUser(
@@ -539,7 +595,7 @@ async function collectShift({
     "job_95_shift",
     shiftCfg.xp?.success ?? 12,
     { shift: true },
-    { countJob: true, allowLegendarySpawn: true, activityEffects: shiftCfg.activityEffects }
+    { countJob: true, allowLegendarySpawn: true, activityEffects: shiftCfg.activityEffects, cooldownKey: cooldown.key, cooldownSeconds: cooldown.seconds }
   );
 
   session.view = "95";

@@ -8,6 +8,7 @@ module.exports = {
 
   // Timing
   durationSeconds: 45,
+  cooldownSeconds: 6 * 60,
   tickSeconds: 5,
 
   // Rewards / XP
@@ -17,8 +18,8 @@ module.exports = {
   },
 
   payout: {
-    min: 1200,
-    max: 2600,
+    min: 3500,
+    max: 6500,
   },
 
   activityEffects: {

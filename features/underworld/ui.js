@@ -20,6 +20,7 @@ function formatStatus(building) {
   const status = engine.getBuildingStatus(building);
   if (status === "converting") return `Converting, Completes <t:${Math.floor(Number(building.conversion.completeAt) / 1000)}:R>`;
   if (status === "event") return `Event live, Closes <t:${Math.floor(Number(building.activeRun.pendingEvent.deadlineAt) / 1000)}:R>`;
+  if (status === "cooling_off") return `Goods cooling off, Sellable <t:${Math.floor(Number(building.activeRun?.storageGoods?.sellReadyAt || Date.now()) / 1000)}:R>`;
   if (status === "distribution") return "Awaiting distribution";
   if (status === "running") return `Running, Completes <t:${Math.floor(Number(building.activeRun.readyAt) / 1000)}:R>`;
   if (status === "ready") return "Ready to run";
@@ -140,7 +141,7 @@ function buildOperationsComponents(state) {
               const def = engine.getBuildingDefinition(building.buildingId);
               return {
                 label: `${index + 1}. ${def?.name || "Building"}`,
-                value: `uw_select:${index}`,
+                value: `uw_select:${building.id}`,
                 description: formatStatus(building).slice(0, 100),
               };
             })
@@ -169,8 +170,8 @@ function buildEventChoiceLabel(choice) {
   return parts.join(" • ");
 }
 
-function buildBuildingEmbed(state, buildingIndex) {
-  const building = state.buildings?.[buildingIndex];
+function buildBuildingEmbed(state, buildingId) {
+  const { building, buildingIndex } = engine.resolveBuilding(state, buildingId);
   if (!building) {
     return ui.applySystemStyle(
       new EmbedBuilder()
@@ -207,12 +208,22 @@ function buildBuildingEmbed(state, buildingIndex) {
   }
 
   if (run?.status === "awaiting_distribution") {
-    lines.push("**Distribution:** Ready to push this batch to market.");
+    lines.push(`**Distribution:** ${op?.storageEnabled ? "Cooled goods are ready for sale." : "Ready to push this batch to market."}`);
+  }
+
+  if (run?.status === "cooling_off") {
+    lines.push(`**Cooling off:** Goods can be sold <t:${Math.floor(Number(run.storageGoods?.sellReadyAt || Date.now()) / 1000)}:R>`);
   }
 
   if (storageStock > 0 || op?.storageEnabled) {
     const lockedUntil = Number(building.storage?.sellLockedUntil || 0);
     lines.push(`**Stored goods:** ${storageStock}`);
+    if (Number(building.storage?.totalValue || 0) > 0) {
+      lines.push(`**Estimated street value:** ${ui.money(building.storage.totalValue)}`);
+    }
+    if (Array.isArray(building.storage?.goods) && building.storage.goods.length) {
+      lines.push(`**Goods:** ${building.storage.goods.map((item) => `${item.quantity}x ${item.name}`).join(", ")}`);
+    }
     if (lockedUntil > Date.now()) {
       lines.push(`**Fence cooldown ends:** <t:${Math.floor(lockedUntil / 1000)}:R>`);
     }
@@ -259,8 +270,8 @@ function buildBuildingEmbed(state, buildingIndex) {
   return embed;
 }
 
-function buildBuildingComponents(state, buildingIndex) {
-  const building = state.buildings?.[buildingIndex];
+function buildBuildingComponents(state, buildingId) {
+  const { building, buildingIndex } = engine.resolveBuilding(state, buildingId);
   if (!building) return buildOperationsComponents(state);
 
   const rows = [];
@@ -271,12 +282,12 @@ function buildBuildingComponents(state, buildingIndex) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
-          .setCustomId(`uw_convert_select:${buildingIndex}`)
+          .setCustomId(`uw_convert_select:${building.id}`)
           .setPlaceholder("Convert this building...")
           .addOptions(
             engine.operations.map((entry) => ({
               label: entry.name,
-              value: `uw_convert:${buildingIndex}:${entry.id}`,
+              value: `uw_convert:${building.id}:${entry.id}`,
               description: `${ui.money(entry.conversionCost)} - ${entry.conversionHours}h setup`,
             }))
           )
@@ -288,30 +299,30 @@ function buildBuildingComponents(state, buildingIndex) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
-          .setCustomId(`uw_event_select:${buildingIndex}`)
+          .setCustomId(`uw_event_select:${building.id}`)
           .setPlaceholder("Respond to the event...")
           .addOptions(
             pendingEvent.choices.map((choice) => ({
               label: choice.label,
-              value: `uw_event:${buildingIndex}:${choice.id}`,
+              value: `uw_event:${building.id}:${choice.id}`,
               description: buildEventChoiceLabel(choice).slice(0, 100),
             }))
           )
       )
     );
-  } else if (run?.status === "awaiting_distribution") {
+  } else if (run?.status === "awaiting_distribution" && (!engine.getOperationDefinition(building.operationType)?.storageEnabled || Number(run.storageGoods?.units || 0) > 0)) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`uw_distribution:${buildingIndex}:safe`)
+          .setCustomId(`uw_distribution:${building.id}:safe`)
           .setLabel("Safe")
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-          .setCustomId(`uw_distribution:${buildingIndex}:standard`)
+          .setCustomId(`uw_distribution:${building.id}:standard`)
           .setLabel("Standard")
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-          .setCustomId(`uw_distribution:${buildingIndex}:aggressive`)
+          .setCustomId(`uw_distribution:${building.id}:aggressive`)
           .setLabel("Aggressive")
           .setStyle(ButtonStyle.Danger)
       )
@@ -320,12 +331,12 @@ function buildBuildingComponents(state, buildingIndex) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`uw_start:${buildingIndex}`)
+          .setCustomId(`uw_start:${building.id}`)
           .setLabel("Start Operation")
           .setStyle(ButtonStyle.Primary)
           .setDisabled(Boolean(building.activeRun)),
         new ButtonBuilder()
-          .setCustomId(`uw_dismantle:${buildingIndex}`)
+          .setCustomId(`uw_dismantle:${building.id}`)
           .setLabel("Dismantle")
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(Boolean(building.activeRun))
@@ -337,7 +348,7 @@ function buildBuildingComponents(state, buildingIndex) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`uw_emergency:${buildingIndex}`)
+          .setCustomId(`uw_emergency:${building.id}`)
           .setLabel("Emergency Dismantle")
           .setStyle(ButtonStyle.Danger)
       )

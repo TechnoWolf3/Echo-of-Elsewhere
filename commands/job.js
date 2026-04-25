@@ -26,6 +26,7 @@ const { canGrind: canGrindFatigue } = require("../utils/grindFatigue");
 
 // ✅ Config imports
 const shiftCfg = require("../data/work/categories/nineToFive/shift");
+const underworldBranches = require("../data/underworld/branches");
 
 
 // ✅ Crime
@@ -261,7 +262,7 @@ function buildHubEmbed(user, progress, cooldownUnix) {
       },
       {
         name: "Rules",
-        value: `Cooldown between payouts: **${JOB_COOLDOWN_SECONDS}s**\nAuto-clears after **3m** inactivity (or **Stop Work**)`,
+        value: `Work a 9-5 uses per-job cooldowns; other quick payouts use **${JOB_COOLDOWN_SECONDS}s**.\nAuto-clears after **3m** inactivity (or **Stop Work**)`,
       }
     ), "job", "Leveling up increases payout bonus.");
 }
@@ -344,6 +345,10 @@ function buildEnterprisesComponents(disabled = false) {
 }
 
 function buildUnderworldEmbed({ cooldownUnix } = {}) {
+  const branchLines = underworldBranches.map((branch) =>
+    `${branch.emoji} **${branch.label}** — ${branch.description}`
+  );
+
   return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🕶️ The Underworld")
     .setDescription(
@@ -352,9 +357,7 @@ function buildUnderworldEmbed({ cooldownUnix } = {}) {
         "",
         "Build illegal networks that make big money and attract the wrong kind of attention.",
         "",
-        "🧪 **Operations** — Warehouses, labs, events, suspicion, and raids.",
-        "🚚 **Smuggling** — Coming later.",
-        "🏚️ **Fronts** — Coming later.",
+        ...branchLines,
       ].join("\n")
     ), "job");
 }
@@ -380,24 +383,12 @@ function buildUnderworldComponents(disabled = false) {
       .setCustomId("job_select:job")
       .setPlaceholder("Choose an underworld branch...")
       .addOptions(
-        {
-          label: "Operations",
-          value: "underworld:operations",
-          emoji: "🧪",
-          description: "Warehouses, labs, suspicion, and risky distribution",
-        },
-        {
-          label: "Smuggling",
-          value: "underworld:smuggling",
-          emoji: "🚚",
-          description: "Coming later",
-        },
-        {
-          label: "Fronts",
-          value: "underworld:fronts",
-          emoji: "🏚️",
-          description: "Coming later",
-        }
+        underworldBranches.map((branch) => ({
+          label: branch.label,
+          value: branch.value,
+          emoji: branch.emoji,
+          description: branch.description.slice(0, 100),
+        }))
       )
       .setDisabled(disabled)
   );
@@ -515,20 +506,26 @@ function scheduleReturnToCategory(delayMs = 5000) {
       setTimeout(() => msg.delete().catch(() => {}), 1000);
     }
 
-    async function checkCooldownOrTell(btn) {
-      const next = await getCooldown(guildId, userId, "job");
+    async function checkCooldownOrTell(btn, key = "job", label = "payout") {
+      const next = await getCooldown(guildId, userId, key);
       const now = new Date();
       if (next && now < next) {
         const unix = Math.floor(next.getTime() / 1000);
         await btn
           .followUp({
-            content: `⏳ You’re on cooldown. Next payout <t:${unix}:R>.`,
+            content: `⏳ Your **${label}** cooldown ends <t:${unix}:R>.`,
             flags: MessageFlags.Ephemeral,
           })
           .catch(() => {});
         return true;
       }
       return false;
+    }
+
+    async function startCooldown(key = "job", cooldownSeconds = JOB_COOLDOWN_SECONDS) {
+      const nextClaim = new Date(Date.now() + Math.max(0, Number(cooldownSeconds) || 0) * 1000);
+      await setCooldown(guildId, userId, key, nextClaim);
+      return nextClaim;
     }
 
     async function maybeSpawnLegendary() {
@@ -539,7 +536,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
     }
 
-    async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true, activityEffects = null } = {}) {
+    async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true, activityEffects = null, cooldownKey = "job", cooldownSeconds = JOB_COOLDOWN_SECONDS } = {}) {
       const mult = levelMultiplier(session.level);
       let amount = Math.floor(amountBase * mult);
 
@@ -549,8 +546,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         meta.globalBonus = bonus;
       }
 
-      const nextClaim = new Date(Date.now() + JOB_COOLDOWN_SECONDS * 1000);
-      await setCooldown(guildId, userId, "job", nextClaim);
+      const nextClaim = await startCooldown(cooldownKey, cooldownSeconds);
 
       await creditUserWithEffects({
         guildId,
@@ -743,19 +739,21 @@ function scheduleReturnToCategory(delayMs = 5000) {
         const buildingCount = state.buildings?.length || 0;
         if (!buildingCount) {
           session.view = "underworld_operations";
-          session.underworldBuildingIndex = null;
+          session.underworldBuildingId = null;
           return msg.edit({
             embeds: [underworldUi.buildOperationsEmbed(state)],
             components: underworldUi.buildOperationsComponents(state),
           }).catch(() => {});
         }
 
-        const maxIndex = Math.max(0, buildingCount - 1);
-        session.underworldBuildingIndex = Math.min(Number(session.underworldBuildingIndex || 0), maxIndex);
+        const currentBuilding = underworld.resolveBuilding(state, session.underworldBuildingId);
+        if (!currentBuilding.building) {
+          session.underworldBuildingId = state.buildings[0]?.id || null;
+        }
 
         return msg.edit({
-          embeds: [underworldUi.buildBuildingEmbed(state, session.underworldBuildingIndex)],
-          components: underworldUi.buildBuildingComponents(state, session.underworldBuildingIndex),
+          embeds: [underworldUi.buildBuildingEmbed(state, session.underworldBuildingId)],
+          components: underworldUi.buildBuildingComponents(state, session.underworldBuildingId),
         }).catch(() => {});
       }
 
@@ -955,6 +953,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           userId,
           payUser,
           checkCooldownOrTell,
+          startCooldown,
           scheduleReturnToCategory,
           legendary: {
             skillTimeMs: LEGENDARY_SKILL_TIME_MS,

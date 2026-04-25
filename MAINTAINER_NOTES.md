@@ -39,7 +39,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `/games` - Games Hub panel.
 - `/help` - help panel with local collectors.
 - `/inventory` - inventory viewer.
-- `/job` - job board, crime, grind, nightwalker, trucking, farming, and machine shed.
+- `/job` - job board, crime, grind, nightwalker, trucking, farming, machine shed, and Underworld.
 - `/leaderboard` - top wealth rankings.
 - `/lottery` - weekly Echo Powerball info.
 - `/pay` and `/sendmoney` - player-to-player money transfer.
@@ -65,7 +65,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `rift:*` goes to `utils/echoRift.js`.
 - `rr:<boardId>:<roleId>` toggles self-assign roles.
 - Game modal/select routing is global for blackjack, roulette, higher/lower, bullshit, and keno.
-- `/job` uses message collectors and local session state. Global routing intentionally skips IDs beginning with `job_select:`, `job_`, `farm_`, or `enterprise:`.
+- `/job` uses message collectors and local session state. Global routing intentionally skips IDs beginning with `job_select:`, `job_`, `farm_`, `uw_`, or `enterprise:`.
 
 When adding a new persistent button/select/modal, choose a unique custom ID prefix and route it before the generic command handler if it must survive restarts.
 
@@ -173,6 +173,20 @@ Farming specifics:
 - Field tasks should be validated before machinery is reserved. If machinery cannot be reserved after a valid task is started, clear the field task so equipment/fields do not get stuck.
 - Machine rentals last 24 hours and are stored as leases in `farm_machines.data.rented`.
 - Machine selling pays 60% of the buy price and only allows free owned machines to be sold. Machines busy in active field tasks are protected.
+
+Underworld specifics:
+
+- State is stored as JSON in `underworld_state.data`.
+- Data/config lives under `data/underworld/*`.
+- UI lives in `features/underworld/ui.js`.
+- Interaction handling lives in `features/underworld/handlers.js`.
+- Business rules and runtime progression live in `utils/underworld/engine.js`.
+- `/job` owns the top-level Underworld category board, but detailed building rendering and actions should stay in the feature/engine modules.
+- Underworld branch selection is data-driven from `data/underworld/branches.js`.
+- Building actions use stable `building.id` values in component payloads; do not switch back to array indexes.
+- Underworld payouts now use the effect-aware credit path through `creditUserWithEffects`, matching the rest of `/job`.
+- Runtime progression is phase-split in `utils/underworld/engine.js` (`applyConversionRollover`, pending event expiry, due-event opening, run finalization, and building runtime application).
+- Storage House currently exists as a scaffolded operation type with persistent storage metadata, but it is not yet a full robbery/black-market ecosystem.
 
 ### Games
 
