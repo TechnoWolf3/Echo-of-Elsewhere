@@ -27,6 +27,12 @@ function isFarmingInteraction(actionId) {
     actionId.startsWith("farm_cultivate:") ||
     actionId.startsWith("farm_recultivate:") ||
     actionId.startsWith("farm_upgrade:") ||
+    actionId.startsWith("farm_barn:") ||
+    actionId.startsWith("farm_barn_collect:") ||
+    actionId.startsWith("farm_barn_slaughter:") ||
+    actionId.startsWith("farm_barn_restock:") ||
+    actionId.startsWith("farm_barn_upgrade:") ||
+    actionId.startsWith("farm_barn_demolish:") ||
     actionId.startsWith("farm_plant:") ||
     actionId.startsWith("farm_harvest:") ||
     actionId.startsWith("farm_sell:") ||
@@ -339,6 +345,237 @@ async function handleFarmingInteraction({
     }
 
     const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_barn:")) {
+    const [, fieldIndexRaw, livestockType] = actionId.split(":");
+    const fieldIndex = Number(fieldIndexRaw);
+    const type = farming.getLivestockType(livestockType);
+    if (!type) {
+      await interaction.followUp({ content: "❌ Unknown livestock type.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const farm = await farming.ensureFarm(guildId, userId);
+    const cost = Number(type.convertCost || 0);
+    const debit = await tryDebitBank(guildId, userId, cost, "farming_barn_conversion", {
+      enterprise: "farming",
+      action: "convert_barn",
+      fieldIndex,
+      livestockType,
+    });
+
+    if (!debit.ok) {
+      await interaction.followUp({
+        content: `❌ You need $${cost.toLocaleString()} in your bank to convert this field.`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return true;
+    }
+
+    const result = await farming.convertFieldToBarn(guildId, userId, farm, fieldIndex, livestockType);
+    if (!result.ok) {
+      await creditBank(guildId, userId, cost, "farming_barn_conversion_refund", {
+        enterprise: "farming",
+        action: "convert_barn_refund",
+        fieldIndex,
+        reason: result.reasonText || "conversion_failed",
+      });
+      await interaction.followUp({ content: `❌ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `✅ Converted Field ${fieldIndex + 1} into a ${result.type.name}.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_barn_collect:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const result = await farming.collectBarnProducts(guildId, userId, farm, fieldIndex);
+
+    if (!result.ok) {
+      await interaction.followUp({ content: `❌ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `✅ Collected ${result.qty}x ${result.itemName}.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_barn_slaughter:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const result = await farming.slaughterBarn(guildId, userId, farm, fieldIndex);
+
+    if (!result.ok) {
+      await interaction.followUp({ content: `❌ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `✅ Slaughtered ${result.animals} animals and produced ${result.qty}x ${result.itemName}.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_barn_restock:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const barn = farm.fields?.[fieldIndex];
+    const type = farming.getLivestockType(barn?.livestockType);
+    const cost = Math.round(Number(type?.convertCost || 0) * 0.35);
+
+    const debit = await tryDebitBank(guildId, userId, cost, "farming_barn_restock", {
+      enterprise: "farming",
+      action: "restock_barn",
+      fieldIndex,
+      livestockType: barn?.livestockType,
+    });
+
+    if (!debit.ok) {
+      await interaction.followUp({
+        content: `❌ You need $${cost.toLocaleString()} in your bank to restock this barn.`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return true;
+    }
+
+    const result = await farming.restockBarn(guildId, userId, farm, fieldIndex);
+    if (!result.ok) {
+      await creditBank(guildId, userId, cost, "farming_barn_restock_refund", {
+        enterprise: "farming",
+        action: "restock_barn_refund",
+        fieldIndex,
+        reason: result.reasonText || "restock_failed",
+      });
+      await interaction.followUp({ content: `❌ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `✅ Restocked ${result.type.name} with ${result.capacity} animals.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_barn_upgrade:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const barn = farm.fields?.[fieldIndex];
+    const currentLevel = barn?.level || 1;
+    const cost = farming.getBarnUpgradeCost(currentLevel);
+
+    const debit = await tryDebitBank(guildId, userId, cost, "farming_barn_upgrade", {
+      enterprise: "farming",
+      action: "upgrade_barn",
+      fieldIndex,
+      fromLevel: currentLevel,
+      toLevel: currentLevel + 1,
+    });
+
+    if (!debit.ok) {
+      await interaction.followUp({
+        content: `❌ You need $${cost.toLocaleString()} in your bank to upgrade this barn.`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return true;
+    }
+
+    const field = farm.fields?.[fieldIndex];
+    if (!farming.isBarn(field) || currentLevel >= config.MAX_FIELD_LEVEL) {
+      await creditBank(guildId, userId, cost, "farming_barn_upgrade_refund", {
+        enterprise: "farming",
+        action: "upgrade_barn_refund",
+        fieldIndex,
+        reason: "upgrade_failed",
+      });
+      await interaction.followUp({ content: "❌ This barn cannot be upgraded right now.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    field.level = currentLevel + 1;
+    await farming.saveFarm(guildId, userId, farm);
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_barn_demolish:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const barn = farm.fields?.[fieldIndex];
+    const cost = farming.getBarnDemolitionCost(barn);
+
+    const debit = await tryDebitBank(guildId, userId, cost, "farming_barn_demolition", {
+      enterprise: "farming",
+      action: "demolish_barn",
+      fieldIndex,
+      livestockType: barn?.livestockType,
+    });
+
+    if (!debit.ok) {
+      await interaction.followUp({
+        content: `❌ You need $${cost.toLocaleString()} in your bank for demolition and cleanup fees.`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return true;
+    }
+
+    const result = await farming.demolishBarn(guildId, userId, farm, fieldIndex);
+    if (!result.ok) {
+      await creditBank(guildId, userId, cost, "farming_barn_demolition_refund", {
+        enterprise: "farming",
+        action: "demolish_barn_refund",
+        fieldIndex,
+        reason: result.reasonText || "demolition_failed",
+      });
+      await interaction.followUp({ content: `❌ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `✅ Barn demolished. The plot is back to a field, but it needs cultivation before planting.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
     await msg.edit({
       embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
       components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),

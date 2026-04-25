@@ -62,18 +62,21 @@ function statusLineFromCooldown(cooldownUnix) {
   return cooldownUnix ? `⏳ Next payout: <t:${cooldownUnix}:R>` : "✅ Ready for payout.";
 }
 
-function buildNineToFiveEmbed(user, progress, cooldownUnix) {
+function buildNineToFiveEmbed(user, progress, cooldowns = {}) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
   const bonusPct = Math.round((mult - 1) * 100);
 
   const jobLines = nineToFiveIndex.jobs
-    .map((job) => `${job.title} - ${job.desc}`)
-    .join("\n");
+    .map((job) => {
+      const available = cooldowns[job.key] ? `⏳ Available <t:${cooldowns[job.key]}:R>` : "✅ Available now";
+      return `${job.title} - ${job.desc}\n${available}`;
+    })
+    .join("\n\n");
 
   return new EmbedBuilder()
     .setTitle(nineToFiveIndex.category?.title || "📦 Work a 9-5")
-    .setDescription([statusLineFromCooldown(cooldownUnix), "", nineToFiveIndex.category?.description || ""].join("\n").trim())
+    .setDescription(nineToFiveIndex.category?.description || "")
     .addFields(
       { name: "Progress", value: `Level ${progress.level} - XP ${progress.xp}/${need} - Bonus +${bonusPct}%` },
       { name: "Jobs", value: jobLines || "No jobs configured." }
@@ -91,7 +94,8 @@ function buildNineToFiveComponents({ disabled = false, legendary = false } = {})
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );

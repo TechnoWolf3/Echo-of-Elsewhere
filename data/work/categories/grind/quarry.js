@@ -252,7 +252,7 @@ module.exports = function startQuarry(btn, { pool, boardMsg, guildId, userId } =
           collapses,
           overtime,
         }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_quarry" });
-        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
+        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS, "job:grind:quarry");
       }
 
       let lockTs = null;

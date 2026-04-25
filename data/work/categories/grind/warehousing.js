@@ -313,7 +313,7 @@ module.exports = function startWarehousing(btn, { pool, boardMsg, guildId, userI
           rareEvents,
           overtime,
         }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_warehousing" });
-        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
+        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS, "job:grind:warehousing");
       }
 
       let lockTs = null;

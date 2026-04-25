@@ -53,7 +53,7 @@ async function sellCrop(guildId, userId, itemId) {
   const item = items.find((x) => x.itemId === itemId);
 
   if (!item || item.qty <= 0) {
-    return { ok: false, reasonText: "You do not have any of that crop to sell." };
+    return { ok: false, reasonText: "You do not have any of that farm item to sell." };
   }
 
   await pool.query(

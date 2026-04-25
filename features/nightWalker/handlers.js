@@ -4,6 +4,20 @@ const nightWalker = require("../../data/work/categories/nightwalker/index");
 const ui = require("../../utils/ui");
 const nightWalkerUi = require("./ui");
 
+const JOB_COOLDOWN_DEFAULTS = {
+  flirt: 5 * 60,
+  lapDance: 7 * 60,
+  prostitute: 10 * 60,
+};
+
+function cooldownFor(jobKey, cfg = {}) {
+  return {
+    key: `job:nw:${jobKey}`,
+    label: cfg.title || jobKey,
+    seconds: cfg.cooldownSeconds ?? JOB_COOLDOWN_DEFAULTS[jobKey] ?? 45,
+  };
+}
+
 function isNightWalkerInteraction(actionId) {
   return actionId.startsWith("job_nw:") || actionId.startsWith("nw:");
 }
@@ -15,6 +29,7 @@ async function handleNightWalkerInteraction({
   msg,
   payUser,
   checkCooldownOrTell,
+  startCooldown,
   scheduleReturnToCategory,
 }) {
   if (!isNightWalkerInteraction(actionId)) return false;
@@ -37,6 +52,7 @@ async function handleNightWalkerInteraction({
       msg,
       payUser,
       checkCooldownOrTell,
+      startCooldown,
       scheduleReturnToCategory,
     });
   }
@@ -52,10 +68,10 @@ async function startNightWalkerJob({
   checkCooldownOrTell,
 }) {
   const jobKey = actionId.split(":")[1];
-  if (await checkCooldownOrTell(interaction)) return true;
-
   const cfg = nightWalker?.jobs?.[jobKey];
   if (!cfg) return true;
+  const cooldown = cooldownFor(jobKey, cfg);
+  if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
 
   const rounds = cfg.rounds || 1;
   const poolList = cfg.scenarios || [];
@@ -104,6 +120,7 @@ async function handleNightWalkerChoice({
   msg,
   payUser,
   checkCooldownOrTell,
+  startCooldown,
   scheduleReturnToCategory,
 }) {
   if (!session.nw) return true;
@@ -114,6 +131,7 @@ async function handleNightWalkerChoice({
 
   const cfg = nightWalker?.jobs?.[jobKey];
   if (!cfg) return true;
+  const cooldown = cooldownFor(jobKey, cfg);
 
   const scenario = session.nw.pickedScenarios?.[roundIndex];
   const choice = scenario?.choices?.[choiceIndex];
@@ -123,6 +141,7 @@ async function handleNightWalkerChoice({
 
   const failure = getFailure(jobKey, session, cfg);
   if (failure) {
+    if (startCooldown) await startCooldown(cooldown.key, cooldown.seconds);
     session.view = "nw";
     session.nw = null;
 
@@ -137,18 +156,18 @@ async function handleNightWalkerChoice({
   session.nw.roundIndex++;
 
   if (session.nw.roundIndex >= (cfg.rounds || 1)) {
-    if (await checkCooldownOrTell(interaction)) return true;
+    if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
 
     const base = randInt(cfg.payout?.min ?? 1000, cfg.payout?.max ?? 2000);
-    const mod = 1 + (session.nw.payoutModPct / 100);
+    const mod = getPayoutMultiplier(jobKey, session, cfg);
     const amountBase = Math.max(0, Math.floor(base * mod));
 
     const paid = await payUser(
       amountBase,
       `job_nw_${jobKey}`,
       cfg.xp?.success ?? 0,
-      { job: jobKey, modPct: session.nw.payoutModPct },
-      { countJob: true, allowLegendarySpawn: true, activityEffects: cfg.activityEffects }
+      { job: jobKey, modPct: Math.round((mod - 1) * 100), risk: session.nw.risk },
+      { countJob: true, allowLegendarySpawn: true, activityEffects: cfg.activityEffects, cooldownKey: cooldown.key, cooldownSeconds: cooldown.seconds }
     );
 
     session.view = "nw";
@@ -183,16 +202,33 @@ async function handleNightWalkerChoice({
 }
 
 function applyChoiceEffects(jobKey, session, choice) {
-  if (jobKey === "flirt" && choice.correct === false) {
-    session.nw.wrongCount++;
+  if (jobKey === "flirt") {
+    const modifiers = session.nw.cfg?.modifiers || {};
+    if (choice.tag === "wrong" || choice.correct === false) {
+      session.nw.wrongCount++;
+      session.nw.payoutModPct -= Number(modifiers.wrongPenaltyPct || 0);
+    } else if (choice.tag === "good") {
+      session.nw.payoutModPct += Number(modifiers.goodBonusPct || 0);
+    } else {
+      session.nw.payoutModPct += Number(modifiers.neutralBonusPct || 0);
+    }
   }
-  if (jobKey === "lapDance" && choice.penalty) {
-    session.nw.penaltyTokens += choice.penalty;
+  if (jobKey === "lapDance") {
+    const penalties = session.nw.cfg?.penalties || {};
+    if (choice.tag === "awkward" || choice.penalty) {
+      session.nw.penaltyTokens += Number(choice.penalty || penalties.awkwardAdds || 1);
+    } else if (choice.tag === "smooth") {
+      session.nw.penaltyTokens = Math.max(0, session.nw.penaltyTokens - Number(penalties.smoothRemoves || 0));
+    }
   }
   if (jobKey === "prostitute") {
     session.nw.risk = clamp(session.nw.risk + (choice.riskDelta || 0), 0, 200);
   }
-  session.nw.payoutModPct = clamp(session.nw.payoutModPct + (choice.payoutDeltaPct || 0), -80, 200);
+  if (jobKey !== "flirt") {
+    session.nw.payoutModPct = clamp(session.nw.payoutModPct + (choice.payoutDeltaPct || 0), -80, 200);
+  } else {
+    session.nw.payoutModPct = clamp(session.nw.payoutModPct, -80, 200);
+  }
 }
 
 function getFailure(jobKey, session, cfg) {
@@ -202,10 +238,21 @@ function getFailure(jobKey, session, cfg) {
   if (jobKey === "lapDance" && session.nw.penaltyTokens >= (cfg.penalties?.failAt || 3)) {
     return "You messed up too many times. No payout.";
   }
-  if (jobKey === "prostitute" && session.nw.risk >= (cfg.risk?.failAt || 100)) {
+  if (jobKey === "prostitute" && cfg.risk?.failAt && session.nw.risk >= cfg.risk.failAt) {
     return "Heat got too high. No payout.";
   }
   return null;
+}
+
+function getPayoutMultiplier(jobKey, session, cfg) {
+  if (jobKey !== "prostitute") {
+    return 1 + (session.nw.payoutModPct / 100);
+  }
+
+  const risk = Math.max(0, Number(session.nw.risk || 0));
+  const variance = Math.max(0, Number(cfg.risk?.payoutVariancePct ?? 5));
+  const riskBonusPct = randInt(Math.max(0, Math.floor(risk - variance)), Math.ceil(risk + variance));
+  return 1 + riskBonusPct / 100;
 }
 
 function getStatusLines(jobKey, session, cfg) {
@@ -268,4 +315,5 @@ function toUnix(date) {
 module.exports = {
   handleNightWalkerInteraction,
   isNightWalkerInteraction,
+  cooldownFor,
 };

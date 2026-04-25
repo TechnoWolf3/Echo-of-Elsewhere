@@ -27,6 +27,13 @@ function formatStatus(building) {
   return "Empty shell";
 }
 
+function formatStoredGoods(goods = []) {
+  if (!Array.isArray(goods) || !goods.length) return "";
+  return goods
+    .map((item) => `- ${Number(item.quantity || 0).toLocaleString()}x ${item.name || "Unknown goods"}`)
+    .join("\n");
+}
+
 function buildUnderworldHomeEmbed(state) {
   const summary = engine.getStateSummary(state);
   const averageSuspicion = summary.total ? Math.round(summary.suspicion / summary.total) : 0;
@@ -218,15 +225,20 @@ function buildBuildingEmbed(state, buildingId) {
 
   if (storageStock > 0 || op?.storageEnabled) {
     const lockedUntil = Number(building.storage?.sellLockedUntil || 0);
-    lines.push(`**Stored goods:** ${storageStock}`);
+    lines.push("");
+    lines.push("**Storage**");
+    lines.push(`Stock: **${storageStock.toLocaleString()}/${Number(def?.capacity || 0).toLocaleString()}**`);
     if (Number(building.storage?.totalValue || 0) > 0) {
-      lines.push(`**Estimated street value:** ${ui.money(building.storage.totalValue)}`);
+      lines.push(`Estimated street value: **${ui.money(building.storage.totalValue)}**`);
     }
     if (Array.isArray(building.storage?.goods) && building.storage.goods.length) {
-      lines.push(`**Goods:** ${building.storage.goods.map((item) => `${item.quantity}x ${item.name}`).join(", ")}`);
+      lines.push("");
+      lines.push("**Goods**");
+      lines.push(formatStoredGoods(building.storage.goods));
     }
     if (lockedUntil > Date.now()) {
-      lines.push(`**Fence cooldown ends:** <t:${Math.floor(lockedUntil / 1000)}:R>`);
+      lines.push("");
+      lines.push(`Fence cooldown: **<t:${Math.floor(lockedUntil / 1000)}:R>**`);
     }
   }
 

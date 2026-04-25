@@ -46,17 +46,21 @@ const crimeUi = require("../features/crime/ui");
 const { handleCrimeInteraction } = require("../features/crime/handlers");
 const { CRIME_GLOBAL_KEY, CRIME_KEYS } = require("../features/crime/constants");
 const grindUi = require("../features/grind/ui");
-const { handleGrindInteraction } = require("../features/grind/handlers");
+const { handleGrindInteraction, cooldownFor: grindCooldownFor } = require("../features/grind/handlers");
 const nineToFiveUi = require("../features/nineToFive/ui");
-const { handleNineToFiveInteraction } = require("../features/nineToFive/handlers");
+const { handleNineToFiveInteraction, cooldownFor: nineToFiveCooldownFor } = require("../features/nineToFive/handlers");
 const nightWalkerUi = require("../features/nightWalker/ui");
-const { handleNightWalkerInteraction } = require("../features/nightWalker/handlers");
+const { handleNightWalkerInteraction, cooldownFor: nightWalkerCooldownFor } = require("../features/nightWalker/handlers");
+const nineToFiveIndex = require("../data/work/categories/nineToFive/index");
+const nightWalkerIndex = require("../data/work/categories/nightwalker/index");
+const grindIndex = require("../data/work/categories/grind/index");
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
 
 const JOB_COOLDOWN_SECONDS = 45;
 const BOARD_INACTIVITY_MS = 25 * 60_000;
+const PAYOUT_SCREEN_MIN_HOLD_MS = 15_000;
 
 // Legendary (kept in command for now)
 const LEGENDARY_CHANCE = 0.012;
@@ -295,13 +299,11 @@ function buildHubComponents(disabled = false) {
   return [catRow, navRow];
 }
 
-function buildEnterprisesEmbed({ cooldownUnix } = {}) {
+function buildEnterprisesEmbed() {
   return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🏭 Enterprises")
     .setDescription(
       [
-        statusLineFromCooldown(cooldownUnix),
-        "",
         "Build long-term operations that grow over time.",
         "",
         "🌾 **Farming** — Fields, machinery, contracts, and produce markets.",
@@ -344,7 +346,7 @@ function buildEnterprisesComponents(disabled = false) {
   return [catRow, enterpriseRow];
 }
 
-function buildUnderworldEmbed({ cooldownUnix } = {}) {
+function buildUnderworldEmbed() {
   const branchLines = underworldBranches.map((branch) =>
     `${branch.emoji} **${branch.label}** — ${branch.description}`
   );
@@ -353,8 +355,6 @@ function buildUnderworldEmbed({ cooldownUnix } = {}) {
     .setTitle("🕶️ The Underworld")
     .setDescription(
       [
-        statusLineFromCooldown(cooldownUnix),
-        "",
         "Build illegal networks that make big money and attract the wrong kind of attention.",
         "",
         ...branchLines,
@@ -477,6 +477,7 @@ function cancelAutoReturn() {
 function scheduleReturnToCategory(delayMs = 5000) {
   cancelAutoReturn();
 
+  const holdMs = Math.max(Number(delayMs) || 0, PAYOUT_SCREEN_MIN_HOLD_MS);
   session.returnTimer = setTimeout(async () => {
     try {
       if (collector.ended) return;
@@ -486,7 +487,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       session.view = target;
       await redraw();
     } catch {}
-  }, delayMs);
+  }, holdMs);
 }
 
     async function stopWork(reason = "stop") {
@@ -526,6 +527,50 @@ function scheduleReturnToCategory(delayMs = 5000) {
       const nextClaim = new Date(Date.now() + Math.max(0, Number(cooldownSeconds) || 0) * 1000);
       await setCooldown(guildId, userId, key, nextClaim);
       return nextClaim;
+    }
+
+    async function getCooldownMap(entries) {
+      const out = {};
+      for (const entry of entries) {
+        const unix = await getCooldownUnixIfActive(guildId, userId, entry.cooldownKey);
+        if (unix) out[entry.id] = unix;
+      }
+      return out;
+    }
+
+    async function getNineToFiveCooldowns() {
+      const modeByJobKey = {
+        transportContract: "contract",
+        skillCheck: "skill",
+        shift: "shift",
+        emailSorter: "emailSorter",
+        trucker: "trucker",
+      };
+      return getCooldownMap((nineToFiveIndex.jobs || []).map((job) => ({
+        id: job.key,
+        cooldownKey: nineToFiveCooldownFor(modeByJobKey[job.key] || job.key).key,
+      })));
+    }
+
+    async function getNightWalkerCooldowns() {
+      return getCooldownMap((nightWalkerIndex.list || []).map((jobKey) => ({
+        id: jobKey,
+        cooldownKey: nightWalkerCooldownFor(jobKey, nightWalkerIndex.jobs?.[jobKey]).key,
+      })));
+    }
+
+    async function getGrindCooldowns() {
+      const actionByJobKey = {
+        storeClerk: "clerk",
+        warehousing: "warehousing",
+        fishing: "fishing",
+        quarry: "quarry",
+        taxiDriver: "taxi",
+      };
+      return getCooldownMap((grindIndex.list || []).map((jobKey) => ({
+        id: jobKey,
+        cooldownKey: grindCooldownFor(actionByJobKey[jobKey] || jobKey).key,
+      })));
     }
 
     async function maybeSpawnLegendary() {
@@ -601,18 +646,20 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "95") {
+        const cooldowns = await getNineToFiveCooldowns();
         return msg
           .edit({
-            embeds: [nineToFiveUi.buildNineToFiveEmbed(interaction.user, p, cd)],
+            embeds: [nineToFiveUi.buildNineToFiveEmbed(interaction.user, p, cooldowns)],
             components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
           })
           .catch(() => {});
       }
 
       if (session.view === "nw") {
+        const cooldowns = await getNightWalkerCooldowns();
         return msg
           .edit({
-            embeds: [nightWalkerUi.buildNightWalkerEmbed(interaction.user, p, cd)],
+            embeds: [nightWalkerUi.buildNightWalkerEmbed(interaction.user, p, cooldowns)],
             components: nightWalkerUi.buildNightWalkerComponents(false),
           })
           .catch(() => {});
@@ -629,10 +676,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "grind") {
         const fatigueInfo = await canGrindFatigue(pool, guildId, userId);
+        const cooldowns = await getGrindCooldowns();
 
         return msg
           .edit({
-            embeds: [grindUi.buildGrindEmbed({ cooldownUnix: cd, fatigueInfo })],
+            embeds: [grindUi.buildGrindEmbed({ fatigueInfo, cooldowns })],
             components: grindUi.buildGrindComponents(false),
           })
           .catch(() => {});
@@ -717,7 +765,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "underworld") {
         return msg.edit({
-          embeds: [buildUnderworldEmbed({ cooldownUnix: cd })],
+          embeds: [buildUnderworldEmbed()],
           components: buildUnderworldComponents(false),
         }).catch(() => {});
       }
@@ -759,7 +807,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "enterprises") {
         return msg.edit({
-          embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
+          embeds: [buildEnterprisesEmbed()],
           components: buildEnterprisesComponents(false),
         }).catch(() => {});
       }
@@ -771,6 +819,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
         const cooldowns = {
           crimeGlobal: await getCooldownUnixIfActive(guildId, userId, CRIME_GLOBAL_KEY),
           store: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.store),
+          chase: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.chase),
+          drugs: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.drugs),
           scam: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.scam),
           heist: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.heist),
           major: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.major),
@@ -969,6 +1019,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           msg,
           payUser,
           checkCooldownOrTell,
+          startCooldown,
           scheduleReturnToCategory,
         })) return;
 
@@ -999,6 +1050,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
+      if (session.returnTimer) return;
       if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "underworld", "underworld_operations", "underworld_building"].includes(session.view)) {
         await redraw();
       }

@@ -382,7 +382,7 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
           overtime,
           reducedShiftPct: ongoingShiftPenaltyPct,
         }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_taxi_driver" });
-        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
+        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS, "job:grind:taxiDriver");
       }
 
       let lockTs = null;

@@ -13,6 +13,7 @@ const JOB_COOLDOWNS = {
   skill: { key: "job:95:skill", label: "Skill Check", seconds: skillCfg.cooldownSeconds ?? 5 * 60 },
   shift: { key: "job:95:shift", label: "Shift Work", seconds: shiftCfg.cooldownSeconds ?? 6 * 60 },
   emailSorter: { key: "job:95:email_sorter", label: "Email Sorter", seconds: emailSorterCfg.cooldownSeconds ?? 8 * 60 },
+  trucker: { key: "job:95:trucker", label: "Trucker", seconds: 0 },
 };
 
 function cooldownFor(mode) {
@@ -646,4 +647,5 @@ function toUnix(date) {
 module.exports = {
   handleNineToFiveInteraction,
   isNineToFiveInteraction,
+  cooldownFor,
 };

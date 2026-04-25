@@ -225,7 +225,7 @@ module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } 
           ultras,
           overtime,
         }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_fishing" });
-        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
+        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS, "job:grind:fishing");
       }
 
       let lockTs = null;

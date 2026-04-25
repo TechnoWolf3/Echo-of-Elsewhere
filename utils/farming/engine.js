@@ -1,5 +1,6 @@
 const { pool } = require("../db");
 const crops = require("../../data/farming/crops");
+const livestock = require("../../data/farming/livestock");
 const config = require("../../data/farming/config");
 const weather = require("./weather");
 const seasonControl = require("./seasonControl");
@@ -75,17 +76,38 @@ async function ensureCropStoreItem(guildId, crop) {
   );
 }
 
-async function addProduceToInventory(guildId, userId, crop) {
-  await ensureCropStoreItem(guildId, crop);
+async function ensureFarmStoreItem(guildId, item) {
+  await pool.query(
+    `INSERT INTO store_items (guild_id, item_id, name, description, price, kind, stackable, enabled, meta, sort_order)
+     VALUES ($1,$2,$3,$4,0,'produce',true,true,$5::jsonb,9500)
+     ON CONFLICT (guild_id, item_id)
+     DO UPDATE SET
+       name = EXCLUDED.name,
+       description = EXCLUDED.description,
+       kind = 'produce',
+       enabled = true`,
+    [guildId, item.itemId || item.id, item.name, `${item.name} produced by your farm.`, JSON.stringify({ farming: true })]
+  );
+}
+
+async function addFarmItemToInventory(guildId, userId, item, qty = 1) {
+  const amount = Math.max(0, Math.floor(Number(qty) || 0));
+  if (amount <= 0) return;
+  await ensureFarmStoreItem(guildId, item);
   await pool.query(
     `INSERT INTO user_inventory (guild_id, user_id, item_id, qty, uses_remaining, meta, updated_at)
-     VALUES ($1,$2,$3,1,0,'{}'::jsonb,NOW())
+     VALUES ($1,$2,$3,$4,0,'{}'::jsonb,NOW())
      ON CONFLICT (guild_id, user_id, item_id)
      DO UPDATE SET
-       qty = user_inventory.qty + 1,
+       qty = user_inventory.qty + EXCLUDED.qty,
        updated_at = NOW()`,
-    [guildId, userId, crop.id]
+    [guildId, userId, item.itemId || item.id, amount]
   );
+}
+
+async function addProduceToInventory(guildId, userId, crop) {
+  await ensureCropStoreItem(guildId, crop);
+  await addFarmItemToInventory(guildId, userId, { itemId: crop.id, name: crop.name }, 1);
 }
 
 function newField() {
@@ -97,6 +119,161 @@ function newField() {
     plantedAt: null,
     readyAt: null,
   };
+}
+
+function getLivestockTypes() {
+  return Object.values(livestock);
+}
+
+function getLivestockType(typeId) {
+  return livestock[typeId] || null;
+}
+
+function isBarn(field) {
+  return field?.kind === "barn";
+}
+
+function getBarnCapacity(barn) {
+  const type = getLivestockType(barn?.livestockType);
+  if (!type) return 0;
+  return Math.max(1, Number(type.capacityBase || 1) + (Math.max(1, Number(barn?.level || 1)) - 1) * 2);
+}
+
+function getBarnUpgradeCost(currentLevel) {
+  return Math.round(getUpgradeCost(currentLevel) * 1.15);
+}
+
+function getBarnDemolitionCost(barn) {
+  const level = Math.max(1, Number(barn?.level || 1));
+  const base = Number(config.BARN_DEMOLITION_BASE_COST || 120000);
+  const perLevel = Number(config.BARN_DEMOLITION_LEVEL_MULTIPLIER || 35000);
+  return Math.round(base + (level - 1) * perLevel);
+}
+
+function getBarnReadyAt(barn) {
+  const type = getLivestockType(barn?.livestockType);
+  if (!type || !barn?.lastCollectedAt) return null;
+  return Number(barn.lastCollectedAt) + Number(type.productionHours || 6) * 60 * 60 * 1000;
+}
+
+function getBarnProductionInfo(barn, now = Date.now()) {
+  const type = getLivestockType(barn?.livestockType);
+  if (!type) return { readyCycles: 0, readyAt: null };
+  const cycleMs = Math.max(1, Number(type.productionHours || 6) * 60 * 60 * 1000);
+  const lastCollectedAt = Number(barn.lastCollectedAt || barn.stockedAt || now);
+  const elapsed = Math.max(0, now - lastCollectedAt);
+  const readyCycles = Math.min(3, Math.floor(elapsed / cycleMs));
+  return {
+    readyCycles,
+    readyAt: lastCollectedAt + cycleMs,
+    cycleMs,
+  };
+}
+
+async function convertFieldToBarn(guildId, userId, farm, fieldIndex, livestockType) {
+  const field = farm.fields?.[fieldIndex];
+  const type = getLivestockType(livestockType);
+  if (!field) return { ok: false, reasonText: "That field does not exist." };
+  if (!type) return { ok: false, reasonText: "Unknown livestock type." };
+  if (isBarn(field)) return { ok: false, reasonText: "That plot is already a barn." };
+  if ((field.level || 1) < Number(type.levelRequired || 1)) {
+    return { ok: false, reasonText: `This livestock needs a level ${type.levelRequired} field.` };
+  }
+  if (field.cropId || field.state === "growing" || field.state === "ready" || field.task?.key) {
+    return { ok: false, reasonText: "The field must be empty before converting it." };
+  }
+  if (!field.cultivated || field.fieldCondition?.requiresCultivation) {
+    return { ok: false, reasonText: "Clean up and cultivate the field before converting it." };
+  }
+
+  const now = Date.now();
+  farm.fields[fieldIndex] = {
+    kind: "barn",
+    level: field.level || 1,
+    livestockType,
+    animalCount: Math.max(1, Number(type.capacityBase || 1)),
+    stockedAt: now,
+    lastCollectedAt: now,
+  };
+
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, barn: farm.fields[fieldIndex], type };
+}
+
+async function collectBarnProducts(guildId, userId, farm, fieldIndex) {
+  const barn = farm.fields?.[fieldIndex];
+  const type = getLivestockType(barn?.livestockType);
+  if (!isBarn(barn) || !type) return { ok: false, reasonText: "That barn does not exist." };
+
+  const production = getBarnProductionInfo(barn);
+  if (production.readyCycles <= 0) {
+    return { ok: false, reasonText: "That barn is not ready to collect yet." };
+  }
+
+  const [min, max] = [Number(type.output?.min || 1), Number(type.output?.max || 1)];
+  let qty = 0;
+  const animalScale = Math.max(1, Number(barn.animalCount || 1)) / Math.max(1, Number(type.capacityBase || 1));
+  for (let i = 0; i < production.readyCycles; i += 1) {
+    qty += Math.max(1, Math.round(randInt(min, max) * animalScale));
+  }
+
+  barn.lastCollectedAt = Number(barn.lastCollectedAt || Date.now()) + production.readyCycles * production.cycleMs;
+  await addFarmItemToInventory(guildId, userId, type.output, qty);
+  await saveFarm(guildId, userId, farm);
+  await recordFarmContractProgress(guildId, userId, "farm_crops_harvested", qty);
+  return { ok: true, qty, itemName: type.output.name, cycles: production.readyCycles };
+}
+
+async function slaughterBarn(guildId, userId, farm, fieldIndex) {
+  const barn = farm.fields?.[fieldIndex];
+  const type = getLivestockType(barn?.livestockType);
+  if (!isBarn(barn) || !type) return { ok: false, reasonText: "That barn does not exist." };
+  const animals = Math.max(0, Math.floor(Number(barn.animalCount || 0)));
+  if (animals <= 0) return { ok: false, reasonText: "There are no animals in this barn." };
+
+  const slaughter = type.slaughter;
+  const min = Number(slaughter?.minPerAnimal || 1);
+  const max = Number(slaughter?.maxPerAnimal || min);
+  let qty = 0;
+  for (let i = 0; i < animals; i += 1) qty += randInt(min, max);
+
+  barn.animalCount = 0;
+  barn.lastCollectedAt = null;
+  await addFarmItemToInventory(guildId, userId, slaughter, qty);
+  await saveFarm(guildId, userId, farm);
+  await recordFarmContractProgress(guildId, userId, "farm_crops_harvested", qty);
+  return { ok: true, qty, itemName: slaughter.name, animals };
+}
+
+async function restockBarn(guildId, userId, farm, fieldIndex) {
+  const barn = farm.fields?.[fieldIndex];
+  const type = getLivestockType(barn?.livestockType);
+  if (!isBarn(barn) || !type) return { ok: false, reasonText: "That barn does not exist." };
+  const capacity = getBarnCapacity(barn);
+  if (Number(barn.animalCount || 0) >= capacity) return { ok: false, reasonText: "That barn is already stocked." };
+
+  barn.animalCount = capacity;
+  barn.stockedAt = Date.now();
+  barn.lastCollectedAt = Date.now();
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, type, capacity };
+}
+
+async function demolishBarn(guildId, userId, farm, fieldIndex) {
+  const barn = farm.fields?.[fieldIndex];
+  if (!isBarn(barn)) return { ok: false, reasonText: "That barn does not exist." };
+
+  farm.fields[fieldIndex] = {
+    level: barn.level || 1,
+    cropId: null,
+    state: "empty",
+    cultivated: false,
+    plantedAt: null,
+    readyAt: null,
+  };
+
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, field: farm.fields[fieldIndex] };
 }
 
 async function ensureFarm(guildId, userId) {
@@ -178,6 +355,7 @@ async function applySeasonRollover(guildId, userId, farm) {
   const currentSeason = getCurrentSeason(guildId);
 
   for (const field of farm.fields || []) {
+    if (isBarn(field)) continue;
     updateFieldRuntime(field);
 
     if (field.cropId && !isCropValidForSeason(field.cropId, currentSeason)) {
@@ -332,6 +510,7 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
 }
 
 function isFieldTaskActive(field) {
+  if (isBarn(field)) return false;
   return Boolean(field?.task?.key && field?.task?.endsAt && Date.now() < Number(field.task.endsAt));
 }
 
@@ -516,6 +695,7 @@ async function applyFieldTaskRollovers(guildId, userId, farm) {
 
   for (let i = 0; i < (farm.fields || []).length; i++) {
     const field = farm.fields[i];
+    if (isBarn(field)) continue;
     if (!field?.task?.key || !field.task.endsAt) continue;
 
     if (Date.now() >= Number(field.task.endsAt)) {
@@ -563,4 +743,17 @@ module.exports = {
   getUsablePlots,
   getTaskDurationMs,
   getScaledYieldRange,
+  getLivestockTypes,
+  getLivestockType,
+  isBarn,
+  getBarnCapacity,
+  getBarnUpgradeCost,
+  getBarnDemolitionCost,
+  getBarnReadyAt,
+  getBarnProductionInfo,
+  convertFieldToBarn,
+  collectBarnProducts,
+  slaughterBarn,
+  restockBarn,
+  demolishBarn,
 };

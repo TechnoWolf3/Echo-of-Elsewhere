@@ -281,7 +281,7 @@ function buildFarmingComponents(farm) {
           const index = start + offset;
           return new ButtonBuilder()
             .setCustomId(`farm_select:${index}`)
-            .setLabel(`Field ${index + 1}`)
+            .setLabel(farming.isBarn(fields[index]) ? `Barn ${index + 1}` : `Field ${index + 1}`)
             .setStyle(ButtonStyle.Primary);
         })
       )
@@ -309,7 +309,8 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
   const counts = fields.reduce(
     (acc, field) => {
       const state = field?.state || "empty";
-      if (state === "growing") acc.growing += 1;
+      if (farming.isBarn(field)) acc.barns += 1;
+      else if (state === "growing") acc.growing += 1;
       else if (state === "ready") acc.ready += 1;
       else if (state === "spoiled") acc.spoiled += 1;
       else if (!field?.cultivated) acc.cleanup += 1;
@@ -317,11 +318,22 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
       if (farming.isFieldTaskActive(field)) acc.busy += 1;
       return acc;
     },
-    { growing: 0, ready: 0, spoiled: 0, cleanup: 0, empty: 0, busy: 0 }
+    { growing: 0, ready: 0, spoiled: 0, cleanup: 0, empty: 0, busy: 0, barns: 0 }
   );
 
   const fieldLines = fields.length
   ? fields.map((field, index) => {
+      if (farming.isBarn(field)) {
+        const type = farming.getLivestockType(field.livestockType);
+        const production = farming.getBarnProductionInfo(field);
+        const status = Number(field.animalCount || 0) <= 0
+          ? "Empty barn"
+          : production.readyCycles > 0
+            ? `${type?.output?.name || "Products"} ready`
+            : `Next produce <t:${Math.floor(Number(production.readyAt || Date.now()) / 1000)}:R>`;
+        return `**Barn ${index + 1}** - Lv ${field.level || 1} - ${type?.animalName || "Livestock"} - ${status}`;
+      }
+
       let status = "Empty";
 
       if (field.state === "growing") {
@@ -366,6 +378,7 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
         name: "Farm Status",
         value: [
           `Fields: **${fields.length}/${config.MAX_FIELDS}**`,
+          `Barns: **${counts.barns}**`,
           `Ready: **${counts.ready}**`,
           `Growing: **${counts.growing}**`,
           `Busy: **${counts.busy}**`,
@@ -399,6 +412,14 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
     "job",
     "Open a field to cultivate, plant, harvest, or upgrade."
   );
+}
+
+function renderBarnVisual(barn) {
+  const type = farming.getLivestockType(barn?.livestockType);
+  if (!type) return "";
+  if (type.id === "chickens") return "🐔🐔🐔\n🟨🟨🟨";
+  if (type.id === "sheep") return "🐑🐑🐑\n🟩🟩🟩";
+  return "🐄🐄🐄\n🟫🟫🟫";
 }
 
 function renderFieldVisual(field) {
@@ -474,7 +495,6 @@ function renderFieldVisual(field) {
 
 function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   const field = (farm.fields || [])[fieldIndex];
-  const visual = renderFieldVisual(field);
 
   if (!field) {
     return new EmbedBuilder()
@@ -482,6 +502,39 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
       .setDescription("That field does not exist.")
       .setColor(ui.colors.danger);
   }
+
+  if (farming.isBarn(field)) {
+    const type = farming.getLivestockType(field.livestockType);
+    const capacity = farming.getBarnCapacity(field);
+    const production = farming.getBarnProductionInfo(field);
+    const readyText = production.readyCycles > 0
+      ? `Ready now (${production.readyCycles} cycle${production.readyCycles === 1 ? "" : "s"})`
+      : field.animalCount > 0 && production.readyAt
+        ? `<t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
+        : "Restock animals to restart production.";
+
+    return new EmbedBuilder()
+      .setTitle(`🚜 Barn ${fieldIndex + 1}`)
+      .setDescription(
+        [
+          "**Barn Layout**",
+          renderBarnVisual(field),
+          "",
+          `📈 **Level:** ${field.level || 1}`,
+          `🏠 **Type:** ${type?.name || "Barn"}`,
+          `🐾 **Stock:** ${Number(field.animalCount || 0)}/${capacity} ${type?.animalName || "animals"}`,
+          `📦 **Production:** ${type?.output?.name || "Produce"} every ${type?.productionHours || 0}h`,
+          `⏳ **Next collection:** ${readyText}`,
+          `🥩 **Slaughter output:** ${type?.slaughter?.name || "Meat"}`,
+          `🧹 **Demolition:** ${ui.money(farming.getBarnDemolitionCost(field))}`,
+          `🍂 **Season:** ${farming.getCurrentSeason(guildId)}`,
+        ].join("\n")
+      )
+      .setColor(ui.systems.job.color)
+      .setFooter({ text: "Barns produce over time. Slaughter clears the current stock." });
+  }
+
+  const visual = renderFieldVisual(field);
 
   const allCrops = farming.getAvailableCrops(config.MAX_FIELD_LEVEL || 10);
   const cropMap = Object.fromEntries(allCrops.map((crop) => [crop.key, crop]));
@@ -555,6 +608,10 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
 function buildFieldComponents(farm, fieldIndex, guildId = null) {
   const field = (farm.fields || [])[fieldIndex];
   const rows = [];
+
+  if (farming.isBarn(field)) {
+    return buildBarnComponents(farm, fieldIndex);
+  }
 
   if (!field) {
     rows.push(
@@ -674,6 +731,92 @@ function buildFieldComponents(farm, fieldIndex, guildId = null) {
     );
   }
 
+  if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation) {
+    const barnOptions = farming
+      .getLivestockTypes()
+      .filter((type) => (field.level || 1) >= Number(type.levelRequired || 1));
+
+    if (barnOptions.length) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId(`farm_barn_select:${fieldIndex}`)
+            .setPlaceholder("Convert to barn...")
+            .addOptions(
+              barnOptions.map((type) => ({
+                label: type.name,
+                value: `farm_barn:${fieldIndex}:${type.id}`,
+                description: `$${Number(type.convertCost || 0).toLocaleString()} - ${type.animalName} - ${type.output?.name || "produce"}`,
+              }))
+            )
+        )
+      );
+    }
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_back")
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
+    )
+  );
+
+  return rows;
+}
+
+function buildBarnComponents(farm, fieldIndex) {
+  const barn = (farm.fields || [])[fieldIndex];
+  const rows = [];
+
+  if (!farming.isBarn(barn)) return buildFieldComponents(farm, fieldIndex);
+
+  const production = farming.getBarnProductionInfo(barn);
+  const hasAnimals = Number(barn.animalCount || 0) > 0;
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`farm_barn_collect:${fieldIndex}`)
+        .setLabel("Collect Produce")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!hasAnimals || production.readyCycles <= 0),
+      new ButtonBuilder()
+        .setCustomId(`farm_barn_slaughter:${fieldIndex}`)
+        .setLabel("Slaughter")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(!hasAnimals),
+      new ButtonBuilder()
+        .setCustomId(`farm_barn_restock:${fieldIndex}`)
+        .setLabel("Restock")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(hasAnimals)
+    )
+  );
+
+  if ((barn.level || 1) < config.MAX_FIELD_LEVEL) {
+    const upgradeCost = farming.getBarnUpgradeCost(barn.level || 1);
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_barn_upgrade:${fieldIndex}`)
+          .setLabel(`Upgrade Barn ($${upgradeCost.toLocaleString()})`)
+          .setStyle(ButtonStyle.Primary)
+      )
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`farm_barn_demolish:${fieldIndex}`)
+        .setLabel(`Demolish (${ui.money(farming.getBarnDemolitionCost(barn))})`)
+        .setStyle(ButtonStyle.Danger)
+    )
+  );
+
   rows.push(
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -700,4 +843,5 @@ module.exports = {
   buildFarmingComponents,
   buildFieldEmbed,
   buildFieldComponents,
+  buildBarnComponents,
 };

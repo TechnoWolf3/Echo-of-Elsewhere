@@ -1,4 +1,64 @@
 module.exports = {
+  farm_milk: {
+    basePrice: 145,
+    seasonalRanges: {
+      spring: [138, 156],
+      summer: [132, 150],
+      autumn: [146, 164],
+      winter: [154, 176],
+    },
+  },
+
+  farm_eggs: {
+    basePrice: 85,
+    seasonalRanges: {
+      spring: [78, 92],
+      summer: [74, 88],
+      autumn: [86, 100],
+      winter: [94, 112],
+    },
+  },
+
+  farm_wool: {
+    basePrice: 210,
+    seasonalRanges: {
+      spring: [196, 218],
+      summer: [180, 204],
+      autumn: [214, 240],
+      winter: [230, 260],
+    },
+  },
+
+  farm_beef: {
+    basePrice: 420,
+    seasonalRanges: {
+      spring: [390, 430],
+      summer: [408, 456],
+      autumn: [430, 480],
+      winter: [450, 510],
+    },
+  },
+
+  farm_chicken: {
+    basePrice: 260,
+    seasonalRanges: {
+      spring: [240, 272],
+      summer: [252, 286],
+      autumn: [266, 302],
+      winter: [278, 318],
+    },
+  },
+
+  farm_mutton: {
+    basePrice: 340,
+    seasonalRanges: {
+      spring: [316, 352],
+      summer: [326, 366],
+      autumn: [352, 394],
+      winter: [364, 412],
+    },
+  },
+
   // Level 1 Crops
   wheat: {
     basePrice: 45,

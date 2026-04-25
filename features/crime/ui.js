@@ -55,6 +55,8 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
   };
 
   const effStore = effectiveCooldown(cooldowns?.store, cooldowns?.crimeGlobal);
+  const effChase = effectiveCooldown(cooldowns?.chase, cooldowns?.crimeGlobal);
+  const effDrugs = effectiveCooldown(cooldowns?.drugs, cooldowns?.crimeGlobal);
   const effHeist = effectiveCooldown(cooldowns?.heist, cooldowns?.crimeGlobal);
   const effMajor = effectiveCooldown(cooldowns?.major, cooldowns?.crimeGlobal);
   const effScam = effectiveCooldown(cooldowns?.scam, cooldowns?.crimeGlobal);
@@ -62,6 +64,8 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
   const cdLines = [
     cdLine("Crime lockout", cooldowns?.crimeGlobal),
     cdLine("Store Robbery", effStore),
+    cdLine("Car Chase", effChase),
+    cdLine("Drug Pushing", effDrugs),
     cdLine("Scam Call", effScam),
     cdLine("Heist", effHeist),
     cdLine("Major Heist", effMajor),
@@ -94,7 +98,8 @@ function buildCrimeComponents(disabled = false) {
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️", default: true },
-        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );

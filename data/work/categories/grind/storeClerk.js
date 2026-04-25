@@ -299,7 +299,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
         streak,
         used_bonus_item: bonus.used,
       }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_store_clerk" });
-      await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
+      await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS, "job:grind:storeClerk");
     }
 
     // If exhausted or in overtime, force recovery lock.
