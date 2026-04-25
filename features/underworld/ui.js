@@ -213,6 +213,7 @@ function buildBuildingEmbed(state, buildingId) {
 
   if (run?.status === "cooling_off") {
     lines.push(`**Cooling off:** Goods can be sold <t:${Math.floor(Number(run.storageGoods?.sellReadyAt || Date.now()) / 1000)}:R>`);
+    lines.push("**Early sale risk:** Higher suspicion, lower payout, and possible stolen-goods report.");
   }
 
   if (storageStock > 0 || op?.storageEnabled) {
@@ -310,7 +311,7 @@ function buildBuildingComponents(state, buildingId) {
           )
       )
     );
-  } else if (run?.status === "awaiting_distribution" && (!engine.getOperationDefinition(building.operationType)?.storageEnabled || Number(run.storageGoods?.units || 0) > 0)) {
+  } else if (["awaiting_distribution", "cooling_off"].includes(run?.status) && (!engine.getOperationDefinition(building.operationType)?.storageEnabled || Number(run.storageGoods?.units || 0) > 0)) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()

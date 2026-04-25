@@ -200,9 +200,15 @@ async function handleUnderworldInteraction({
     }
 
     const raidLine = result.raidOutcome ? ` ${result.raidOutcome.name}.` : " Clean run.";
+    const earlyLine = result.earlySale?.early
+      ? ` Early sale: payout reduced, suspicion +${Number(result.earlySale.suspicionGain || 0)}.`
+      : "";
+    const reportLine = result.stolenReport
+      ? ` ${result.stolenReport.name}: suspicion +${Number(result.stolenReport.suspicionDelta || 0)}.`
+      : "";
     await tell(
       interaction,
-      `✅ Distribution completed. Payout: $${Number(result.payout || 0).toLocaleString()}.${raidLine}`
+      `✅ Distribution completed. Payout: $${Number(result.payout || 0).toLocaleString()}.${raidLine}${earlyLine}${reportLine}`
     );
     session.view = "underworld_building";
     session.underworldBuildingId = buildingId;

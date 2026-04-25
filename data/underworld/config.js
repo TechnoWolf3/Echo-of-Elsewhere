@@ -10,15 +10,14 @@ module.exports = {
   CLEAN_RUN_SUSPICION_REDUCTION: 2,
   FULL_BUST_JAIL_MINUTES: 60,
   REFRESH_INTERVAL_MS: 10_000,
-  STORAGE_SELL_LOCK_MS: 60 * 60 * 1000,
-  STORAGE_GOODS: [
-    { name: "Counterfeit electronics", weight: 24, valueMin: 28000, valueMax: 52000 },
-    { name: "Designer knockoffs", weight: 22, valueMin: 24000, valueMax: 48000 },
-    { name: "Unmarked tool crates", weight: 18, valueMin: 32000, valueMax: 62000 },
-    { name: "Hot auto parts", weight: 16, valueMin: 42000, valueMax: 78000 },
-    { name: "Luxury watch rolls", weight: 10, valueMin: 65000, valueMax: 125000 },
-    { name: "Grey-market phones", weight: 14, valueMin: 52000, valueMax: 98000 },
-  ],
+  STORAGE_EARLY_SALE: {
+    maxPayoutPenalty: 0.24,
+    maxSuspicionGain: 14,
+    maxRaidChanceBonus: 0.12,
+    stolenReportChance: 0.18,
+    stolenReportSuspicion: 8,
+    stolenReportPayoutPenalty: 0.15,
+  },
   DISTRIBUTION_MODES: {
     safe: {
       id: "safe",

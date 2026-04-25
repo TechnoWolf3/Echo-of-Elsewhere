@@ -3,6 +3,7 @@ const buildings = require("../../data/underworld/buildings");
 const { OPERATIONS, EVENTS } = require("../../data/underworld/operations");
 const upgrades = require("../../data/underworld/upgrades");
 const config = require("../../data/underworld/config");
+const storageGoodsConfig = require("../../data/underworld/storageGoods");
 const { tryDebitBank, creditBank, addServerBank } = require("../economy");
 const { setJail } = require("../jail");
 
@@ -186,19 +187,32 @@ function generateStorageGoods(building, run, operation) {
   const maxUnits = Math.max(3, Math.floor(capacity / 8));
   const minUnits = Math.max(2, Math.floor(capacity / 14));
   const units = randInt(minUnits, maxUnits);
-  const goodsPool = Array.isArray(config.STORAGE_GOODS) ? config.STORAGE_GOODS : [];
+  const goodsPool = Array.isArray(storageGoodsConfig.items) ? storageGoodsConfig.items : [];
+  const defaults = storageGoodsConfig.defaults || {};
   const items = [];
   let totalValue = 0;
+  const defaultCoolOffMs = Number(defaults.coolOffMs || Number(defaults.coolOffMinutes || 60) * 60 * 1000);
+  let sellReadyAt = Date.now() + defaultCoolOffMs;
 
   for (let i = 0; i < units; i += 1) {
-    const goods = weightedPick(goodsPool) || { name: "Fenced goods", valueMin: 25000, valueMax: 50000 };
-    const value = randInt(Number(goods.valueMin || 25000), Number(goods.valueMax || 50000));
-    const existing = items.find((entry) => entry.name === goods.name);
+    const goods = weightedPick(goodsPool) || {
+      id: "fenced_goods",
+      name: "Fenced goods",
+      rarity: "common",
+      valueMin: defaults.fallbackValueMin || 25000,
+      valueMax: defaults.fallbackValueMax || 50000,
+    };
+    const value = randInt(Number(goods.valueMin || defaults.fallbackValueMin || 25000), Number(goods.valueMax || defaults.fallbackValueMax || 50000));
+    const itemCoolOffMs = Number(goods.coolOffMs || Number(goods.coolOffMinutes || 0) * 60 * 1000);
+    if (itemCoolOffMs > 0) {
+      sellReadyAt = Math.max(sellReadyAt, Date.now() + itemCoolOffMs);
+    }
+    const existing = items.find((entry) => entry.id === goods.id);
     if (existing) {
       existing.quantity += 1;
       existing.value += value;
     } else {
-      items.push({ name: goods.name, quantity: 1, value });
+      items.push({ id: goods.id, name: goods.name, rarity: goods.rarity || "common", quantity: 1, value });
     }
     totalValue += value;
   }
@@ -215,7 +229,7 @@ function generateStorageGoods(building, run, operation) {
     baseValue: totalValue,
     totalValue: Math.max(Number(run.batchCost || 0), outputValue),
     generatedAt: Date.now(),
-    sellReadyAt: Date.now() + Number(config.STORAGE_SELL_LOCK_MS || 60 * 60 * 1000),
+    sellReadyAt,
   };
 }
 
@@ -717,6 +731,35 @@ function rollRaidOutcome(raidChance, suspicion) {
   return null;
 }
 
+function getStorageEarlySaleRisk(run, now = Date.now()) {
+  const goods = run?.storageGoods;
+  if (!goods) return null;
+  const generatedAt = Number(goods.generatedAt || now);
+  const sellReadyAt = Number(goods.sellReadyAt || now);
+  if (!sellReadyAt || now >= sellReadyAt) {
+    return {
+      early: false,
+      remainingRatio: 0,
+      payoutMultiplier: 1,
+      suspicionGain: 0,
+      raidChanceBonus: 0,
+      reportChance: 0,
+    };
+  }
+
+  const totalMs = Math.max(1, sellReadyAt - generatedAt);
+  const remainingRatio = clamp((sellReadyAt - now) / totalMs, 0, 1);
+  const cfg = config.STORAGE_EARLY_SALE || {};
+  return {
+    early: true,
+    remainingRatio,
+    payoutMultiplier: clamp(1 - remainingRatio * Number(cfg.maxPayoutPenalty || 0.24), 0.5, 1),
+    suspicionGain: Math.ceil(remainingRatio * Number(cfg.maxSuspicionGain || 14)),
+    raidChanceBonus: remainingRatio * Number(cfg.maxRaidChanceBonus || 0.12),
+    reportChance: remainingRatio * Number(cfg.stolenReportChance || 0.18),
+  };
+}
+
 async function chooseDistribution(guildId, userId, state, buildingRef, modeId, options = {}) {
   const { building, buildingIndex } = resolveBuilding(state, buildingRef);
   const run = building?.activeRun;
@@ -725,7 +768,8 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
   if (!building || !run || !operation) {
     return { ok: false, reasonText: "That operation cannot be resolved right now." };
   }
-  if (run.status !== "awaiting_distribution") {
+  const isStorageEarlySale = operation?.storageEnabled && run.status === "cooling_off";
+  if (run.status !== "awaiting_distribution" && !isStorageEarlySale) {
     return { ok: false, reasonText: "This run is not ready for distribution yet." };
   }
   if (!mode) return { ok: false, reasonText: "Unknown distribution mode." };
@@ -733,9 +777,6 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     const goods = run.storageGoods;
     if (!goods || Number(goods.units || 0) <= 0 || Number(goods.totalValue || 0) <= 0) {
       return { ok: false, reasonText: "There are no cooled-off goods ready to sell yet." };
-    }
-    if (Number(goods.sellReadyAt || 0) > Date.now()) {
-      return { ok: false, reasonText: `The goods are still cooling off until <t:${Math.floor(Number(goods.sellReadyAt) / 1000)}:R>.` };
     }
   }
 
@@ -748,22 +789,39 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
       Number(run.grossMultiplier || 1) *
       clamp(Number(run.outputMultiplier || 1), 0.4, 3);
 
+  const earlySale = operation.storageEnabled ? getStorageEarlySaleRisk(run) : null;
+
   let gross = Math.round(
     grossBase *
-    (Number(mode.payoutMultiplier || 1) + Number(run.payoutMultiplierBonus || 0))
+    (Number(mode.payoutMultiplier || 1) + Number(run.payoutMultiplierBonus || 0)) *
+    Number(earlySale?.payoutMultiplier || 1)
   );
 
   const suspicionBefore = getBuildingSuspicion(building);
   let suspicionGain = Number(operation.baseSuspicionGain || 0) + Number(mode.suspicionDelta || 0) + Number(run.suspicionBonus || 0) - Number(efficiencyReduction || 0);
+  suspicionGain += Number(earlySale?.suspicionGain || 0);
   suspicionGain = Math.max(-config.CLEAN_RUN_SUSPICION_REDUCTION, suspicionGain);
 
   let raidChance = Number(operation.baseRaidChance || 0)
     + Number(mode.raidChanceDelta || 0)
     + Number(run.raidChanceBonus || 0)
+    + Number(earlySale?.raidChanceBonus || 0)
     + suspicionBefore / 170
     + Number(getBuildingDefinition(building.buildingId)?.baseRisk || 0) / 220
     - Number(securityReduction || 0);
   raidChance = clamp(raidChance, 0.02, 0.92);
+
+  let stolenReport = null;
+  if (earlySale?.early && Math.random() < Number(earlySale.reportChance || 0)) {
+    const cfg = config.STORAGE_EARLY_SALE || {};
+    stolenReport = {
+      name: "Reported Stolen",
+      suspicionDelta: Number(cfg.stolenReportSuspicion || 8),
+      payoutPenalty: Number(cfg.stolenReportPayoutPenalty || 0.15),
+    };
+    suspicionGain += stolenReport.suspicionDelta;
+    gross = Math.round(gross * clamp(1 - stolenReport.payoutPenalty, 0.4, 1));
+  }
 
   const raidOutcomeId = rollRaidOutcome(raidChance, suspicionBefore + suspicionGain);
   const raidOutcome = raidOutcomeId ? config.RAID_OUTCOMES[raidOutcomeId] : null;
@@ -786,6 +844,8 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     payout: gross,
     batchCost: run.batchCost,
     storageGoods: operation.storageEnabled ? run.storageGoods : null,
+    earlySale: earlySale?.early ? earlySale : null,
+    stolenReport,
   };
 
   if (raidOutcomeId === "full_bust") {
@@ -799,6 +859,8 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
       raidOutcome,
       buildingLost: true,
       jailedMinutes: config.FULL_BUST_JAIL_MINUTES,
+      earlySale,
+      stolenReport,
     };
   }
 
@@ -824,6 +886,8 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     payout: gross,
     distribution: mode,
     raidOutcome,
+    earlySale,
+    stolenReport,
     buildingLost: false,
   };
 }
