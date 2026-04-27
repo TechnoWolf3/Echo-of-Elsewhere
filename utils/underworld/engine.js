@@ -312,12 +312,15 @@ function addGoodsToStorage(building, storageGoods, now = Date.now()) {
   const current = building.storage || {};
   const currentStock = Number(current.stock || 0);
   const addedStock = Number(storageGoods?.units || 0);
+  const currentLockedUntil = Number(current.sellLockedUntil || 0);
+  const nextLockedUntil = Number(storageGoods?.sellReadyAt || now);
+  const latestLock = Math.max(currentLockedUntil, nextLockedUntil) || null;
   building.storage = {
     stock: currentStock + addedStock,
-    sellLockedUntil: Math.max(
-      Number(current.sellLockedUntil || 0),
-      Number(storageGoods?.sellReadyAt || now)
-    ) || null,
+    generatedAt: nextLockedUntil >= currentLockedUntil
+      ? Number(storageGoods?.generatedAt || now)
+      : Number(current.generatedAt || storageGoods?.generatedAt || now),
+    sellLockedUntil: latestLock,
     goods: mergeStoredGoods(current.goods, storageGoods?.items),
     totalValue: Number(current.totalValue || 0) + Number(storageGoods?.totalValue || 0),
   };
@@ -400,13 +403,9 @@ function finalizeCompletedRun(building, now) {
   const operation = getOperationDefinition(run.operationId || building.operationType);
   if (operation?.storageEnabled) {
     run.storageGoods = run.storageGoods || generateStorageGoods(building, run, operation);
-    run.status = "cooling_off";
-    building.storage = {
-      stock: Number(run.storageGoods.units || 0),
-      sellLockedUntil: Number(run.storageGoods.sellReadyAt || now),
-      goods: run.storageGoods.items || [],
-      totalValue: Number(run.storageGoods.totalValue || 0),
-    };
+    addGoodsToStorage(building, run.storageGoods, now);
+    building.runCooldownUntil = now + Number(config.STORAGE_RUN_COOLDOWN_MS || 15 * 60 * 1000);
+    building.activeRun = null;
     return true;
   }
 
@@ -422,17 +421,19 @@ function applyStorageCoolingOff(building, now) {
     const operation = getOperationDefinition(run.operationId || building.operationType);
     if (!operation?.storageEnabled) return false;
     run.storageGoods = generateStorageGoods(building, run, operation);
-    building.storage = {
-      stock: Number(run.storageGoods.units || 0),
-      sellLockedUntil: Number(run.storageGoods.sellReadyAt || now),
-      goods: run.storageGoods.items || [],
-      totalValue: Number(run.storageGoods.totalValue || 0),
-    };
+    addGoodsToStorage(building, run.storageGoods, now);
+    building.runCooldownUntil = Math.max(
+      Number(building.runCooldownUntil || 0),
+      Number(run.storageGoods.generatedAt || now) + Number(config.STORAGE_RUN_COOLDOWN_MS || 15 * 60 * 1000)
+    );
+    building.activeRun = null;
     return true;
   }
-  if (now < Number(goods.sellReadyAt || 0)) return false;
-  addGoodsToStorage(building, { ...goods, sellReadyAt: now }, now);
-  building.storage.sellLockedUntil = null;
+  addGoodsToStorage(building, goods, now);
+  building.runCooldownUntil = Math.max(
+    Number(building.runCooldownUntil || 0),
+    Number(goods.generatedAt || now) + Number(config.STORAGE_RUN_COOLDOWN_MS || 15 * 60 * 1000)
+  );
   building.activeRun = null;
   return true;
 }
@@ -447,13 +448,12 @@ function repairStorageDistribution(building, now) {
   }
 
   run.storageGoods = generateStorageGoods(building, run, operation);
-  run.status = "cooling_off";
-  building.storage = {
-    stock: Number(run.storageGoods.units || 0),
-    sellLockedUntil: Number(run.storageGoods.sellReadyAt || now),
-    goods: run.storageGoods.items || [],
-    totalValue: Number(run.storageGoods.totalValue || 0),
-  };
+  addGoodsToStorage(building, run.storageGoods, now);
+  building.runCooldownUntil = Math.max(
+    Number(building.runCooldownUntil || 0),
+    Number(run.storageGoods.generatedAt || now) + Number(config.STORAGE_RUN_COOLDOWN_MS || 15 * 60 * 1000)
+  );
+  building.activeRun = null;
   return true;
 }
 
@@ -653,6 +653,12 @@ async function startRun(guildId, userId, state, buildingRef) {
   const operation = getOperationDefinition(building.operationType);
   if (!operation) return { ok: false, reasonText: "Unknown operation type." };
   if (building.activeRun) return { ok: false, reasonText: "This building already has an active operation." };
+  if (Date.now() < Number(building.runCooldownUntil || 0)) {
+    return {
+      ok: false,
+      reasonText: `This building needs a short reset before the next run. Try again <t:${Math.floor(Number(building.runCooldownUntil) / 1000)}:R>.`,
+    };
+  }
   if (operation.storageEnabled) {
     const buildingDef = getBuildingDefinition(building.buildingId);
     const capacity = Math.max(1, Number(buildingDef?.capacity || 100));
@@ -768,10 +774,10 @@ function rollRaidOutcome(raidChance, suspicion) {
 }
 
 function getStorageEarlySaleRisk(run, now = Date.now()) {
-  const goods = run?.storageGoods;
+  const goods = run?.storageGoods || run;
   if (!goods) return null;
   const generatedAt = Number(goods.generatedAt || now);
-  const sellReadyAt = Number(goods.sellReadyAt || now);
+  const sellReadyAt = Number(goods.sellReadyAt || goods.sellLockedUntil || now);
   if (!sellReadyAt || now >= sellReadyAt) {
     return {
       early: false,
@@ -813,7 +819,7 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
   }
   if (!mode) return { ok: false, reasonText: "Unknown distribution mode." };
   if (operation.storageEnabled) {
-    const goods = run?.storageGoods;
+    const goods = run?.storageGoods || building.storage;
     if (!hasStoredGoods && (!goods || Number(goods.units || 0) <= 0 || Number(goods.totalValue || 0) <= 0)) {
       return { ok: false, reasonText: "There are no cooled-off goods ready to sell yet." };
     }
@@ -830,7 +836,8 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
       Number(run.grossMultiplier || 1) *
       clamp(Number(run.outputMultiplier || 1), 0.4, 3);
 
-  const earlySale = operation.storageEnabled ? getStorageEarlySaleRisk(run) : null;
+  const saleGoods = operation.storageEnabled ? (run?.storageGoods || building.storage) : null;
+  const earlySale = operation.storageEnabled ? getStorageEarlySaleRisk(saleGoods) : null;
 
   let gross = Math.round(
     grossBase *

@@ -11,6 +11,7 @@ const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
 const bankCommand = require("./commands/bank");
+const bankRecurringDeposits = require("./utils/bankRecurringDeposits");
 const ritualsCommand = require("./commands/rituals");
 const contractsCommand = require("./commands/contracts");
 const contracts = require("./utils/contracts");
@@ -724,6 +725,7 @@ client.once(Events.ClientReady, async () => {
       await ensureAchievementTables(client.db);
       await ensureEconomyTables(client.db);
       await ensureEseSchema();
+      await bankRecurringDeposits.ensureSchema();
       await contracts.ensureSchema();
       await channelPurger.ensureSchema(client.db);
       console.log("[ESE] schema ready");
@@ -739,6 +741,9 @@ client.once(Events.ClientReady, async () => {
 
       // 📜 Contracts
       contracts.startScheduler(client);
+
+      // Daily bank auto-deposits
+      bankRecurringDeposits.startScheduler(client);
 
       // 🧹 Scheduled channel purger
       channelPurger.startScheduler(client);

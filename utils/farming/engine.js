@@ -25,6 +25,12 @@ function getTotalPlots(fieldOrLevel) {
   return size * size;
 }
 
+function randInt(min, max) {
+  const low = Math.ceil(Number(min) || 0);
+  const high = Math.floor(Number(max) || low);
+  return Math.floor(low + Math.random() * (high - low + 1));
+}
+
 function getUsablePlots(field) {
   const total = getTotalPlots(field);
   const multiplier = weather.getUsablePlotMultiplier(field);

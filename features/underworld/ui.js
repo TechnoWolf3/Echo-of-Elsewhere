@@ -23,6 +23,7 @@ function formatStatus(building) {
   if (status === "cooling_off") return `Goods cooling off, Sellable <t:${Math.floor(Number(building.activeRun?.storageGoods?.sellReadyAt || Date.now()) / 1000)}:R>`;
   if (status === "distribution") return "Awaiting distribution";
   if (status === "running") return `Running, Completes <t:${Math.floor(Number(building.activeRun.readyAt) / 1000)}:R>`;
+  if (status === "ready" && Date.now() < Number(building.runCooldownUntil || 0)) return `Resetting, Next run <t:${Math.floor(Number(building.runCooldownUntil) / 1000)}:R>`;
   if (status === "ready") return "Ready to run";
   return "Empty shell";
 }
@@ -223,6 +224,10 @@ function buildBuildingEmbed(state, buildingId) {
     lines.push("**Early sale risk:** Higher suspicion, lower payout, and possible stolen-goods report.");
   }
 
+  if (!run && Date.now() < Number(building.runCooldownUntil || 0)) {
+    lines.push(`**Next run:** <t:${Math.floor(Number(building.runCooldownUntil) / 1000)}:R>`);
+  }
+
   if (storageStock > 0 || op?.storageEnabled) {
     const lockedUntil = Number(building.storage?.sellLockedUntil || 0);
     lines.push("");
@@ -292,6 +297,7 @@ function buildBuildingComponents(state, buildingId) {
   const pendingEvent = run?.pendingEvent ? engine.EVENTS[run.pendingEvent.eventId] : null;
   const op = engine.getOperationDefinition(building.operationType);
   const hasStoredGoods = Boolean(op?.storageEnabled && Number(building.storage?.stock || 0) > 0 && Number(building.storage?.totalValue || 0) > 0);
+  const runCooldownActive = Date.now() < Number(building.runCooldownUntil || 0);
 
   if (!building.operationType && !building.conversion) {
     rows.push(
@@ -349,7 +355,7 @@ function buildBuildingComponents(state, buildingId) {
             .setCustomId(`uw_start:${building.id}`)
             .setLabel("Start Operation")
             .setStyle(ButtonStyle.Primary)
-            .setDisabled(Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0)),
+            .setDisabled(runCooldownActive || Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0)),
           new ButtonBuilder()
             .setCustomId(`uw_dismantle:${building.id}`)
             .setLabel("Dismantle")
@@ -365,7 +371,7 @@ function buildBuildingComponents(state, buildingId) {
           .setCustomId(`uw_start:${building.id}`)
           .setLabel("Start Operation")
           .setStyle(ButtonStyle.Primary)
-          .setDisabled(Boolean(building.activeRun) || (op?.storageEnabled && Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0))),
+          .setDisabled(Boolean(building.activeRun) || runCooldownActive || (op?.storageEnabled && Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0))),
         new ButtonBuilder()
           .setCustomId(`uw_dismantle:${building.id}`)
           .setLabel("Dismantle")

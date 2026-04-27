@@ -11,6 +11,7 @@ const {
 } = require("discord.js");
 const economy = require("../utils/economy");
 const bankLoans = require("../utils/bankLoans");
+const recurringDeposits = require("../utils/bankRecurringDeposits");
 const { guardNotJailed } = require("../utils/jail");
 
 const BRAND_NAME = "The Echo Reserve";
@@ -27,7 +28,7 @@ function formatTs(dateLike, style = "R") {
   return `<t:${ts}:${style}>`;
 }
 
-function buildHomeEmbed(user, snapshot, loan) {
+function buildHomeEmbed(user, snapshot, loan, recurringDeposit = null) {
   const embed = new EmbedBuilder()
     .setColor(BRAND_COLOR)
     .setTitle(`🏦 ${BRAND_NAME}`)
@@ -46,6 +47,14 @@ function buildHomeEmbed(user, snapshot, loan) {
     embed.addFields({
       name: "Loan Status",
       value: `**${bankLoans.formatLoanStatus(loan.status)}**\nRemaining: **${money(loan.remaining_due)}**\nDue: ${formatTs(loan.due_at)}${loan.status !== bankLoans.STATUS.ACTIVE ? `\nDefault: ${formatTs(loan.default_at)}` : ""}`,
+      inline: false,
+    });
+  }
+
+  if (recurringDeposit?.enabled) {
+    embed.addFields({
+      name: "Daily Auto-Deposit",
+      value: `**${money(recurringDeposit.amount)}** from wallet to bank\nNext run: ${formatTs(recurringDeposit.next_run_at)}`,
       inline: false,
     });
   }
@@ -178,8 +187,9 @@ async function sendHome(interaction, user) {
   await bankLoans.sweepRecoverableBalances(interaction.guildId, user.id).catch(() => {});
   const snapshot = await economy.getEconomySnapshot(interaction.guildId, user.id);
   const loan = await bankLoans.getActiveLoan(interaction.guildId, user.id);
+  const recurringDeposit = await recurringDeposits.getRecurringDeposit(interaction.guildId, user.id).catch(() => null);
   const payload = {
-    embeds: [buildHomeEmbed(user, snapshot, loan)],
+    embeds: [buildHomeEmbed(user, snapshot, loan, recurringDeposit)],
     components: buildHomeComponents(),
     flags: MessageFlags.Ephemeral,
   };
@@ -188,7 +198,7 @@ async function sendHome(interaction, user) {
 }
 
 function buildAmountModal(kind) {
-  return new ModalBuilder()
+  const modal = new ModalBuilder()
     .setCustomId(`bank:modal:${kind}`)
     .setTitle(kind === "deposit" ? "Deposit Funds" : "Withdraw Funds")
     .addComponents(
@@ -201,6 +211,21 @@ function buildAmountModal(kind) {
           .setRequired(true)
       )
     );
+
+  if (kind === "deposit") {
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("recurring")
+          .setLabel("Recurring daily? yes/no")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("yes to enable, no to skip, stop to cancel")
+          .setRequired(false)
+      )
+    );
+  }
+
+  return modal;
 }
 
 function buildTransferModal() {
@@ -392,9 +417,22 @@ module.exports = {
             await interaction.editReply("❌ Deposit failed.");
             return true;
           }
+          const recurringText = String(interaction.fields.getTextInputValue("recurring") || "").trim().toLowerCase();
+          let recurringLine = "";
+          if (["yes", "y", "daily"].includes(recurringText)) {
+            const schedule = await recurringDeposits.setRecurringDeposit(interaction.guildId, interaction.user.id, amount);
+            recurringLine = ` Daily auto-deposit set for **${money(schedule.amount)}** starting ${formatTs(schedule.next_run_at)}.`;
+          } else if (["stop", "cancel", "off", "disable"].includes(recurringText)) {
+            await recurringDeposits.disableRecurringDeposit(interaction.guildId, interaction.user.id);
+            recurringLine = " Daily auto-deposit cancelled.";
+          }
+          const recurringDeposit = await recurringDeposits.getRecurringDeposit(interaction.guildId, interaction.user.id).catch(() => null);
+          if (recurringLine) {
+            await interaction.followUp({ content: recurringLine.trim(), flags: MessageFlags.Ephemeral }).catch(() => {});
+          }
           await interaction.editReply({
             content: `✅ Deposited **${money(amount)}** into your ${BRAND_NAME} account.`,
-            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank }, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
+            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank }, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id), recurringDeposit)],
             components: buildHomeComponents(),
           });
           return true;
