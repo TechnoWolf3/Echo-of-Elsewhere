@@ -1,4 +1,5 @@
 const { pool } = require("../db");
+const { tryDebitBank } = require("../economy");
 const machines = require("../../data/farming/machines");
 const TASK_REQUIREMENTS = {
   cultivate: ["tractor", "cultivator"],
@@ -134,21 +135,8 @@ async function buyMachine(guildId, userId, machineId) {
   if (!machine) return { ok: false, reasonText: "Unknown machine." };
 
   const state = await ensureMachineState(guildId, userId);
-
-  const balRes = await pool.query(
-    `SELECT balance FROM user_balances WHERE guild_id=$1 AND user_id=$2`,
-    [guildId, userId]
-  );
-  const balance = Number(balRes.rows[0]?.balance || 0);
-
-  if (balance < machine.buyPrice) {
-    return { ok: false, reasonText: `You need $${machine.buyPrice.toLocaleString()} to buy this machine.` };
-  }
-
-  await pool.query(
-    `UPDATE user_balances SET balance = balance - $1 WHERE guild_id=$2 AND user_id=$3`,
-    [machine.buyPrice, guildId, userId]
-  );
+  const debit = await tryDebitBank(guildId, userId, machine.buyPrice, "farm_machine_buy", { machineId });
+  if (!debit.ok) return { ok: false, reasonText: `You need $${machine.buyPrice.toLocaleString()} in your bank to buy this machine.` };
 
   state.owned[machineId] = getOwnedCount(state, machineId) + 1;
   await saveMachineState(guildId, userId, state);
@@ -359,7 +347,7 @@ function findCompatibleMachineSet(state, taskKey) {
     const onlyType = requiredTypes[0];
     const available = getAvailableMachinesByType(state, onlyType);
     if (!available.length) return null;
-    return [available[0]];
+    return [available.map((id) => machines[id]).filter(Boolean).sort(speedSort)[0].id];
   }
 
   const needsTractor = requiredTypes.includes("tractor");
@@ -369,7 +357,7 @@ function findCompatibleMachineSet(state, taskKey) {
     for (const type of requiredTypes) {
       const available = getAvailableMachinesByType(state, type);
       if (!available.length) return null;
-      chosen.push(available[0]);
+      chosen.push(available.map((id) => machines[id]).filter(Boolean).sort(speedSort)[0].id);
     }
 
     return chosen;
@@ -381,14 +369,20 @@ function findCompatibleMachineSet(state, taskKey) {
 
   if (!tractorOptions.length || !implementOptions.length) return null;
 
-  // pick the first tractor + implement combo that is compatible
+  let best = null;
+  let bestMult = Infinity;
   for (const tractor of tractorOptions) {
     for (const implement of implementOptions) {
       if (canTractorRunImplement(tractor, implement)) {
-        return [tractor.id, implement.id];
+        const mult = getMachineSetSpeedMultiplier([tractor.id, implement.id]);
+        if (mult < bestMult) {
+          bestMult = mult;
+          best = [tractor.id, implement.id];
+        }
       }
     }
   }
+  if (best) return best;
 
   return {
     incompatible: true,
@@ -396,6 +390,25 @@ function findCompatibleMachineSet(state, taskKey) {
     tractorOptions,
     implementOptions,
   };
+}
+
+function speedSort(a, b) {
+  return Number(a?.taskSpeedMult || 1) - Number(b?.taskSpeedMult || 1);
+}
+
+function getMachineSetSpeedMultiplier(machineIds = []) {
+  const values = (machineIds || [])
+    .map((id) => Number(machines[id]?.taskSpeedMult || 1))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (!values.length) return 1;
+  return Math.max(0.35, values.reduce((product, value) => product * value, 1));
+}
+
+async function getBestTaskSpeedMultiplier(guildId, userId, taskKey) {
+  const state = await ensureMachineState(guildId, userId);
+  const compatibleSet = findCompatibleMachineSet(state, taskKey);
+  if (!Array.isArray(compatibleSet)) return 1;
+  return getMachineSetSpeedMultiplier(compatibleSet);
 }
 
 async function reserveMachinesForTask(guildId, userId, fieldIndex, taskKey, durationMs) {
@@ -449,6 +462,7 @@ async function reserveMachinesForTask(guildId, userId, fieldIndex, taskKey, dura
   return {
     ok: true,
     machineIds: chosenMachines,
+    speedMult: getMachineSetSpeedMultiplier(chosenMachines),
     endsAt: now + durationMs,
   };
 }
@@ -474,6 +488,8 @@ module.exports = {
   RENTAL_DURATION_MS,
   SELL_VALUE_RATE,
   reserveMachinesForTask,
+  getBestTaskSpeedMultiplier,
+  getMachineSetSpeedMultiplier,
   canTractorRunImplement,
   findCompatibleMachineSet,
 };

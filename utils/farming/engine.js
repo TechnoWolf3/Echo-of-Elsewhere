@@ -1,6 +1,7 @@
 const { pool } = require("../db");
 const crops = require("../../data/farming/crops");
 const livestock = require("../../data/farming/livestock");
+const fertilisers = require("../../data/farming/fertilisers");
 const config = require("../../data/farming/config");
 const weather = require("./weather");
 const seasonControl = require("./seasonControl");
@@ -52,9 +53,60 @@ function getScaledYieldRange(crop, field) {
   const [min, max] = crop?.yield || [1, 1];
   const plotScale = getUsablePlots(field) / 9;
   const yieldMult = weather.getYieldMultiplier(field);
-  const scaledMin = Math.max(1, Math.round(min * plotScale * yieldMult));
-  const scaledMax = Math.max(scaledMin, Math.round(max * plotScale * yieldMult));
+  const fertiliserMult = 1 + getFertiliserYieldBonus(field);
+  const scaledMin = Math.max(1, Math.round(min * plotScale * yieldMult * fertiliserMult));
+  const scaledMax = Math.max(scaledMin, Math.round(max * plotScale * yieldMult * fertiliserMult));
   return [scaledMin, scaledMax];
+}
+
+function listFertilisers() {
+  return Object.values(fertilisers);
+}
+
+function getFertiliser(fertiliserId) {
+  return fertilisers[fertiliserId] || null;
+}
+
+function getFarmFertiliserInventory(farm) {
+  if (!farm.fertilisers || typeof farm.fertilisers !== "object") farm.fertilisers = {};
+  return farm.fertilisers;
+}
+
+function getFertiliserQty(farm, fertiliserId) {
+  return Number(getFarmFertiliserInventory(farm)[fertiliserId] || 0);
+}
+
+async function buyFertiliser(guildId, userId, farm, fertiliserId, qty = 1) {
+  const fertiliser = getFertiliser(fertiliserId);
+  if (!fertiliser) return { ok: false, reasonText: "Unknown fertiliser." };
+  const amount = Math.max(1, Math.floor(Number(qty) || 1));
+  const inventory = getFarmFertiliserInventory(farm);
+  inventory[fertiliserId] = getFertiliserQty(farm, fertiliserId) + amount;
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, fertiliser, qty: amount };
+}
+
+function getCropProgress(field, now = Date.now()) {
+  const plantedAt = Number(field?.plantedAt || 0);
+  const readyAt = Number(field?.readyAt || 0);
+  if (!plantedAt || !readyAt || readyAt <= plantedAt) return 0;
+  return Math.max(0, Math.min(1, (now - plantedAt) / (readyAt - plantedAt)));
+}
+
+function getFertiliserWindow(field, now = Date.now()) {
+  if (!field?.cropId || field.state !== "growing") return null;
+  const stages = field.fertiliserStages || {};
+  const progress = getCropProgress(field, now);
+  if (!stages.early && progress <= 0.10) return "early";
+  if (!stages.late && progress >= 0.75 && progress < 1) return "late";
+  return null;
+}
+
+function getFertiliserYieldBonus(field) {
+  return Object.values(field?.fertiliserApplications || {}).reduce(
+    (sum, entry) => sum + Number(getFertiliser(entry?.fertiliserId)?.yieldBonusPct || 0),
+    0
+  );
 }
 
 async function ensureTable() {
@@ -425,6 +477,8 @@ async function cultivateField(guildId, userId, farm, fieldIndex) {
 
   field.cultivated = true;
   field.state = "empty";
+  field.fertiliserStages = {};
+  field.fertiliserApplications = {};
   weather.clearCultivationWeather(field);
 
   await saveFarm(guildId, userId, farm);
@@ -468,6 +522,8 @@ async function plantCrop(guildId, userId, farm, fieldIndex, cropId) {
   field.plantedAt = now;
   field.readyAt = now + crop.growthHours * 60 * 60 * 1000;
   field.cultivated = true;
+  field.fertiliserStages = {};
+  field.fertiliserApplications = {};
   const weatherState = await weather.ensureDailyWeatherState(guildId);
   weather.maybeApplyActiveEventToField(field, weatherState);
 
@@ -507,6 +563,8 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
     field.state = "growing";
     field.plantedAt = now;
     field.readyAt = now + (crop.regrowHours || crop.growthHours) * 60 * 60 * 1000;
+    field.fertiliserStages = {};
+    field.fertiliserApplications = {};
   } else {
     const leavesDebris =
       Math.random() < (crop.debrisChance ?? config.NON_REGROW_DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
@@ -516,6 +574,8 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
     field.plantedAt = null;
     field.readyAt = null;
     field.cultivated = !leavesDebris && !hasFieldDamage;
+    field.fertiliserStages = {};
+    field.fertiliserApplications = {};
   }
 
   await saveFarm(guildId, userId, farm);
@@ -573,6 +633,17 @@ async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durati
     }
   }
 
+  if (taskKey === "fertilise") {
+    const fertiliserId = extra.fertiliserId || null;
+    if (!getFertiliser(fertiliserId)) return { ok: false, reasonText: "Choose a valid fertiliser." };
+    if (getFertiliserQty(farm, fertiliserId) <= 0) return { ok: false, reasonText: "You do not have that fertiliser in stock." };
+    const fertiliserStage = getFertiliserWindow(field);
+    if (!fertiliserStage) {
+      return { ok: false, reasonText: "Fertiliser can only be applied in the first 10% of growth or after 75% growth." };
+    }
+    extra.fertiliserStage = fertiliserStage;
+  }
+
   const now = Date.now();
   field.task = {
     key: taskKey,
@@ -620,6 +691,8 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     field.state = "empty";
     field.plantedAt = null;
     field.readyAt = null;
+    field.fertiliserStages = {};
+    field.fertiliserApplications = {};
     weather.clearCultivationWeather(field);
     await saveFarm(guildId, userId, farm);
     return {
@@ -652,6 +725,8 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     field.plantedAt = now;
     field.readyAt = now + crop.growthHours * 60 * 60 * 1000;
     field.cultivated = true;
+    field.fertiliserStages = {};
+    field.fertiliserApplications = {};
     const weatherState = await weather.ensureDailyWeatherState(guildId);
     weather.maybeApplyActiveEventToField(field, weatherState, now);
 
@@ -683,6 +758,8 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
       field.state = "growing";
       field.plantedAt = now;
       field.readyAt = now + (crop.regrowHours || crop.growthHours) * 60 * 60 * 1000;
+      field.fertiliserStages = {};
+      field.fertiliserApplications = {};
     } else {
       const leavesDebris =
         Math.random() < (crop.debrisChance ?? config.NON_REGROW_DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
@@ -692,11 +769,42 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
       field.plantedAt = null;
       field.readyAt = null;
       field.cultivated = !leavesDebris && !hasFieldDamage;
+      field.fertiliserStages = {};
+      field.fertiliserApplications = {};
     }
 
     await saveFarm(guildId, userId, farm);
     await recordFarmContractProgress(guildId, userId, "farm_crops_harvested", qty);
     return { ok: true, completedTask: taskKey, qty, cropName: crop.name };
+  }
+
+  if (taskKey === "fertilise") {
+    const fertiliser = getFertiliser(taskMeta.fertiliserId);
+    if (!fertiliser) return failAndSave("Unknown fertiliser.");
+    const stage = taskMeta.fertiliserStage || getFertiliserWindow(field);
+    if (!stage) return failAndSave("That fertilising window has closed.");
+    if (getFertiliserQty(farm, fertiliser.id) <= 0) return failAndSave("You do not have that fertiliser in stock.");
+
+    const inventory = getFarmFertiliserInventory(farm);
+    inventory[fertiliser.id] = Math.max(0, Number(inventory[fertiliser.id] || 0) - 1);
+    if (inventory[fertiliser.id] <= 0) delete inventory[fertiliser.id];
+
+    field.fertiliserStages = field.fertiliserStages || {};
+    field.fertiliserApplications = field.fertiliserApplications || {};
+    field.fertiliserStages[stage] = fertiliser.id;
+    field.fertiliserApplications[stage] = {
+      fertiliserId: fertiliser.id,
+      appliedAt: Date.now(),
+    };
+
+    const growthReduction = Number(fertiliser.growthReductionPct || 0);
+    if (growthReduction > 0 && field.plantedAt && field.readyAt) {
+      const totalMs = Math.max(0, Number(field.readyAt) - Number(field.plantedAt));
+      field.readyAt = Math.max(Date.now(), Number(field.readyAt) - Math.round(totalMs * growthReduction));
+    }
+
+    await saveFarm(guildId, userId, farm);
+    return { ok: true, completedTask: taskKey, fertiliserName: fertiliser.name, stage };
   }
 
   await saveFarm(guildId, userId, farm);
@@ -757,6 +865,13 @@ module.exports = {
   getUsablePlots,
   getTaskDurationMs,
   getScaledYieldRange,
+  listFertilisers,
+  getFertiliser,
+  getFertiliserQty,
+  buyFertiliser,
+  getFertiliserWindow,
+  getCropProgress,
+  getFertiliserYieldBonus,
   getLivestockTypes,
   getLivestockType,
   isBarn,

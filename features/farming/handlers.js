@@ -12,6 +12,7 @@ function isFarmingInteraction(actionId) {
   return (
     actionId === "enterprise:farming" ||
     actionId === "farm_market" ||
+    actionId === "farm_store" ||
     actionId === "farm_machines" ||
     actionId === "farm_back" ||
     actionId === "machine_home" ||
@@ -35,6 +36,8 @@ function isFarmingInteraction(actionId) {
     actionId.startsWith("farm_barn_demolish:") ||
     actionId.startsWith("farm_plant:") ||
     actionId.startsWith("farm_harvest:") ||
+    actionId.startsWith("farm_fertilise:") ||
+    actionId.startsWith("farm_store_fertiliser_buy:") ||
     actionId.startsWith("farm_sell:") ||
     actionId === "farm_buy"
   );
@@ -61,6 +64,12 @@ async function handleFarmingInteraction({
 
   if (actionId === "farm_market") {
     session.view = "farm_market";
+    await redraw();
+    return true;
+  }
+
+  if (actionId === "farm_store") {
+    session.view = "farm_store";
     await redraw();
     return true;
   }
@@ -240,6 +249,40 @@ async function handleFarmingInteraction({
     return true;
   }
 
+  if (actionId.startsWith("farm_store_fertiliser_buy:")) {
+    const fertiliserId = actionId.split(":")[1];
+    const farm = await farming.ensureFarm(guildId, userId);
+    const fertiliser = farming.getFertiliser(fertiliserId);
+    if (!fertiliser) {
+      await interaction.followUp({ content: "âŒ Unknown fertiliser.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+    const debit = await tryDebitBank(guildId, userId, fertiliser.price, "farming_fertiliser_purchase", {
+      enterprise: "farming",
+      action: "buy_fertiliser",
+      fertiliserId,
+    });
+    if (!debit.ok) {
+      await interaction.followUp({
+        content: `âŒ You need $${fertiliser.price.toLocaleString()} in your bank to buy ${fertiliser.name}.`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return true;
+    }
+    const result = await farming.buyFertiliser(guildId, userId, farm, fertiliserId, 1);
+    if (!result.ok) {
+      await creditBank(guildId, userId, fertiliser.price, "farming_fertiliser_refund", { fertiliserId });
+      await interaction.followUp({ content: `âŒ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+    await interaction.followUp({
+      content: `âœ… Bought 1x ${result.fertiliser.name}.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await redraw();
+    return true;
+  }
+
   if (actionId.startsWith("farm_cultivate:")) {
     const fieldIndex = Number(actionId.split(":")[1]);
     await startMachineBackedFieldTask({
@@ -295,6 +338,22 @@ async function handleFarmingInteraction({
       interaction,
       msg,
       successText: "🌾 Harvesting started.",
+    });
+    return true;
+  }
+
+  if (actionId.startsWith("farm_fertilise:")) {
+    const [, fieldIndexRaw, fertiliserId] = actionId.split(":");
+    const fieldIndex = Number(fieldIndexRaw);
+    await startMachineBackedFieldTask({
+      action: "fertilise",
+      fieldIndex,
+      guildId,
+      userId,
+      interaction,
+      msg,
+      extra: { fertiliserId },
+      successText: "ðŸ§ª Fertilising started.",
     });
     return true;
   }
@@ -622,7 +681,9 @@ async function startMachineBackedFieldTask({
   const farm = await farming.ensureFarm(guildId, userId);
   await weather.ensureDailyWeatherState(guildId);
   const field = farm.fields?.[fieldIndex];
-  const taskMs = farming.getTaskDurationMs(field, action, 60000);
+  const baseTaskMs = farming.getTaskDurationMs(field, action, 60000);
+  const speedMult = await machineEngine.getBestTaskSpeedMultiplier(guildId, userId, action);
+  const taskMs = Math.max(15000, Math.round(baseTaskMs * speedMult));
   const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, action, taskMs, extra);
 
   if (!result.ok) {

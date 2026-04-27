@@ -68,6 +68,59 @@ function buildFarmMarketComponents(items) {
   return rows;
 }
 
+function buildFarmStoreEmbed(farm) {
+  const fertiliserLines = farming.listFertilisers().map((fertiliser) => {
+    const qty = farming.getFertiliserQty(farm, fertiliser.id);
+    const growth = Math.round(Number(fertiliser.growthReductionPct || 0) * 100);
+    const yieldBonus = Math.round(Number(fertiliser.yieldBonusPct || 0) * 100);
+    const perks = [
+      growth > 0 ? `${growth}% faster growth` : null,
+      yieldBonus > 0 ? `${yieldBonus}% yield` : null,
+    ].filter(Boolean).join(", ");
+    return [
+      `**${fertiliser.name}** - ${ui.money(fertiliser.price)}`,
+      fertiliser.description,
+      `Owned: **${qty}**${perks ? ` - Perks: ${perks}` : ""}`,
+    ].join("\n");
+  });
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle("Farm Store")
+      .setDescription("Supplies for the farm. Fertiliser is currently stocked; more categories can be added here later.")
+      .addFields({
+        name: "Fertiliser",
+        value: fertiliserLines.join("\n\n"),
+      })
+      .setFooter({ text: "Fertiliser is optional. Apply during early growth or after 75% growth for the best boosts." }),
+    "job"
+  );
+}
+
+function buildFarmStoreComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("farm_store_fertiliser_select")
+        .setPlaceholder("Buy fertiliser...")
+        .addOptions(
+          farming.listFertilisers().map((fertiliser) => ({
+            label: fertiliser.name,
+            value: `farm_store_fertiliser_buy:${fertiliser.id}`,
+            description: `$${Number(fertiliser.price || 0).toLocaleString()} - ${fertiliser.description}`.slice(0, 100),
+          }))
+        )
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_back")
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
+    ),
+  ];
+}
+
 function buildMachineShedHomeEmbed() {
   return ui.applySystemStyle(
     new EmbedBuilder().setTitle("🚜 Machine Shed").setDescription(
@@ -269,6 +322,7 @@ function buildFarmingComponents(farm) {
 
   actionButtons.push(
     new ButtonBuilder().setCustomId("farm_market").setLabel("💰 Market").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("farm_store").setLabel("Store").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("farm_machines").setLabel("🚜 Machine Shed").setStyle(ButtonStyle.Primary)
   );
 
@@ -576,6 +630,8 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   const totalPlots = farming.getTotalPlots(field);
   const usablePlots = farming.getUsablePlots(field);
   const yieldRange = crop ? farming.getScaledYieldRange(crop, field) : null;
+  const fertiliserWindow = farming.getFertiliserWindow(field);
+  const yieldBonus = Math.round(farming.getFertiliserYieldBonus(field) * 100);
   const weatherLines = [];
   if (field.cropWeatherEffect?.label) weatherLines.push(`🌦️ **Crop Effect:** ${field.cropWeatherEffect.label}`);
   if (field.fieldCondition?.label) weatherLines.push(`🧱 **Field Condition:** ${field.fieldCondition.label}`);
@@ -593,6 +649,8 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
         `📌 **Status:** ${stateText}`,
         `🌿 **Crop:** ${cropName}`,
         yieldRange ? `📦 **Yield Range:** ${yieldRange[0]}-${yieldRange[1]}` : "",
+        yieldBonus > 0 ? `Fertiliser yield bonus: **+${yieldBonus}%**` : "",
+        fertiliserWindow ? `Fertiliser window: **${fertiliserWindow === "early" ? "Early growth" : "Late growth"}**` : "",
         `🪴 **Condition:** ${cultivatedLine}`,
         `🍂 **Season:** ${farming.getCurrentSeason(guildId)}`,
         `🚜 **Machine Need:** ${machineHint}`,
@@ -704,6 +762,28 @@ function buildFieldComponents(farm, fieldIndex, guildId = null) {
           .setCustomId(`farm_harvest:${fieldIndex}`)
           .setLabel("🌾 Harvest")
           .setStyle(ButtonStyle.Success)
+      )
+    );
+  }
+
+  const activeFertiliserWindow = farming.getFertiliserWindow(field);
+  const fertiliserOptions = farming
+    .listFertilisers()
+    .filter((fertiliser) => farming.getFertiliserQty(farm, fertiliser.id) > 0);
+
+  if (activeFertiliserWindow && fertiliserOptions.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`farm_fertilise_select:${fieldIndex}`)
+          .setPlaceholder(`Apply fertiliser (${activeFertiliserWindow} window)...`)
+          .addOptions(
+            fertiliserOptions.map((fertiliser) => ({
+              label: `${fertiliser.name} (${farming.getFertiliserQty(farm, fertiliser.id)})`,
+              value: `farm_fertilise:${fieldIndex}:${fertiliser.id}`,
+              description: fertiliser.description.slice(0, 100),
+            }))
+          )
       )
     );
   }
@@ -833,6 +913,8 @@ function buildBarnComponents(farm, fieldIndex) {
 module.exports = {
   buildFarmMarketEmbed,
   buildFarmMarketComponents,
+  buildFarmStoreEmbed,
+  buildFarmStoreComponents,
   buildMachineShedHomeEmbed,
   buildMachineShedHomeComponents,
   buildMachineActionEmbed,

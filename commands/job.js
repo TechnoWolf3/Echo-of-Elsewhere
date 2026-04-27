@@ -737,6 +737,14 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }).catch(() => {});
       }
 
+      if (session.view === "farm_store") {
+        const farm = await farming.ensureFarm(guildId, userId);
+        return msg.edit({
+          embeds: [farmingUi.buildFarmStoreEmbed(farm)],
+          components: farmingUi.buildFarmStoreComponents(farm),
+        }).catch(() => {});
+      }
+
       if (session.view === "farm_machines") {
         if (session.machinePage === "home") {
           return msg.edit({
