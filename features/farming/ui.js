@@ -68,7 +68,40 @@ function buildFarmMarketComponents(items) {
   return rows;
 }
 
-function buildFarmStoreEmbed(farm) {
+function buildFarmStoreHomeEmbed() {
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle("Farm Store")
+      .setDescription(
+        [
+          "Buy supplies for the farm.",
+          "",
+          "**Fertiliser** - Optional crop boosts for growth speed and yield.",
+        ].join("\n")
+      ),
+    "job"
+  );
+}
+
+function buildFarmStoreHomeComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_store_fertiliser")
+        .setLabel("Fertiliser")
+        .setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_back")
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
+    ),
+  ];
+}
+
+function buildFarmStoreFertiliserEmbed(farm) {
   const fertiliserLines = farming.listFertilisers().map((fertiliser) => {
     const qty = farming.getFertiliserQty(farm, fertiliser.id);
     const growth = Math.round(Number(fertiliser.growthReductionPct || 0) * 100);
@@ -86,10 +119,10 @@ function buildFarmStoreEmbed(farm) {
 
   return ui.applySystemStyle(
     new EmbedBuilder()
-      .setTitle("Farm Store")
-      .setDescription("Supplies for the farm. Fertiliser is currently stocked; more categories can be added here later.")
+      .setTitle("Farm Store - Fertiliser")
+      .setDescription("Choose a fertiliser, then enter the quantity to buy.")
       .addFields({
-        name: "Fertiliser",
+        name: "Stock",
         value: fertiliserLines.join("\n\n"),
       })
       .setFooter({ text: "Fertiliser is optional. Apply during early growth or after 75% growth for the best boosts." }),
@@ -97,12 +130,12 @@ function buildFarmStoreEmbed(farm) {
   );
 }
 
-function buildFarmStoreComponents() {
+function buildFarmStoreFertiliserComponents() {
   return [
     new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId("farm_store_fertiliser_select")
-        .setPlaceholder("Buy fertiliser...")
+        .setPlaceholder("Choose fertiliser to buy...")
         .addOptions(
           farming.listFertilisers().map((fertiliser) => ({
             label: fertiliser.name,
@@ -113,7 +146,7 @@ function buildFarmStoreComponents() {
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
-        .setCustomId("farm_back")
+        .setCustomId("farm_store_home")
         .setLabel(ui.nav.back.label)
         .setEmoji(ui.nav.back.emoji)
         .setStyle(ui.nav.back.style)
@@ -796,8 +829,8 @@ function buildFieldComponents(farm, fieldIndex, guildId = null) {
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(true),
           new ButtonBuilder()
-            .setCustomId("farm_store")
-            .setLabel("Open Store")
+            .setCustomId("farm_store_fertiliser")
+            .setLabel("Buy Fertiliser")
             .setStyle(ButtonStyle.Primary)
         )
       );
@@ -929,8 +962,10 @@ function buildBarnComponents(farm, fieldIndex) {
 module.exports = {
   buildFarmMarketEmbed,
   buildFarmMarketComponents,
-  buildFarmStoreEmbed,
-  buildFarmStoreComponents,
+  buildFarmStoreHomeEmbed,
+  buildFarmStoreHomeComponents,
+  buildFarmStoreFertiliserEmbed,
+  buildFarmStoreFertiliserComponents,
   buildMachineShedHomeEmbed,
   buildMachineShedHomeComponents,
   buildMachineActionEmbed,

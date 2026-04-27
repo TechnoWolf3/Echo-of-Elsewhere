@@ -87,6 +87,7 @@ Main schema setup in `index.js`:
   - `user_balances`
   - `transactions`
   - `cooldowns`
+  - `bank_recurring_deposits`
   - `robbery_protection`
   - `casino_security_state`
   - `patch_boards`
@@ -138,9 +139,18 @@ Money movement should go through `utils/economy.js` where possible:
 
 - Core utility: `utils/economy.js`
 - Bank hub: `commands/bank.js`
+- Recurring bank deposits: `utils/bankRecurringDeposits.js`
 - Shop command: `commands/shop.js`
 - Store backend: `utils/store.js`
 - Inventory helper: `utils/inventoryHelpers.js`
+
+Bank specifics:
+
+- `/bank` deposit modals include an optional `Recurring daily? yes/no` field. Blank input defaults to no recurring schedule.
+- Entering `yes`, `y`, or `daily` after a successful deposit creates or updates a daily wallet-to-bank auto-deposit for that same amount. Entering `stop`, `cancel`, `off`, or `disable` disables it.
+- Recurring deposits are stored in `bank_recurring_deposits`; schema setup and scheduler startup happen from `index.js`.
+- The scheduler runs roughly every 10 minutes, processes due rows, and silently skips when the wallet lacks funds. Three consecutive failed transfers disable the recurring deposit.
+- Recurring deposit movement writes a zero-amount `bank_deposit` transaction with `recurring: true`, `from: "wallet"`, and `to: "bank"` metadata.
 
 ### Jobs
 
@@ -205,15 +215,25 @@ Farming specifics:
 
 - Farm state is stored as JSON in `farms.data`.
 - Machine state is stored separately as JSON in `farm_machines.data`.
+- Fertiliser stock is stored inside the farm JSON as `farm.fertilisers`.
 - Harvested crops are inserted as produce items in `store_items` and quantities in `user_inventory`.
 - Crop selling is handled by `utils/farming/market.js`.
+- Fertiliser definitions live in `data/farming/fertilisers.js`; crops, machines, livestock, weather, and market tuning live in sibling `data/farming/*` files.
 - Farming embeds, buttons, field pages, market pages, and machine shed pages are built in `features/farming/ui.js`.
 - Farming button/select behaviour is handled in `features/farming/handlers.js`.
 - `/job` should mainly route to farming helpers and redraw the current farming view.
 - The farming home screen must stay under Discord's 5 component row limit. Field buttons are grouped into rows of up to 5.
 - Field tasks should be validated before machinery is reserved. If machinery cannot be reserved after a valid task is started, clear the field task so equipment/fields do not get stuck.
+- Machine purchase uses bank funds through `tryDebitBank`; rentals still follow the existing rental payment path.
+- Machine task speed comes from the best compatible owned/rented machine set. `machineEngine.getBestTaskSpeedMultiplier()` is applied when starting machine-backed field tasks, with a minimum task duration guard.
 - Machine rentals last 24 hours and are stored as leases in `farm_machines.data.rented`.
 - Machine selling pays 60% of the buy price and only allows free owned machines to be sold. Machines busy in active field tasks are protected.
+- Farm Store is a category hub like Machine Shed. Fertiliser is currently its first stocked category; avoid renaming the page to a fertiliser-only shop.
+- Fertiliser can be applied only while a crop is actively growing in the first 10% of the current growth/regrow cycle or from 75% to before ready. It is optional and not applying it should not penalize the crop.
+- Regrowing crops reset fertiliser stage/application data after harvest, so each regrow cycle can be fertilised again in its own early/late windows.
+- Fertiliser purchases use a select-to-modal flow: choose the fertiliser under the Store's Fertiliser category, then enter the quantity to buy. Purchase debits the bank once for `price * qty`.
+- Field views show the current fertiliser window in the embed. During an active window, the controls show either an apply dropdown for owned fertiliser or a `Buy Fertiliser` route when the player has none.
+- Fertiliser effects are recorded per stage in `field.fertiliserApplications`: growth mixes shorten the current `readyAt`, yield mixes increase the harvest roll through `getScaledYieldRange()`.
 - Barns are represented as farm fields with `kind: "barn"` and livestock metadata from `data/farming/livestock.js`.
 - Barn actions are handled by `farm_barn_collect:*`, `farm_barn_slaughter:*`, `farm_barn_restock:*`, `farm_barn_upgrade:*`, and `farm_barn_demolish:*` in `features/farming/handlers.js`.
 - Barn produce and slaughter outputs are inserted into `store_items`/`user_inventory` through `addFarmItemToInventory()`. That path now validates `item.itemId || item.id` before writing so missing livestock output IDs fail loudly instead of producing confusing DB errors.
@@ -252,6 +272,18 @@ Underworld specifics:
 - Unlock engine: `utils/achievementEngine.js`
 - Progress counters: `utils/achievementProgress.js`
 - Message achievement increments happen in `index.js` on `MessageCreate`.
+
+### Rituals
+
+- Hub command: `commands/rituals.js`
+- Ritual registry: `data/rituals/index.js`
+- Echo Arrangement / Echo Seating lives in `data/rituals/echoArrangement.js`, with scenario/name/clue text pools in `data/rituals/echoArrangementScenarios.js`.
+- Echo Seating is a daily public ritual using the `echo_arrangement` cooldown key. It creates a per-user session with 5-10 seats and mistake limits of 2 for 5 seats, 3 for 6-7 seats, and 4 for 8-10 seats.
+- Puzzle generation creates the hidden answer first, generates clues from that answer, and checks uniqueness with a small solver before showing the puzzle. If a generated puzzle is weak or ambiguous, it retries.
+- Answer input is modal-based and accepts comma-separated names, plus space-separated names when unambiguous. Invalid formatting does not spend a mistake.
+- Wrong answers spend one mistake and only reveal limited feedback, currently correct-position count. Final reveal happens only when solved, when mistakes run out, or when the player gives up.
+- Final Echo Seating reveal mirrors Veil Sequence: `Your Order` appears directly above `Correct Order` for comparison. Give-up without any submitted answer shows `No answer submitted.`
+- Successful Echo Seating rewards go through `creditUserWithEffects` with source/type `echo_arrangement`; payout scales by seat count, has a perfect-solve bonus, and is reduced by mistakes used.
 
 ### Scheduled Systems
 

@@ -739,9 +739,17 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "farm_store") {
         const farm = await farming.ensureFarm(guildId, userId);
+        const storePage = session.farmStorePage || "home";
         return msg.edit({
-          embeds: [farmingUi.buildFarmStoreEmbed(farm)],
-          components: farmingUi.buildFarmStoreComponents(farm),
+          embeds: [
+            storePage === "fertiliser"
+              ? farmingUi.buildFarmStoreFertiliserEmbed(farm)
+              : farmingUi.buildFarmStoreHomeEmbed(farm),
+          ],
+          components:
+            storePage === "fertiliser"
+              ? farmingUi.buildFarmStoreFertiliserComponents(farm)
+              : farmingUi.buildFarmStoreHomeComponents(farm),
         }).catch(() => {});
       }
 
@@ -872,11 +880,23 @@ function scheduleReturnToCategory(delayMs = 5000) {
         // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
         const isClerkRuntime = actionId.startsWith("grind_clerk:");
         const isTaxiRuntime = actionId.startsWith("grind_taxi:");
-        if (isClerkRuntime || isTaxiRuntime) {
+        const isFarmingModalRuntime = actionId.startsWith("farm_store_fertiliser_buy:");
+        if (isClerkRuntime || isTaxiRuntime || isFarmingModalRuntime) {
           resetInactivity();
           cancelAutoReturn();
-          // keep the /job board alive while the grind module runs
-          return;            // modal safety: the grind module will handle/ack as needed
+          if (isFarmingModalRuntime) {
+            await handleFarmingInteraction({
+              actionId,
+              interaction: btn,
+              session,
+              msg,
+              pool,
+              guildId,
+              userId,
+              redraw,
+            });
+          }
+          return;            // modal safety: the feature module will handle/ack as needed
         }
 
         await ensureAck(btn);

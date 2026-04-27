@@ -1,4 +1,10 @@
-const { MessageFlags } = require("discord.js");
+const {
+  ActionRowBuilder,
+  MessageFlags,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+} = require("discord.js");
 
 const config = require("../../data/farming/config");
 const farming = require("../../utils/farming/engine");
@@ -13,6 +19,8 @@ function isFarmingInteraction(actionId) {
     actionId === "enterprise:farming" ||
     actionId === "farm_market" ||
     actionId === "farm_store" ||
+    actionId === "farm_store_home" ||
+    actionId === "farm_store_fertiliser" ||
     actionId === "farm_machines" ||
     actionId === "farm_back" ||
     actionId === "machine_home" ||
@@ -70,6 +78,21 @@ async function handleFarmingInteraction({
 
   if (actionId === "farm_store") {
     session.view = "farm_store";
+    session.farmStorePage = "home";
+    await redraw();
+    return true;
+  }
+
+  if (actionId === "farm_store_home") {
+    session.view = "farm_store";
+    session.farmStorePage = "home";
+    await redraw();
+    return true;
+  }
+
+  if (actionId === "farm_store_fertiliser") {
+    session.view = "farm_store";
+    session.farmStorePage = "fertiliser";
     await redraw();
     return true;
   }
@@ -122,6 +145,7 @@ async function handleFarmingInteraction({
   if (actionId === "farm_back") {
     session.view = "farming";
     session.fieldIndex = null;
+    session.farmStorePage = null;
     await redraw();
     return true;
   }
@@ -257,28 +281,60 @@ async function handleFarmingInteraction({
       await interaction.followUp({ content: "Unknown fertiliser.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
-    const debit = await tryDebitBank(guildId, userId, fertiliser.price, "farming_fertiliser_purchase", {
+
+    const modal = new ModalBuilder()
+      .setCustomId(`farm_store_fertiliser_qty:${fertiliserId}:${interaction.id}`)
+      .setTitle(`Buy ${fertiliser.name}`)
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("qty")
+            .setLabel("Quantity")
+            .setPlaceholder("Example: 5")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
+
+    await interaction.showModal(modal);
+    const submitted = await interaction.awaitModalSubmit({
+      time: 60_000,
+      filter: (modalInteraction) =>
+        modalInteraction.user.id === userId &&
+        modalInteraction.customId === `farm_store_fertiliser_qty:${fertiliserId}:${interaction.id}`,
+    }).catch(() => null);
+
+    if (!submitted) return true;
+    await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
+    const qty = Math.floor(Number(submitted.fields.getTextInputValue("qty")));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      await submitted.editReply("Enter a whole number greater than 0.").catch(() => {});
+      return true;
+    }
+    if (qty > 999) {
+      await submitted.editReply("Buy 999 or fewer at a time.").catch(() => {});
+      return true;
+    }
+
+    const totalCost = Number(fertiliser.price || 0) * qty;
+    const debit = await tryDebitBank(guildId, userId, totalCost, "farming_fertiliser_purchase", {
       enterprise: "farming",
       action: "buy_fertiliser",
       fertiliserId,
+      qty,
     });
     if (!debit.ok) {
-      await interaction.followUp({
-        content: `You need $${fertiliser.price.toLocaleString()} in your bank to buy ${fertiliser.name}.`,
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {});
+      await submitted.editReply(`You need $${totalCost.toLocaleString()} in your bank to buy ${qty}x ${fertiliser.name}.`).catch(() => {});
       return true;
     }
-    const result = await farming.buyFertiliser(guildId, userId, farm, fertiliserId, 1);
+    const result = await farming.buyFertiliser(guildId, userId, farm, fertiliserId, qty);
     if (!result.ok) {
-      await creditBank(guildId, userId, fertiliser.price, "farming_fertiliser_refund", { fertiliserId });
-      await interaction.followUp({ content: result.reasonText, flags: MessageFlags.Ephemeral }).catch(() => {});
+      await creditBank(guildId, userId, totalCost, "farming_fertiliser_refund", { fertiliserId, qty });
+      await submitted.editReply(result.reasonText).catch(() => {});
       return true;
     }
-    await interaction.followUp({
-      content: `Bought 1x ${result.fertiliser.name}.`,
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
+    await submitted.editReply(`Bought ${qty}x ${result.fertiliser.name} for $${totalCost.toLocaleString()}.`).catch(() => {});
     await redraw();
     return true;
   }
