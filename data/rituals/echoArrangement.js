@@ -339,7 +339,17 @@ function buildEmbed(session, latest = null, reveal = false) {
     );
 
   if (latest) embed.addFields({ name: "Latest Echo", value: String(latest).slice(0, 1024) });
-  if (reveal) embed.addFields({ name: "Correct Order", value: `\`${session.answer.join(", ")}\`` });
+  if (reveal) {
+    embed.addFields(
+      {
+        name: "Your Order",
+        value: session.lastSubmittedOrder?.length
+          ? `\`${session.lastSubmittedOrder.join(", ")}\``
+          : "No answer submitted.",
+      },
+      { name: "Correct Order", value: `\`${session.answer.join(", ")}\`` }
+    );
+  }
   ui.applySystemStyle(embed, "rituals");
   return embed;
 }
@@ -598,6 +608,8 @@ module.exports = {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
     const solved = parsed.order.join("|") === session.answer.join("|");
+    session.lastSubmittedOrder = parsed.order;
+    setSession(session);
     if (solved) {
       await finishSession(session, interaction, { solved: true });
       await interaction.deleteReply().catch(() => {});
