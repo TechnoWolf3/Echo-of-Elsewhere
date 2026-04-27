@@ -3,6 +3,8 @@ const { MessageFlags } = require("discord.js");
 const startStoreRobbery = require("../../data/work/categories/crime/storeRobbery");
 const startHeist = require("../../data/work/categories/crime/heist");
 const startScamCall = require("../../data/work/categories/crime/scamCall");
+const startBribeOfficer = require("../../data/work/categories/crime/bribeOfficer");
+const startLayLow = require("../../data/work/categories/crime/layLow");
 const {
   getCrimeHeat,
   setCrimeHeat,
@@ -42,7 +44,6 @@ async function handleCrimeInteraction({
     await startStoreRobbery(boardAdapter, {
       lingeringHeat,
       onStoreRobberyComplete: async ({ outcome, finalHeat, identified }) => {
-        if (!finalHeat || finalHeat <= 0) return;
         const ttlMins = heatTTLMinutesForOutcome(outcome, { identified });
         await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
       },
@@ -61,7 +62,6 @@ async function handleCrimeInteraction({
     await startScamCall(boardAdapter, {
       lingeringHeat,
       onScamCallComplete: async ({ outcome, finalHeat, identified }) => {
-        if (!finalHeat || finalHeat <= 0) return;
         const ttlMins = heatTTLMinutesForOutcome(outcome, { identified });
         await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
       },
@@ -80,6 +80,24 @@ async function handleCrimeInteraction({
   if (key === "major") {
     if (await checkCrimeCooldownOrTell({ interaction, pool, guildId, userId, jobKey: CRIME_KEYS.major, jobLabel: "Major Heist" })) return true;
     await startHeistRun({ mode: "major", guildId, userId, session, boardAdapter, redraw, resetInactivity });
+    return true;
+  }
+
+  if (key === "bribe") {
+    if (await checkCrimeCooldownOrTell({ interaction, pool, guildId, userId, jobKey: CRIME_KEYS.bribe, jobLabel: "Bribe The Officer", skipGlobal: true })) return true;
+    const lingeringHeat = await getCrimeHeat(guildId, userId);
+    session.view = "crime_run";
+    await startBribeOfficer(boardAdapter, { lingeringHeat });
+    await returnToCrime({ session, redraw, resetInactivity });
+    return true;
+  }
+
+  if (key === "laylow") {
+    if (await checkCrimeCooldownOrTell({ interaction, pool, guildId, userId, jobKey: CRIME_KEYS.layLow, jobLabel: "Lay Low", skipGlobal: true })) return true;
+    const lingeringHeat = await getCrimeHeat(guildId, userId);
+    session.view = "crime_run";
+    await startLayLow(boardAdapter, { lingeringHeat });
+    await returnToCrime({ session, redraw, resetInactivity });
     return true;
   }
 
@@ -117,7 +135,6 @@ async function startHeistRun({
     mode,
     lingeringHeat,
     onHeistComplete: async ({ outcome, finalHeat, identified, mode: completedMode }) => {
-      if (!finalHeat || finalHeat <= 0) return;
       const ttlMins = heatTTLMinutesForHeistOutcome(outcome, {
         identified,
         mode: completedMode,
@@ -136,11 +153,12 @@ async function checkCrimeCooldownOrTell({
   userId,
   jobKey,
   jobLabel,
+  skipGlobal = false,
 }) {
   const now = new Date();
 
-  const globalNext = await getCooldown(pool, guildId, userId, CRIME_GLOBAL_KEY);
-  if (globalNext && now < globalNext) {
+  const globalNext = skipGlobal ? null : await getCooldown(pool, guildId, userId, CRIME_GLOBAL_KEY);
+  if (!skipGlobal && globalNext && now < globalNext) {
     await interaction
       .followUp({
         content: `⏳ Crime lockout active. Try again <t:${toUnix(globalNext)}:R>.`,

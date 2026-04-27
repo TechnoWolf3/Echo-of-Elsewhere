@@ -4,9 +4,6 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
   MessageFlags,
 } = require("discord.js");
 
@@ -79,7 +76,7 @@ function makeScenario(streak) {
       tier: 0,
       text: "Customer taps their **debit card**. No change needed — you’re off the hook!",
       changeCents: 0,
-      basePayout: 40,
+      basePayout: 350,
     };
   }
 
@@ -123,9 +120,25 @@ function makeScenario(streak) {
   if (coupon) text += `They use a **$${centsToString(coupon)} coupon**.\n`;
   text += `They hand you **$${centsToString(paid)}**.\n**What change do you give?**`;
 
-  const basePayout = [0, 45, 55, 70, 85, 100][tier] || 60;
+  const basePayout = randInt(350, 600);
 
   return { tier, text, changeCents: change, basePayout };
+}
+
+function makeAnswerOptions(changeCents) {
+  if (changeCents === 0) return [0, 100, 200, 500].sort(() => Math.random() - 0.5);
+
+  const options = new Set([changeCents]);
+  const deltas = [-1000, -500, -200, -100, 100, 200, 500, 1000].sort(() => Math.random() - 0.5);
+  for (const delta of deltas) {
+    if (options.size >= 4) break;
+    const candidate = changeCents + delta;
+    if (candidate >= 0) options.add(candidate);
+  }
+  while (options.size < 4) {
+    options.add(Math.max(0, changeCents + randInt(-20, 20) * 50));
+  }
+  return Array.from(options).sort(() => Math.random() - 0.5);
 }
 
 // (mintUser imported from _shared)
@@ -225,18 +238,24 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
   let lastTick = { fatigueMs: 0, exhausted: false };
 
   let scenario = makeScenario(streak);
+  let answerOptions = makeAnswerOptions(scenario.changeCents);
 
-  const enterBtn = new ButtonBuilder().setCustomId("grind_clerk:enter").setLabel("Enter change").setStyle(ButtonStyle.Success);
   const endBtn = new ButtonBuilder().setCustomId("grind_clerk:end").setLabel("End shift").setStyle(ButtonStyle.Danger);
   const pushBtn = new ButtonBuilder().setCustomId("grind_clerk:push").setLabel("Push on").setStyle(ButtonStyle.Secondary);
 
-  function actionRow({ disabled = false, showPush = false, disableEnter = false } = {}) {
-    const row = new ActionRowBuilder().addComponents(
-      enterBtn.setDisabled(disabled || disableEnter),
-      endBtn.setDisabled(disabled)
+  function actionRows({ disabled = false, showPush = false, disableAnswers = false } = {}) {
+    const answerRow = new ActionRowBuilder().addComponents(
+      answerOptions.map((cents) =>
+        new ButtonBuilder()
+          .setCustomId(`grind_clerk:answer:${cents}`)
+          .setLabel(cents === 0 ? "No change" : `$${centsToString(cents)}`)
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(disabled || disableAnswers)
+      )
     );
-    if (showPush) row.addComponents(pushBtn.setDisabled(disabled));
-    return row;
+    const controlRow = new ActionRowBuilder().addComponents(endBtn.setDisabled(disabled));
+    if (showPush) controlRow.addComponents(pushBtn.setDisabled(disabled));
+    return [answerRow, controlRow];
   }
 
   async function buildEmbed(extraLine = "") {
@@ -284,7 +303,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
   // Swap board into “run mode”
   await boardMsg.edit({
     embeds: [await buildEmbed()],
-    components: [actionRow({ disabled: false, showPush: false, disableEnter: false })],
+    components: actionRows({ disabled: false, showPush: false, disableAnswers: false }),
   }).catch(() => {});
 
   const collector = boardMsg.createMessageComponentCollector({ time: 5 * 60_000 });
@@ -336,6 +355,7 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
     }
 
     scenario = makeScenario(streak);
+    answerOptions = makeAnswerOptions(scenario.changeCents);
 
     const emb = await buildEmbed(feedbackLine);
     if (!active) {
@@ -343,8 +363,8 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
     }
 
     const showPush = !!(lastTick?.exhausted && !overtime);
-    const disableEnter = showPush; // force decision at 100%
-    await boardMsg.edit({ embeds: [emb], components: [actionRow({ disabled: false, showPush, disableEnter })] }).catch(() => {});
+    const disableAnswers = showPush; // force decision at 100%
+    await boardMsg.edit({ embeds: [emb], components: actionRows({ disabled: false, showPush, disableAnswers }) }).catch(() => {});
   }
 
   collector.on("collect", async (i) => {
@@ -361,47 +381,18 @@ module.exports = function startStoreClerk(btn, { pool, boardMsg, guildId, userId
       await i.deferUpdate().catch(() => {});
       overtime = true;
       const emb = await buildEmbed("🔥 Overtime mode: faster mistakes, bigger risks.");
-      await boardMsg.edit({ embeds: [emb], components: [actionRow({ disabled: false, showPush: false, disableEnter: false })] }).catch(() => {});
+      await boardMsg.edit({ embeds: [emb], components: actionRows({ disabled: false, showPush: false, disableAnswers: false }) }).catch(() => {});
       return;
     }
 
-    if (i.customId === "grind_clerk:enter") {
-      // ✅ DO NOT deferUpdate before showModal
-      const modalId = `grind_clerk_modal:${Date.now()}`;
-      const modal = new ModalBuilder().setCustomId(modalId).setTitle("Enter Change");
-
-      const input = new TextInputBuilder()
-        .setCustomId("change")
-        .setLabel("Change amount (e.g. 12.50 or 12)")
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      modal.addComponents(new ActionRowBuilder().addComponents(input));
-      await i.showModal(modal);
-
-      const submitted = await i.awaitModalSubmit({
-        time: 30_000,
-        filter: (m) => m.user.id === userId && m.customId === modalId,
-      }).catch(() => null);
-
-      if (!submitted) return;
-
-      await submitted.deferUpdate().catch(() => {});
-if (scenario.tier === 0) {return nextScenario(true, "✅ Debit card — no change needed.");
-      }
-
-      const entered = parseMoneyToCents(submitted.fields.getTextInputValue("change"));
-      if (entered == null) {
-        await boardMsg.edit({ embeds: [await buildEmbed("❌ Invalid format. Use `12` or `12.50`.")], components: [actionRow(false)] }).catch(() => {});
-        return;
-      }
+    if (i.customId.startsWith("grind_clerk:answer:")) {
+      await i.deferUpdate().catch(() => {});
+      const entered = Number(i.customId.split(":")[2]);
 
       if (entered === scenario.changeCents) {
-        await submitted.editReply(`✅ Correct! Change is **$${centsToString(scenario.changeCents)}**.`).catch(() => {});
         return nextScenario(true, `✅ Correct! Change: $${centsToString(scenario.changeCents)}`);
       }
 
-      await submitted.editReply(`❌ Wrong. Correct was **$${centsToString(scenario.changeCents)}**. Streak reset.`).catch(() => {});
       return nextScenario(false, `❌ Wrong. Correct: $${centsToString(scenario.changeCents)} (streak reset)`);
     }
   });

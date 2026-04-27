@@ -12,9 +12,9 @@ const { renderProgressBar } = require("../../../../utils/progressBar");
 const SCENARIOS = require("./taxiDriver.scenarios");
 
 const JOB_COOLDOWN_SECONDS = 45;
-const SHIFT_TTL_MS = 7 * 60_000;
+const SHIFT_TTL_MS = 12 * 60_000;
 const OVERTIME_HARDCAP_MULT = 1.5;
-const SHIFT_TARGET = 5;
+const SHIFT_TARGET = 10;
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -57,9 +57,9 @@ function buildPassenger(type) {
   const route = Array.from({ length: routeLen }, () => pick(["Left", "Right", "Straight"]));
 
   const baseByType = {
-    easy: { min: 1000, max: 3000 },
-    vip: { min: 6000, max: 15000 },
-    sketchy: { min: 1800, max: 5200 },
+    easy: { min: 1660, max: 5000 },
+    vip: { min: 4000, max: 10000 },
+    sketchy: { min: 3000, max: 8600 },
   };
 
   const range = baseByType[type] || baseByType.easy;
@@ -209,9 +209,13 @@ module.exports = function startTaxiDriver(btn, { pool, boardMsg, guildId, userId
 
     async function buildEmbed(extraFeedback = "") {
       const tick = await tickFatigue(db, guildId, userId);
-      lastTick = tick;
-      const fb = fatigueBar(tick.fatigueMs || 0);
-      const exhaustedLine = tick.exhausted && !overtime
+      if (!tick.locked) {
+        lastTick = await tickFatigue(db, guildId, userId);
+      } else {
+        lastTick = tick;
+      }
+      const fb = fatigueBar(lastTick.fatigueMs || 0);
+      const exhaustedLine = lastTick.exhausted && !overtime
         ? "⚠️ You’ve hit **100% fatigue**. Cash out and recover — or **Push on** if you want to risk a collapse."
         : overtime
           ? "🌙 Overtime: you are driving on fumes now."

@@ -19,8 +19,8 @@ const MIN_STEPS = 3;
 const MAX_STEPS = 5;
 
 // Cooldowns (minutes)
-const GLOBAL_LOCKOUT_MINUTES = 10;
-const STORE_COOLDOWN_MINUTES = 10;
+const GLOBAL_LOCKOUT_MINUTES = 15;
+const STORE_COOLDOWN_MINUTES = 15;
 
 // Heat tiers => outcomes
 const HEAT_TIERS = {
@@ -32,8 +32,8 @@ const HEAT_TIERS = {
 };
 
 // Payouts / fines
-const PAYOUT_MIN = 2000;
-const PAYOUT_MAX = 6000;
+const PAYOUT_MIN = 9000;
+const PAYOUT_MAX = 18000;
 
 const FINE_MIN = 3000;
 const FINE_MAX = 8000;

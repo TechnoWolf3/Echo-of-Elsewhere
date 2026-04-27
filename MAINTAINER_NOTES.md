@@ -160,6 +160,47 @@ Money movement should go through `utils/economy.js` where possible:
 - Crime heat: `utils/crimeHeat.js`
 - Grind fatigue: `utils/grindFatigue.js`
 
+Crime specifics:
+
+- Crime menu rendering is in `features/crime/ui.js`; action routing is in `features/crime/handlers.js`; cooldown keys live in `features/crime/constants.js`.
+- Crime heat is persisted in `crime_heat` and decays on read through `utils/crimeHeat.js`. `setCrimeHeat()` now deletes the heat row when the new heat value is `0`, so clean outcomes and heat-management tools can fully clear heat.
+- Store Robbery is tuned to a 15 minute job cooldown/global crime lockout and pays `$9,000-$18,000`.
+- Scam Call is tuned to a 45 minute job cooldown, 15 minute global crime lockout, 25% lower payout bands, and weaker base/option effectiveness for `average_person` and `elderly_victim`.
+- Heist cooldowns remain 12 hours/24 hours for standard/major, with payout bands increased by 33%. Their global crime lockout is 15 minutes.
+- `Bribe Officer` lives in `data/work/categories/crime/bribeOfficer.js`. It bypasses the global crime lockout, uses its own 30 minute cooldown (`crime_bribe_officer`), debits wallet money, and can lower heat, raise heat on failure, or rarely jail on a failed bribe.
+- `Lay Low` lives in `data/work/categories/crime/layLow.js`. It bypasses the global crime lockout, uses its own 30 minute cooldown (`crime_lay_low`), runs four decisions, and applies the final score as heat reduction or heat gain. Higher starting heat makes the generated decision set harsher.
+- Heat-management activities intentionally bypass `crime_global`; otherwise players could not reduce heat during the downtime created by crime jobs.
+
+Grind specifics:
+
+- Grind routing starts in `features/grind/handlers.js`, with individual sessions in `data/work/categories/grind/*`.
+- Shared fatigue is stored in `grind_fatigue` and managed by `utils/grindFatigue.js`. Taxi Driver intentionally ticks fatigue twice per render, making the 10-fare shift land close to full fatigue.
+- Store Clerk now uses four selectable answer buttons instead of a modal/manual input. Correct answers pay `$350-$600` before streak/item bonuses.
+- Warehousing base pay now rolls `$250-$550` per correct action; rare/special order multipliers still apply on top.
+- Fishing base fish/junk values were multiplied by 9 total (an 800% increase).
+- Quarry base find values were increased by 25%.
+- Taxi Driver now runs 10 fares per shift, with normal/sketchy fares buffed and VIP fares reduced. Shift timeout was extended to 12 minutes to support the longer run.
+
+Night Walker specifics:
+
+- Night Walker menu rendering is in `features/nightWalker/ui.js`; interaction routing and choice resolution are in `features/nightWalker/handlers.js`.
+- Job definitions and scenario data are loaded from `data/work/categories/nightwalker/index.js` and the sibling Night Walker data files.
+- Night Walker uses per-job cooldown keys: `job:nw:flirt`, `job:nw:lapDance`, and `job:nw:prostitute`. Default cooldowns are 5 minutes, 7 minutes, and 10 minutes unless overridden by job config.
+- Runs are held in `/job` session state as `session.nw` with picked scenarios, round index, wrong count, penalty tokens, risk, and payout modifier.
+- Flirt fails after too many wrong answers, Lap Dance fails after too many penalty tokens, and Prostitute fails if risk reaches the configured fail threshold.
+- Successful Night Walker payouts go through the shared `/job` `payUser` path with XP, level bonuses, job counting, legendary spawn eligibility, and configured activity effects.
+
+9-to-5 specifics:
+
+- 9-to-5 menu rendering is in `features/nineToFive/ui.js`; interaction routing lives in `features/nineToFive/handlers.js`.
+- Config/data lives under `data/work/categories/nineToFive/*`; Email Sorter runtime generation/scoring lives in `features/nineToFive/emailSorter.js`.
+- Cooldown keys are `job:95:contract`, `job:95:skill`, `job:95:shift`, `job:95:email_sorter`, and `job:95:trucker`. Trucker uses `0` cooldown seconds after collection.
+- Transport Contract is a multi-step pick flow with level-gated VIP/danger choices from `transportContract.js`.
+- Skill Check shows a short memorise phase, then hides the pattern and requires replay through buttons. Legendary jobs reuse the skill-check path when `session.legendaryAvailable` is true.
+- Shift Work is timer-based and uses a session interval to redraw progress until Collect Pay is enabled.
+- Trucker creates a manifest, starts a timed delivery, posts a completion ping when ready, and pays on manual collection. Clear `session.trucker.interval` whenever the run ends or restarts.
+- Email Sorter uses generated emails, folder buttons, and `scoreRun()` to determine payout/failure. It includes scam/spam folder logic separate from Crime's Scam Call.
+
 Farming specifics:
 
 - Farm state is stored as JSON in `farms.data`.
@@ -173,6 +214,10 @@ Farming specifics:
 - Field tasks should be validated before machinery is reserved. If machinery cannot be reserved after a valid task is started, clear the field task so equipment/fields do not get stuck.
 - Machine rentals last 24 hours and are stored as leases in `farm_machines.data.rented`.
 - Machine selling pays 60% of the buy price and only allows free owned machines to be sold. Machines busy in active field tasks are protected.
+- Barns are represented as farm fields with `kind: "barn"` and livestock metadata from `data/farming/livestock.js`.
+- Barn actions are handled by `farm_barn_collect:*`, `farm_barn_slaughter:*`, `farm_barn_restock:*`, `farm_barn_upgrade:*`, and `farm_barn_demolish:*` in `features/farming/handlers.js`.
+- Barn produce and slaughter outputs are inserted into `store_items`/`user_inventory` through `addFarmItemToInventory()`. That path now validates `item.itemId || item.id` before writing so missing livestock output IDs fail loudly instead of producing confusing DB errors.
+- Barn collect/slaughter currently record contract progress as `farm_crops_harvested` by output quantity, matching the existing farming contract metric naming.
 
 Underworld specifics:
 
@@ -186,7 +231,11 @@ Underworld specifics:
 - Building actions use stable `building.id` values in component payloads; do not switch back to array indexes.
 - Underworld payouts now use the effect-aware credit path through `creditUserWithEffects`, matching the rest of `/job`.
 - Runtime progression is phase-split in `utils/underworld/engine.js` (`applyConversionRollover`, pending event expiry, due-event opening, run finalization, and building runtime application).
-- Storage House currently exists as a scaffolded operation type with persistent storage metadata, but it is not yet a full robbery/black-market ecosystem.
+- Police/event choices that reduce suspicion now immediately apply negative `suspicionDelta` to the building as well as the active run, so payoffs visibly reduce suspicion at once.
+- Storage House is now a live storage operation. Finished cooled-off goods move into `building.storage`, clear `building.activeRun`, and allow another run to start while sellable goods remain in storage.
+- Storage House sell options can resolve either a cooling active run or accumulated `building.storage` goods. Selling clears storage after payout.
+- Storage House start is blocked only while an active run exists or storage is full. UI shows both sell buttons and Start Operation when cooled goods are waiting and the building can stockpile more.
+- Storage goods values live in `data/underworld/storageGoods.js` and were raised by about 15% to counterbalance police payoff costs and Storage House setup investment.
 
 ### Games
 

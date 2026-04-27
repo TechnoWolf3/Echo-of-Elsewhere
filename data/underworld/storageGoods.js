@@ -1,8 +1,8 @@
 module.exports = {
   defaults: {
     coolOffMinutes: 60,
-    fallbackValueMin: 9000,
-    fallbackValueMax: 18000,
+    fallbackValueMin: 10350,
+    fallbackValueMax: 20700,
   },
 
   items: [
@@ -11,8 +11,8 @@ module.exports = {
       name: "Counterfeit electronics",
       rarity: "common",
       weight: 24,
-      valueMin: 9000,
-      valueMax: 18000,
+      valueMin: 10350,
+      valueMax: 20700,
       coolOffMinutes: 35,
     },
     {
@@ -20,8 +20,8 @@ module.exports = {
       name: "Designer knockoffs",
       rarity: "common",
       weight: 22,
-      valueMin: 8000,
-      valueMax: 16000,
+      valueMin: 9200,
+      valueMax: 18400,
       coolOffMinutes: 40,
     },
     {
@@ -29,8 +29,8 @@ module.exports = {
       name: "Unmarked tool crates",
       rarity: "uncommon",
       weight: 18,
-      valueMin: 12000,
-      valueMax: 24000,
+      valueMin: 13800,
+      valueMax: 27600,
       coolOffMinutes: 50,
     },
     {
@@ -38,8 +38,8 @@ module.exports = {
       name: "Hot auto parts",
       rarity: "uncommon",
       weight: 16,
-      valueMin: 15000,
-      valueMax: 30000,
+      valueMin: 17250,
+      valueMax: 34500,
       coolOffMinutes: 60,
     },
     {
@@ -47,8 +47,8 @@ module.exports = {
       name: "Grey-market phones",
       rarity: "rare",
       weight: 14,
-      valueMin: 20000,
-      valueMax: 38000,
+      valueMin: 23000,
+      valueMax: 43700,
       coolOffMinutes: 75,
     },
     {
@@ -56,8 +56,8 @@ module.exports = {
       name: "Luxury watch rolls",
       rarity: "very_rare",
       weight: 10,
-      valueMin: 30000,
-      valueMax: 58000,
+      valueMin: 34500,
+      valueMax: 66700,
       coolOffMinutes: 90,
     },
   ],

@@ -824,6 +824,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
           scam: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.scam),
           heist: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.heist),
           major: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.major),
+          bribe: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.bribe),
+          layLow: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.layLow),
         };
 
         return msg

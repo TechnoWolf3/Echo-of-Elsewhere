@@ -69,6 +69,8 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
     cdLine("Scam Call", effScam),
     cdLine("Heist", effHeist),
     cdLine("Major Heist", effMajor),
+    cdLine("Bribe Officer", cooldowns?.bribe),
+    cdLine("Lay Low", cooldowns?.layLow),
   ].join("\n");
 
   return new EmbedBuilder()
@@ -108,6 +110,10 @@ function buildCrimeComponents(disabled = false) {
     new StringSelectMenuBuilder()
       .setCustomId("job_select:job")
       .setPlaceholder("Choose a job...")
+      .addOptions(
+        { label: "Bribe Officer", value: "crime:bribe", description: safeDesc("Pay for a chance to lower heat.") },
+        { label: "Lay Low", value: "crime:laylow", description: safeDesc("Make four quiet choices to lower heat.") }
+      )
       .addOptions(
         { label: "Store Robbery", value: "crime:store", emoji: "🏪", description: safeDesc("Risky grab-and-go.") },
         { label: "Car Chase", value: "crime:chase", emoji: "🚗", description: safeDesc("Coming soon.") },

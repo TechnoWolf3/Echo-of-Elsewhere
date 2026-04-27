@@ -87,22 +87,22 @@ function rollFind({ depth, site }) {
   const d = clamp(depth, 0, 40);
 
   const common = [
-    { name: "Sand", value: 70 },
-    { name: "Gravel", value: 80 },
-    { name: "Stone", value: 95 },
+    { name: "Sand", value: 88 },
+    { name: "Gravel", value: 100 },
+    { name: "Stone", value: 119 },
   ];
   const ores = [
-    { name: "Iron Ore", value: 160 },
-    { name: "Copper Ore", value: 175 },
-    { name: "Coal Chunk", value: 150 },
+    { name: "Iron Ore", value: 200 },
+    { name: "Copper Ore", value: 219 },
+    { name: "Coal Chunk", value: 188 },
   ];
   const rares = [
-    { name: "Silver Vein", value: 380 },
-    { name: "Gold Vein", value: 520 },
+    { name: "Silver Vein", value: 475 },
+    { name: "Gold Vein", value: 650 },
   ];
   const gems = [
-    { name: "Opal Shard", value: 900 },
-    { name: "Ruby Fragment", value: 1100 },
+    { name: "Opal Shard", value: 1125 },
+    { name: "Ruby Fragment", value: 1375 },
   ];
 
   const oreChance = clamp(0.10 + d * 0.02 + q * 0.12, 0, 0.85);

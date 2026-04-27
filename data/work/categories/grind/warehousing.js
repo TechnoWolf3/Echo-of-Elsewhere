@@ -77,7 +77,7 @@ function genPickerOrder(streak) {
     if (c !== correct) distractors.add(c);
   }
   const options = [correct, ...Array.from(distractors)].sort(() => Math.random() - 0.5);
-  return { kind: "picker", item, qty, correct, options, basePay: 120 + randInt(0, 40) };
+  return { kind: "picker", item, qty, correct, options, basePay: randInt(250, 550) };
 }
 
 function genForkliftOrder(streak) {
@@ -120,7 +120,7 @@ function genForkliftOrder(streak) {
     cold,
     correct: correct.label,
     options: opts,
-    basePay: 170 + randInt(0, 60),
+    basePay: randInt(250, 550),
   };
 }
 

@@ -92,6 +92,12 @@ async function getCrimeHeat(guildId, userId) {
  */
 async function setCrimeHeat(guildId, userId, heat, ttlMinutes) {
   const expiresAt = new Date(Date.now() + (Number(ttlMinutes) || 0) * 60 * 1000);
+  const nextHeat = clamp(Number(heat) || 0, 0, 100);
+
+  if (nextHeat <= 0) {
+    await pool.query(`DELETE FROM crime_heat WHERE guild_id=$1 AND user_id=$2`, [guildId, userId]);
+    return;
+  }
 
   await pool.query(
     `
@@ -102,7 +108,7 @@ async function setCrimeHeat(guildId, userId, heat, ttlMinutes) {
       heat = EXCLUDED.heat,
       expires_at = EXCLUDED.expires_at
     `,
-    [guildId, userId, clamp(Number(heat) || 0, 0, 100), expiresAt]
+    [guildId, userId, nextHeat, expiresAt]
   );
 }
 

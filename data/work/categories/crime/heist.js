@@ -18,7 +18,7 @@ const scenarios = require("./heist.scenarios");
 // ============================================================
 
 const GLOBAL_LOCKOUT_KEY = "crime_global";
-const GLOBAL_LOCKOUT_MINUTES = 10;
+const GLOBAL_LOCKOUT_MINUTES = 15;
 
 const MODES = {
   heist: {
@@ -27,9 +27,9 @@ const MODES = {
     cooldownMinutes: 12 * 60, // 12h
     tiers: { clean: 25, spotted: 50, partial: 75, bustedHard: 85 },
     payouts: {
-      clean: [30_000, 45_000],
-      spotted: [22_000, 36_000],
-      partial: [6_000, 18_000],
+      clean: [39_900, 59_850],
+      spotted: [29_260, 47_880],
+      partial: [7_980, 23_940],
     },
     fine: [12_000, 30_000],
     jail: {
@@ -45,9 +45,9 @@ const MODES = {
     cooldownMinutes: 24 * 60, // 24h
     tiers: { clean: 15, spotted: 30, partial: 55, bustedHard: 85 },
     payouts: {
-      clean: [55_000, 100_000],
-      spotted: [48_000, 75_000],
-      partial: [25_000, 40_000],
+      clean: [73_150, 133_000],
+      spotted: [63_840, 99_750],
+      partial: [33_250, 53_200],
     },
     fine: [12_000, 30_000],
     jail: {

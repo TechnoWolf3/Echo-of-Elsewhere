@@ -77,6 +77,10 @@ async function ensureCropStoreItem(guildId, crop) {
 }
 
 async function ensureFarmStoreItem(guildId, item) {
+  const itemId = item?.itemId || item?.id;
+  if (!itemId) {
+    throw new Error(`Farm item is missing an itemId: ${JSON.stringify(item)}`);
+  }
   await pool.query(
     `INSERT INTO store_items (guild_id, item_id, name, description, price, kind, stackable, enabled, meta, sort_order)
      VALUES ($1,$2,$3,$4,0,'produce',true,true,$5::jsonb,9500)
@@ -86,13 +90,17 @@ async function ensureFarmStoreItem(guildId, item) {
        description = EXCLUDED.description,
        kind = 'produce',
        enabled = true`,
-    [guildId, item.itemId || item.id, item.name, `${item.name} produced by your farm.`, JSON.stringify({ farming: true })]
+    [guildId, itemId, item.name, `${item.name} produced by your farm.`, JSON.stringify({ farming: true })]
   );
 }
 
 async function addFarmItemToInventory(guildId, userId, item, qty = 1) {
   const amount = Math.max(0, Math.floor(Number(qty) || 0));
   if (amount <= 0) return;
+  const itemId = item?.itemId || item?.id;
+  if (!itemId) {
+    throw new Error(`Farm item is missing an itemId: ${JSON.stringify(item)}`);
+  }
   await ensureFarmStoreItem(guildId, item);
   await pool.query(
     `INSERT INTO user_inventory (guild_id, user_id, item_id, qty, uses_remaining, meta, updated_at)
@@ -101,7 +109,7 @@ async function addFarmItemToInventory(guildId, userId, item, qty = 1) {
      DO UPDATE SET
        qty = user_inventory.qty + EXCLUDED.qty,
        updated_at = NOW()`,
-    [guildId, userId, item.itemId || item.id, amount]
+    [guildId, userId, itemId, amount]
   );
 }
 

@@ -294,6 +294,36 @@ function applyEventDelta(run, delta = {}) {
   run.suspicionBonus = Number(run.suspicionBonus || 0) + Number(delta.suspicionDelta || 0);
 }
 
+function mergeStoredGoods(existingGoods = [], newGoods = []) {
+  const merged = Array.isArray(existingGoods) ? existingGoods.map((entry) => ({ ...entry })) : [];
+  for (const goods of Array.isArray(newGoods) ? newGoods : []) {
+    const hit = merged.find((entry) => entry.id === goods.id);
+    if (hit) {
+      hit.quantity = Number(hit.quantity || 0) + Number(goods.quantity || 0);
+      hit.value = Number(hit.value || 0) + Number(goods.value || 0);
+    } else {
+      merged.push({ ...goods });
+    }
+  }
+  return merged;
+}
+
+function addGoodsToStorage(building, storageGoods, now = Date.now()) {
+  const current = building.storage || {};
+  const currentStock = Number(current.stock || 0);
+  const addedStock = Number(storageGoods?.units || 0);
+  building.storage = {
+    stock: currentStock + addedStock,
+    sellLockedUntil: Math.max(
+      Number(current.sellLockedUntil || 0),
+      Number(storageGoods?.sellReadyAt || now)
+    ) || null,
+    goods: mergeStoredGoods(current.goods, storageGoods?.items),
+    totalValue: Number(current.totalValue || 0) + Number(storageGoods?.totalValue || 0),
+  };
+  return building.storage;
+}
+
 function nextPendingEvent(run) {
   const eventId = run.eventQueue?.[run.nextEventIndex];
   if (!eventId) return null;
@@ -401,13 +431,9 @@ function applyStorageCoolingOff(building, now) {
     return true;
   }
   if (now < Number(goods.sellReadyAt || 0)) return false;
-  run.status = "awaiting_distribution";
-  building.storage = {
-    stock: Number(goods.units || 0),
-    sellLockedUntil: null,
-    goods: goods.items || [],
-    totalValue: Number(goods.totalValue || 0),
-  };
+  addGoodsToStorage(building, { ...goods, sellReadyAt: now }, now);
+  building.storage.sellLockedUntil = null;
+  building.activeRun = null;
   return true;
 }
 
@@ -624,10 +650,16 @@ async function startRun(guildId, userId, state, buildingRef) {
     return { ok: false, reasonText: "The conversion is still underway." };
   }
   if (!building.operationType) return { ok: false, reasonText: "Convert this building into an operation first." };
-  if (building.activeRun) return { ok: false, reasonText: "This building already has an active operation." };
-
   const operation = getOperationDefinition(building.operationType);
   if (!operation) return { ok: false, reasonText: "Unknown operation type." };
+  if (building.activeRun) return { ok: false, reasonText: "This building already has an active operation." };
+  if (operation.storageEnabled) {
+    const buildingDef = getBuildingDefinition(building.buildingId);
+    const capacity = Math.max(1, Number(buildingDef?.capacity || 100));
+    if (Number(building.storage?.stock || 0) >= capacity) {
+      return { ok: false, reasonText: "Storage is full. Sell some goods before starting another run." };
+    }
+  }
 
   const batchCost = getOperationRunCost(building, operation);
   const debit = await tryDebitBank(guildId, userId, batchCost, "underworld_operation_start", {
@@ -706,6 +738,10 @@ async function resolveEventChoice(guildId, userId, state, buildingRef, choiceId)
   }
 
   applyEventDelta(run, choice);
+  if (choice.suspicionDelta && choice.suspicionDelta < 0) {
+    building.suspicion = clamp(getBuildingSuspicion(building) + Number(choice.suspicionDelta || 0), 0, config.MAX_SUSPICION);
+    building.suspicionTickAt = Date.now();
+  }
   run.eventLog = run.eventLog || [];
   run.eventLog.push({
     eventId: event.id,
@@ -765,17 +801,20 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
   const run = building?.activeRun;
   const operation = getOperationDefinition(building?.operationType);
   const mode = config.DISTRIBUTION_MODES[modeId];
-  if (!building || !run || !operation) {
+  if (!building || !operation) {
     return { ok: false, reasonText: "That operation cannot be resolved right now." };
   }
-  const isStorageEarlySale = operation?.storageEnabled && run.status === "cooling_off";
-  if (run.status !== "awaiting_distribution" && !isStorageEarlySale) {
-    return { ok: false, reasonText: "This run is not ready for distribution yet." };
+  const hasStoredGoods = operation.storageEnabled && Number(building.storage?.stock || 0) > 0 && Number(building.storage?.totalValue || 0) > 0;
+  const isStorageEarlySale = operation?.storageEnabled && run?.status === "cooling_off";
+  if (run?.status !== "awaiting_distribution" && !isStorageEarlySale) {
+    if (!hasStoredGoods) {
+      return { ok: false, reasonText: "This run is not ready for distribution yet." };
+    }
   }
   if (!mode) return { ok: false, reasonText: "Unknown distribution mode." };
   if (operation.storageEnabled) {
-    const goods = run.storageGoods;
-    if (!goods || Number(goods.units || 0) <= 0 || Number(goods.totalValue || 0) <= 0) {
+    const goods = run?.storageGoods;
+    if (!hasStoredGoods && (!goods || Number(goods.units || 0) <= 0 || Number(goods.totalValue || 0) <= 0)) {
       return { ok: false, reasonText: "There are no cooled-off goods ready to sell yet." };
     }
   }
@@ -783,8 +822,10 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
   const securityReduction = getUpgradeLevelBonus("security", building.upgrades?.security, "raidChanceReduction");
   const efficiencyReduction = getUpgradeLevelBonus("efficiency", building.upgrades?.efficiency, "suspicionReduction");
 
-  const grossBase = operation.storageEnabled && run.storageGoods
+  const grossBase = operation.storageEnabled && run?.storageGoods
     ? Number(run.storageGoods.totalValue || 0)
+    : operation.storageEnabled && hasStoredGoods
+      ? Number(building.storage.totalValue || 0)
     : Number(run.batchCost || 0) *
       Number(run.grossMultiplier || 1) *
       clamp(Number(run.outputMultiplier || 1), 0.4, 3);
@@ -793,18 +834,18 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
 
   let gross = Math.round(
     grossBase *
-    (Number(mode.payoutMultiplier || 1) + Number(run.payoutMultiplierBonus || 0)) *
+    (Number(mode.payoutMultiplier || 1) + Number(run?.payoutMultiplierBonus || 0)) *
     Number(earlySale?.payoutMultiplier || 1)
   );
 
   const suspicionBefore = getBuildingSuspicion(building);
-  let suspicionGain = Number(operation.baseSuspicionGain || 0) + Number(mode.suspicionDelta || 0) + Number(run.suspicionBonus || 0) - Number(efficiencyReduction || 0);
+  let suspicionGain = Number(operation.baseSuspicionGain || 0) + Number(mode.suspicionDelta || 0) + Number(run?.suspicionBonus || 0) - Number(efficiencyReduction || 0);
   suspicionGain += Number(earlySale?.suspicionGain || 0);
   suspicionGain = Math.max(-config.CLEAN_RUN_SUSPICION_REDUCTION, suspicionGain);
 
   let raidChance = Number(operation.baseRaidChance || 0)
     + Number(mode.raidChanceDelta || 0)
-    + Number(run.raidChanceBonus || 0)
+    + Number(run?.raidChanceBonus || 0)
     + Number(earlySale?.raidChanceBonus || 0)
     + suspicionBefore / 170
     + Number(getBuildingDefinition(building.buildingId)?.baseRisk || 0) / 220
@@ -842,8 +883,8 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     distributionMode: modeId,
     raidOutcome: raidOutcomeId,
     payout: gross,
-    batchCost: run.batchCost,
-    storageGoods: operation.storageEnabled ? run.storageGoods : null,
+    batchCost: run?.batchCost || 0,
+    storageGoods: operation.storageEnabled ? (run?.storageGoods || building.storage) : null,
     earlySale: earlySale?.early ? earlySale : null,
     stolenReport,
   };
@@ -864,7 +905,7 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     };
   }
 
-  building.activeRun = null;
+  if (run) building.activeRun = null;
   if (operation.storageEnabled) {
     building.storage = { stock: 0, sellLockedUntil: null, goods: [], totalValue: 0 };
   }

@@ -290,6 +290,8 @@ function buildBuildingComponents(state, buildingId) {
   const rows = [];
   const run = building.activeRun;
   const pendingEvent = run?.pendingEvent ? engine.EVENTS[run.pendingEvent.eventId] : null;
+  const op = engine.getOperationDefinition(building.operationType);
+  const hasStoredGoods = Boolean(op?.storageEnabled && Number(building.storage?.stock || 0) > 0 && Number(building.storage?.totalValue || 0) > 0);
 
   if (!building.operationType && !building.conversion) {
     rows.push(
@@ -323,7 +325,7 @@ function buildBuildingComponents(state, buildingId) {
           )
       )
     );
-  } else if (["awaiting_distribution", "cooling_off"].includes(run?.status) && (!engine.getOperationDefinition(building.operationType)?.storageEnabled || Number(run.storageGoods?.units || 0) > 0)) {
+  } else if ((["awaiting_distribution", "cooling_off"].includes(run?.status) && (!op?.storageEnabled || Number(run.storageGoods?.units || 0) > 0)) || (!run && hasStoredGoods)) {
     rows.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -340,6 +342,22 @@ function buildBuildingComponents(state, buildingId) {
           .setStyle(ButtonStyle.Danger)
       )
     );
+    if (!run && op?.storageEnabled) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`uw_start:${building.id}`)
+            .setLabel("Start Operation")
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0)),
+          new ButtonBuilder()
+            .setCustomId(`uw_dismantle:${building.id}`)
+            .setLabel("Dismantle")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(hasStoredGoods)
+        )
+      );
+    }
   } else if (building.operationType && !building.conversion) {
     rows.push(
       new ActionRowBuilder().addComponents(
@@ -347,7 +365,7 @@ function buildBuildingComponents(state, buildingId) {
           .setCustomId(`uw_start:${building.id}`)
           .setLabel("Start Operation")
           .setStyle(ButtonStyle.Primary)
-          .setDisabled(Boolean(building.activeRun)),
+          .setDisabled(Boolean(building.activeRun) || (op?.storageEnabled && Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0))),
         new ButtonBuilder()
           .setCustomId(`uw_dismantle:${building.id}`)
           .setLabel("Dismantle")
