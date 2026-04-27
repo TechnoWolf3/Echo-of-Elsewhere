@@ -254,7 +254,7 @@ async function handleFarmingInteraction({
     const farm = await farming.ensureFarm(guildId, userId);
     const fertiliser = farming.getFertiliser(fertiliserId);
     if (!fertiliser) {
-      await interaction.followUp({ content: "âŒ Unknown fertiliser.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.followUp({ content: "Unknown fertiliser.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
     const debit = await tryDebitBank(guildId, userId, fertiliser.price, "farming_fertiliser_purchase", {
@@ -264,7 +264,7 @@ async function handleFarmingInteraction({
     });
     if (!debit.ok) {
       await interaction.followUp({
-        content: `âŒ You need $${fertiliser.price.toLocaleString()} in your bank to buy ${fertiliser.name}.`,
+        content: `You need $${fertiliser.price.toLocaleString()} in your bank to buy ${fertiliser.name}.`,
         flags: MessageFlags.Ephemeral,
       }).catch(() => {});
       return true;
@@ -272,11 +272,11 @@ async function handleFarmingInteraction({
     const result = await farming.buyFertiliser(guildId, userId, farm, fertiliserId, 1);
     if (!result.ok) {
       await creditBank(guildId, userId, fertiliser.price, "farming_fertiliser_refund", { fertiliserId });
-      await interaction.followUp({ content: `âŒ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.followUp({ content: result.reasonText, flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
     await interaction.followUp({
-      content: `âœ… Bought 1x ${result.fertiliser.name}.`,
+      content: `Bought 1x ${result.fertiliser.name}.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     await redraw();
@@ -353,7 +353,7 @@ async function handleFarmingInteraction({
       interaction,
       msg,
       extra: { fertiliserId },
-      successText: "ðŸ§ª Fertilising started.",
+      successText: "Fertilising started.",
     });
     return true;
   }

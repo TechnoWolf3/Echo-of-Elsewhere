@@ -771,21 +771,37 @@ function buildFieldComponents(farm, fieldIndex, guildId = null) {
     .listFertilisers()
     .filter((fertiliser) => farming.getFertiliserQty(farm, fertiliser.id) > 0);
 
-  if (activeFertiliserWindow && fertiliserOptions.length) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(`farm_fertilise_select:${fieldIndex}`)
-          .setPlaceholder(`Apply fertiliser (${activeFertiliserWindow} window)...`)
-          .addOptions(
-            fertiliserOptions.map((fertiliser) => ({
-              label: `${fertiliser.name} (${farming.getFertiliserQty(farm, fertiliser.id)})`,
-              value: `farm_fertilise:${fieldIndex}:${fertiliser.id}`,
-              description: fertiliser.description.slice(0, 100),
-            }))
-          )
-      )
-    );
+  if (activeFertiliserWindow) {
+    if (fertiliserOptions.length) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId(`farm_fertilise_select:${fieldIndex}`)
+            .setPlaceholder(`Apply fertiliser (${activeFertiliserWindow} window)...`)
+            .addOptions(
+              fertiliserOptions.map((fertiliser) => ({
+                label: `${fertiliser.name} (${farming.getFertiliserQty(farm, fertiliser.id)})`,
+                value: `farm_fertilise:${fieldIndex}:${fertiliser.id}`,
+                description: fertiliser.description.slice(0, 100),
+              }))
+            )
+        )
+      );
+    } else {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId("farm_fertiliser_none")
+            .setLabel("No Fertiliser Owned")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(true),
+          new ButtonBuilder()
+            .setCustomId("farm_store")
+            .setLabel("Open Store")
+            .setStyle(ButtonStyle.Primary)
+        )
+      );
+    }
   }
 
   if (field.cropId && (field.state === "growing" || field.state === "ready")) {
