@@ -14,6 +14,7 @@ This folder is the new home for farming-specific command pieces.
 ## Easy Edits
 
 - To change field limits or base farming costs, edit `data/farming/config.js`.
+- To change field upgrade timing, edit `FIELD_UPGRADE_DURATION_MS` in `data/farming/config.js`.
 - To change crop growth, crop names, seasons, or yields, edit `data/farming/crops.js`.
 - To change produce market prices, edit `data/farming/marketConfig.js`.
 - To change fertiliser prices/effects, edit `data/farming/fertilisers.js`.
@@ -33,6 +34,7 @@ This folder is the new home for farming-specific command pieces.
 - Regrowing crops reset fertiliser stages after each harvest, so the next regrow cycle can be fertilised again.
 - If a field is in a fertiliser window and the player owns fertiliser, the field page shows an apply dropdown. If they own none, it should show a `Buy Fertiliser` route.
 - Machine speed multipliers apply to field task durations through the best compatible owned/rented machine set.
+- Field upgrades run as timed `upgrade` tasks and only apply the new level when task rollovers complete.
 
 ## Barn And Husbandry Notes
 

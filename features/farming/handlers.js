@@ -538,6 +538,10 @@ async function handleFarmingInteraction({
     }
 
     const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `Field upgrade started. It will complete <t:${Math.floor(Number(result.task.endsAt) / 1000)}:R>.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
     await msg.edit({
       embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
       components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),

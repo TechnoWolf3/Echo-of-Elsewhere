@@ -11,6 +11,25 @@ const farming = require("../../utils/farming/engine");
 const machineEngine = require("../../utils/farming/machineEngine");
 const config = require("../../data/farming/config");
 
+function formatFarmTaskName(taskKey) {
+  return {
+    cultivate: "Cultivating",
+    seed: "Seeding",
+    harvest: "Harvesting",
+    fertilise: "Fertilising",
+    upgrade: "Upgrading",
+  }[taskKey] || "Working";
+}
+
+function formatCropName(cropId) {
+  if (!cropId) return "No crop";
+  return String(cropId)
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function buildFarmMarketEmbed(items) {
   if (!items || items.length === 0) {
     return ui.applySystemStyle(
@@ -455,7 +474,7 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
       else if (state === "spoiled") acc.spoiled += 1;
       else if (!field?.cultivated) acc.cleanup += 1;
       else acc.empty += 1;
-      if (farming.isFieldTaskActive(field)) acc.busy += 1;
+      if (farming.isFieldTaskActive(field) || farming.isBarnTaskActive(field)) acc.busy += 1;
       return acc;
     },
     { growing: 0, ready: 0, spoiled: 0, cleanup: 0, empty: 0, busy: 0, barns: 0 }
@@ -468,7 +487,7 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
         const production = farming.getBarnProductionInfo(field);
         const barnCounts = farming.getBarnAnimalCounts(field);
         const status = farming.isBarnTaskActive(field)
-          ? `Upgrading, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`
+          ? `${formatFarmTaskName(field.task.key)}, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`
           : barnCounts.total <= 0
           ? "Empty barn"
           : production.readyCycles > 0
@@ -477,14 +496,17 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
               ? `Next produce <t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
               : "Waiting for adults";
         const babyText = barnCounts.babies > 0 ? ` (${barnCounts.babies} young)` : "";
-        return `**Barn ${index + 1}** - Lv ${field.level || 1} - ${type?.animalName || "Livestock"} - ${barnCounts.adults}/${farming.getBarnCapacity(field)} adults${babyText} - ${status}`;
+        return [
+          `**Barn ${index + 1}** - Lv **${field.level || 1}** - ${type?.animalName || "Livestock"}`,
+          `${barnCounts.adults}/${farming.getBarnCapacity(field)} adults${babyText} - ${status}`,
+        ].join("\n");
       }
 
       let status = "Empty";
 
       if (field.state === "growing") {
         if (field.readyAt) {
-          status = `Growing, Ready <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`;
+          status = `Growing, ready <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`;
         } else {
           status = "Growing";
         }
@@ -496,21 +518,24 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
       if (field.fieldCondition?.label) status = field.fieldCondition.label;
 
       if (farming.isFieldTaskActive(field)) {
-        status = `${field.task.key}, Completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
+        status = `${formatFarmTaskName(field.task.key)}, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
       }
 
-      const crop = field.cropId ? ` - ${field.cropId}` : "";
+      const crop = field.cropId ? formatCropName(field.cropId) : "No crop";
       const size = farming.getFieldSize(field.level || 1);
       const usable = farming.getUsablePlots(field);
       const total = farming.getTotalPlots(field);
       const plotText = usable === total ? `${size}x${size}` : `${usable}/${total} plots`;
 
-      return `**Field ${index + 1}** - Lv ${field.level || 1} - ${status} - ${plotText}${crop}`;
-    }).join("\n")
+      return [
+        `**Field ${index + 1}** - Lv **${field.level || 1}** - ${plotText}`,
+        `${crop} - ${status}`,
+      ].join("\n");
+    }).join("\n\n")
   : "No fields yet. Buy your first field to start farming.";
 
   const embed = new EmbedBuilder()
-    .setTitle("🌾 Farming")
+    .setTitle("Farming")
     .setDescription(
       [
         `Season: **${season}**`,
@@ -521,19 +546,26 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
     )
     .addFields(
       {
-        name: "Farm Status",
+        name: "Overview",
         value: [
-          `Fields: **${fields.length}/${config.MAX_FIELDS}**`,
+          `Plots: **${fields.length}/${config.MAX_FIELDS}**`,
           `Barns: **${counts.barns}**`,
+          `Open fields: **${counts.empty}**`,
+        ].join("\n"),
+        inline: true,
+      },
+      {
+        name: "Work Queue",
+        value: [
+          `Busy: **${counts.busy}**`,
           `Ready: **${counts.ready}**`,
           `Growing: **${counts.growing}**`,
-          `Busy: **${counts.busy}**`,
           `Needs cleanup: **${counts.cleanup + counts.spoiled}**`,
         ].join("\n"),
         inline: true,
       },
       {
-        name: "Fields",
+        name: "Plots",
         value: fieldLines.slice(0, 1024),
         inline: false,
       }
@@ -541,13 +573,11 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
 
   if (weatherChannel) {
     embed.addFields({
-      name: "📺 Weather Channel",
+      name: "Weather",
       value: [
-        weatherChannel.headline,
-        weatherChannel.forecast,
+        `**${weatherChannel.headline}**`,
         weatherChannel.impact,
-        "",
-        `> ${weatherChannel.report}`,
+        weatherChannel.report ? `> ${weatherChannel.report}` : "",
       ].filter(Boolean).join("\n"),
       inline: false,
     });
@@ -668,30 +698,41 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
           : "Restock or breed animals to restart production.";
 
     return new EmbedBuilder()
-      .setTitle(`🚜 Barn ${fieldIndex + 1}`)
-      .setDescription(
-        [
-          "**Barn Layout**",
-          renderBarnVisual(field),
-          "",
-          `📈 **Level:** ${field.level || 1}`,
-          `🏠 **Type:** ${type?.name || "Barn"}`,
-          `🐾 **Stock:** ${Number(field.animalCount || 0)}/${capacity} ${type?.animalName || "animals"}`,
-          `📦 **Production:** ${type?.output?.name || "Produce"} every ${type?.productionHours || 0}h`,
-          `⏳ **Next collection:** ${readyText}`,
-          `🥩 **Slaughter output:** ${type?.slaughter?.name || "Meat"}`,
-          `🧹 **Demolition:** ${ui.money(farming.getBarnDemolitionCost(field))}`,
-          `🍂 **Season:** ${farming.getCurrentSeason(guildId)}`,
-        ].join("\n")
+      .setTitle(`Barn ${fieldIndex + 1}`)
+      .setDescription(renderBarnVisual(field))
+      .addFields(
+        {
+          name: "Barn",
+          value: [
+            `Type: **${type?.name || "Barn"}**`,
+            `Level: **${field.level || 1}**`,
+            `Season: **${farming.getCurrentSeason(guildId)}**`,
+          ].join("\n"),
+          inline: true,
+        },
+        {
+          name: "Stock",
+          value: [
+            `Adults: **${counts.adults}/${capacity}**`,
+            `Young: **${counts.babies}/${capacity}**`,
+            `Total: **${Number(field.animalCount || 0)}/${capacity}** ${type?.animalName || "animals"}`,
+          ].join("\n"),
+          inline: true,
+        },
+        {
+          name: "Production",
+          value: [
+            `Produce: **${type?.output?.name || "Produce"}** every **${type?.productionHours || 0}h**`,
+            `Next collection: **${readyText}**`,
+            `Slaughter output: **${type?.slaughter?.name || "Meat"}**`,
+            `Demolition: **${ui.money(farming.getBarnDemolitionCost(field))}**`,
+          ].join("\n"),
+        },
+        {
+          name: "Animal Ages",
+          value: `Maturing: ${babyLine}`,
+        }
       )
-      .addFields({
-        name: "Animal Ages",
-        value: [
-          `Adults: **${counts.adults}/${capacity}**`,
-          `Young: **${counts.babies}/${capacity}** capacity used`,
-          `Maturing: ${babyLine}`,
-        ].join("\n"),
-      })
       .setColor(ui.systems.job.color)
       .setFooter({ text: "Barns produce over time. Slaughter clears the current stock." });
   }
@@ -713,15 +754,19 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   const task = field.task || null;
   const taskLine =
     task?.key && task?.endsAt && Date.now() < Number(task.endsAt)
-      ? `🛠️ **Task:** ${task.key}
-⏳ **Completes:** <t:${Math.floor(Number(task.endsAt) / 1000)}:R>
-🕒 **At:** <t:${Math.floor(Number(task.endsAt) / 1000)}:F>`
+      ? [
+          `Task: **${formatFarmTaskName(task.key)}**`,
+          `Completes: <t:${Math.floor(Number(task.endsAt) / 1000)}:R>`,
+          `At: <t:${Math.floor(Number(task.endsAt) / 1000)}:F>`,
+        ].join("\n")
       : "";
 
   const readyLine =
     !task?.key && field.state === "growing" && field.readyAt
-      ? `⏳ **Ready:** <t:${Math.floor(Number(field.readyAt) / 1000)}:R>
-🕒 **At:** <t:${Math.floor(Number(field.readyAt) / 1000)}:F>`
+      ? [
+          `Ready: <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`,
+          `At: <t:${Math.floor(Number(field.readyAt) / 1000)}:F>`,
+        ].join("\n")
       : "";
 
   const cultivatedLine = field.cultivated ? "✅ Cultivated" : "❌ Needs Cultivation";
@@ -745,27 +790,49 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   if (field.fieldCondition?.label) weatherLines.push(`🧱 **Field Condition:** ${field.fieldCondition.label}`);
 
   return new EmbedBuilder()
-    .setTitle(`🌾 Field ${fieldIndex + 1}`)
-    .setDescription(
-      [
-        "**Field Layout**",
-        visual,
-        "",
-        `📈 **Level:** ${field.level || 1}`,
-        `📏 **Size:** ${fieldSize}x${fieldSize}`,
-        `🟫 **Plots:** ${usablePlots}/${totalPlots} usable`,
-        `📌 **Status:** ${stateText}`,
-        `🌿 **Crop:** ${cropName}`,
-        yieldRange ? `📦 **Yield Range:** ${yieldRange[0]}-${yieldRange[1]}` : "",
-        yieldBonus > 0 ? `Fertiliser yield bonus: **+${yieldBonus}%**` : "",
-        fertiliserWindow ? `Fertiliser window: **${fertiliserWindow === "early" ? "Early growth" : "Late growth"}**` : "",
-        `🪴 **Condition:** ${cultivatedLine}`,
-        `🍂 **Season:** ${farming.getCurrentSeason(guildId)}`,
-        `🚜 **Machine Need:** ${machineHint}`,
-        ...weatherLines,
-        taskLine,
-        readyLine,
-      ].filter(Boolean).join("\n")
+    .setTitle(`Field ${fieldIndex + 1}`)
+    .setDescription(visual)
+    .addFields(
+      {
+        name: "Field",
+        value: [
+          `Level: **${field.level || 1}**`,
+          `Size: **${fieldSize}x${fieldSize}**`,
+          `Plots: **${usablePlots}/${totalPlots}** usable`,
+          `Season: **${farming.getCurrentSeason(guildId)}**`,
+        ].join("\n"),
+        inline: true,
+      },
+      {
+        name: "Crop",
+        value: [
+          `Crop: **${cropName}**`,
+          `Status: **${stateText}**`,
+          yieldRange ? `Yield: **${yieldRange[0]}-${yieldRange[1]}**` : "Yield: **None**",
+        ].join("\n"),
+        inline: true,
+      },
+      {
+        name: "Work",
+        value: [
+          `Condition: **${cultivatedLine}**`,
+          `Machine need: **${machineHint}**`,
+          taskLine || readyLine || "No active task.",
+        ].filter(Boolean).join("\n"),
+      },
+      {
+        name: "Fertiliser",
+        value: [
+          yieldBonus > 0 ? `Yield bonus: **+${yieldBonus}%**` : "Yield bonus: **None**",
+          fertiliserWindow ? `Window: **${fertiliserWindow === "early" ? "Early growth" : "Late growth"}**` : "Window: **Closed**",
+        ].join("\n"),
+        inline: true,
+      },
+      {
+        name: "Weather",
+        value: weatherLines.length ? weatherLines.join("\n") : "No active field effects.",
+        inline: true,
+      }
     )
     .setColor(ui.systems.job.color)
     .setFooter({ text: "Fields can only run one task at a time." });

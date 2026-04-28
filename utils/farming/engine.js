@@ -580,6 +580,10 @@ function getUpgradeCost(currentLevel) {
   return Number(config.UPGRADE_COSTS?.[nextLevel] || 0);
 }
 
+function getFieldUpgradeDurationMs() {
+  return Math.max(60_000, Number(config.FIELD_UPGRADE_DURATION_MS || 60 * 60 * 1000));
+}
+
 function getAvailableCrops(fieldLevel) {
   return Object.entries(crops)
     .map(([key, value]) => ({ key, ...value }))
@@ -692,9 +696,14 @@ async function upgradeField(guildId, userId, farm, fieldIndex) {
   }
   if (!field.cultivated) return { ok: false, reasonText: "Cultivate the field before upgrading it." };
 
-  field.level += 1;
-  await saveFarm(guildId, userId, farm);
-  return { ok: true, field };
+  return startFieldUpgrade(guildId, userId, farm, fieldIndex);
+}
+
+async function startFieldUpgrade(guildId, userId, farm, fieldIndex, durationMs = getFieldUpgradeDurationMs()) {
+  return startFieldTask(guildId, userId, farm, fieldIndex, "upgrade", durationMs, {
+    fromLevel: Number(farm.fields?.[fieldIndex]?.level || 1),
+    toLevel: Number(farm.fields?.[fieldIndex]?.level || 1) + 1,
+  });
 }
 
 async function plantCrop(guildId, userId, farm, fieldIndex, cropId) {
@@ -829,6 +838,20 @@ async function startFieldTask(guildId, userId, farm, fieldIndex, taskKey, durati
     if (field.state !== "ready" || !field.cropId) {
       return { ok: false, reasonText: "That field is not ready to harvest." };
     }
+  }
+
+  if (taskKey === "upgrade") {
+    if ((field.level || 1) >= config.MAX_FIELD_LEVEL) {
+      return { ok: false, reasonText: "This field is already max level." };
+    }
+    if (field.cropId || field.state === "growing" || field.state === "ready") {
+      return { ok: false, reasonText: "The field must be empty before upgrading." };
+    }
+    if (!field.cultivated) {
+      return { ok: false, reasonText: "Cultivate the field before upgrading it." };
+    }
+    extra.fromLevel = Number(field.level || 1);
+    extra.toLevel = Number(field.level || 1) + 1;
   }
 
   if (taskKey === "fertilise") {
@@ -1005,6 +1028,22 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     return { ok: true, completedTask: taskKey, fertiliserName: fertiliser.name, stage };
   }
 
+  if (taskKey === "upgrade") {
+    if ((field.level || 1) >= config.MAX_FIELD_LEVEL) {
+      return failAndSave("This field is already max level.");
+    }
+    if (field.cropId || field.state === "growing" || field.state === "ready") {
+      return failAndSave("The field must be empty before upgrading.");
+    }
+    if (!field.cultivated) {
+      return failAndSave("Cultivate the field before upgrading it.");
+    }
+
+    field.level = Math.min(config.MAX_FIELD_LEVEL, Math.max(Number(field.level || 1), Number(taskMeta.toLevel || Number(field.level || 1) + 1)));
+    await saveFarm(guildId, userId, farm);
+    return { ok: true, completedTask: taskKey, level: field.level };
+  }
+
   await saveFarm(guildId, userId, farm);
   return { ok: true, completedTask: taskKey };
 }
@@ -1053,6 +1092,7 @@ module.exports = {
   getCurrentSeason,
   getNextFieldCost,
   getUpgradeCost,
+  getFieldUpgradeDurationMs,
   getAvailableCrops,
   isCropValidForSeason,
   applySeasonRollover,
@@ -1060,6 +1100,7 @@ module.exports = {
   buyField,
   cultivateField,
   upgradeField,
+  startFieldUpgrade,
   plantCrop,
   harvestField,
   canRegrow,

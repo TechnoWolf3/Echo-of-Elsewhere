@@ -224,6 +224,7 @@ Farming specifics:
 - `/job` should mainly route to farming helpers and redraw the current farming view.
 - The farming home screen must stay under Discord's 5 component row limit. Field buttons are grouped into rows of up to 5.
 - Field tasks should be validated before machinery is reserved. If machinery cannot be reserved after a valid task is started, clear the field task so equipment/fields do not get stuck.
+- Field upgrades are timed `upgrade` tasks controlled by `FIELD_UPGRADE_DURATION_MS`; the field level changes only when `applyFieldTaskRollovers()` completes the task.
 - Machine purchase uses bank funds through `tryDebitBank`; rentals still follow the existing rental payment path.
 - Machine task speed comes from the best compatible owned/rented machine set. `machineEngine.getBestTaskSpeedMultiplier()` is applied when starting machine-backed field tasks, with a minimum task duration guard.
 - Machine rentals last 24 hours and are stored as leases in `farm_machines.data.rented`.
