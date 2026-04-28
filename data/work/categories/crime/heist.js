@@ -35,7 +35,7 @@ const MODES = {
     jail: {
       chanceBusted: 0.45,
       chanceBustedHard: 0.65,
-      minutes: [20, 30],
+      minutes: [20, 35],
     },
   },
 

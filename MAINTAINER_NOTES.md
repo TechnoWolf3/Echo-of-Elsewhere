@@ -40,6 +40,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `/help` - help panel with local collectors.
 - `/inventory` - inventory viewer.
 - `/job` - job board, crime, grind, nightwalker, trucking, farming, machine shed, and Underworld.
+- `/jail` - session-aware jail hub for jailed players: bail, work detail, contraband, escape, and prison gambling.
 - `/leaderboard` - top wealth rankings.
 - `/lottery` - weekly Echo Powerball info.
 - `/pay` and `/sendmoney` - player-to-player money transfer.
@@ -166,7 +167,9 @@ Bank specifics:
 - Farming UI: `features/farming/ui.js`
 - Farming interactions: `features/farming/handlers.js`
 - Farming backend: `utils/farming/*`, `data/farming/*`
-- Jail guard: `utils/jail.js`
+- Jail guard/session engine: `utils/jail.js`
+- Jail command/UI: `commands/jail.js`
+- Jail balance/config: `data/jail/config.js`, `data/jail/npcs.js`
 - Crime heat: `utils/crimeHeat.js`
 - Grind fatigue: `utils/grindFatigue.js`
 
@@ -180,6 +183,18 @@ Crime specifics:
 - `Bribe Officer` lives in `data/work/categories/crime/bribeOfficer.js`. It bypasses the global crime lockout, uses its own 30 minute cooldown (`crime_bribe_officer`), debits wallet money, and can lower heat, raise heat on failure, or rarely jail on a failed bribe.
 - `Lay Low` lives in `data/work/categories/crime/layLow.js`. It bypasses the global crime lockout, uses its own 30 minute cooldown (`crime_lay_low`), runs four decisions, and applies the final score as heat reduction or heat gain. Higher starting heat makes the generated decision set harsher.
 - Heat-management activities intentionally bypass `crime_global`; otherwise players could not reduce heat during the downtime created by crime jobs.
+
+Jail specifics:
+
+- Jail is now session-aware rather than a plain AFK timer. The `jail` table keeps `jailed_until`, `original_sentence_seconds`, `prison_money`, `sentence_reduced_seconds`, `work_count`, `reduction_cap_seconds`, `items`, `effects`, `escape_attempts`, timestamps, and temporary jail state.
+- `utils/jail.js` owns jail schema migration with `CREATE TABLE IF NOT EXISTS` and `ALTER TABLE ADD COLUMN IF NOT EXISTS`; `index.js` calls `ensureJailSchema()` at startup.
+- Prison Money is session-only. Work and prison gambling credit it; contraband spends it. Wallet/bank money cannot buy contraband. On release, leftover Prison Money is converted into wallet cash and written as `jail_prison_money_conversion`.
+- Bail is based on the original sentence, not remaining time. It uses wallet cash only via `tryDebitUser`; bank and Prison Money are intentionally excluded.
+- Work/items respect the configured reduction cap in `data/jail/config.js` (`sentence.reductionCapPercent`, currently 55%). Bail and successful escape bypass the cap by releasing the player.
+- Work detail tasks are handled in `/jail` with different mechanics: memory order, rule matching, risk tile, route choice, sequence order, and effort choice. Diminishing returns are configured under `work.diminishingReturns`.
+- Contraband prices/effects live in `data/jail/config.js`. Session unlocks/items are stored in the `jail.items` JSONB field and clear on release.
+- NPC gambling requires a Deck of Cards and uses Prison Money only. NPC personalities are in `data/jail/npcs.js`.
+- Existing crime/underworld/ritual call sites still use `setJail()`, but it now initializes a full jail session. Store Robbery and failed bribes use 5-15 minute small-crime jail windows, Scam Call trace uses 20-35 minutes, regular Heist uses 20-35 minutes, Major Heist and Underworld full bust remain 45-60 minutes.
 
 Grind specifics:
 

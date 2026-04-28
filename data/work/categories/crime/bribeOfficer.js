@@ -230,7 +230,7 @@ module.exports = function startBribeOfficer(interaction, context = {}) {
         await setCrimeHeat(guildId, userId, heat, HEAT_TTL_MINUTES);
         lines.push(`❌ They take the money, but the room turns hostile. Heat increased by **${gain}%**.`);
         if (Math.random() < target.jailChance) {
-          const minutes = randInt(5, 12);
+          const minutes = randInt(5, 15);
           await setJail(guildId, userId, minutes).catch(() => {});
           lines.push(`⛓️ The setup snaps shut. You were jailed for **${minutes} minutes**.`);
         }

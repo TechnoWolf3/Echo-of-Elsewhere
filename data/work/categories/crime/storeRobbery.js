@@ -41,8 +41,8 @@ const FINE_MAX = 8000;
 // Jail chance (only on busted tiers)
 const JAIL_CHANCE_BUSTED = 0.18;       // uncommon
 const JAIL_CHANCE_BUSTED_HARD = 0.28;  // rare-ish
-const JAIL_MIN_MINUTES = 2;
-const JAIL_MAX_MINUTES = 5;
+const JAIL_MIN_MINUTES = 5;
+const JAIL_MAX_MINUTES = 15;
 
 // Random run events
 const LOOT_DROP_CHANCE = 0.12;
