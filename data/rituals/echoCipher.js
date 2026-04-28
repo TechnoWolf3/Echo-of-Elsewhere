@@ -41,7 +41,7 @@ const INPUT_ID = "cipher_guess";
 
 const sessions = new Map();
 
-const REWARD_BY_ATTEMPT_USED = [30000, 24000, 18000, 14000, 10000, 8000];
+const REWARD_BY_ATTEMPT_USED = [100000, 85000, 70000, 55000, 45000, 35000];
 
 function sessionKey(guildId, userId) {
   return `${guildId}:${userId}`;
@@ -125,7 +125,7 @@ function buildEmbed(session, latestMessage = null) {
     )
     .addFields(
       { name: "Attempts", value: `Used: **${attemptsUsed}/${MAX_ATTEMPTS}**\nRemaining: **${attemptsRemaining}**`, inline: true },
-      { name: "Reward", value: "Solve it for **$8,000 – $30,000** and a chance at a blessing.", inline: true },
+      { name: "Reward", value: "Solve it for **$35,000 – $100,000** and a chance at a blessing.", inline: true },
       { name: "Failure", value: "Miss the code and Echo may answer with **jail**, a **curse**, or both.", inline: false },
       { name: "Attempt History", value: formatHistory(session.history) }
     )
@@ -257,7 +257,7 @@ async function failSession({ session, interaction, reason }) {
 
 async function winSession({ session, interaction }) {
   const attemptsUsed = Math.max(1, session.history.length);
-  const amount = REWARD_BY_ATTEMPT_USED[Math.min(REWARD_BY_ATTEMPT_USED.length - 1, attemptsUsed - 1)] || 8000;
+  const amount = REWARD_BY_ATTEMPT_USED[Math.min(REWARD_BY_ATTEMPT_USED.length - 1, attemptsUsed - 1)] || 35000;
   const nextClaimAt = nextSydneyMidnightUTC();
   await setCooldown(session.guildId, session.userId, nextClaimAt);
 

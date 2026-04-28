@@ -277,13 +277,16 @@ Underworld specifics:
 
 - Hub command: `commands/rituals.js`
 - Ritual registry: `data/rituals/index.js`
+- Ritual payout balance is intentionally stronger than repeatable short work because rituals are once per Sydney day/week/month. Current passive payouts: Daily `$20,000-$35,000`, Weekly `$175,000-$275,000`, Monthly `$900,000-$1,400,000`.
+- Daily interactive ritual payouts are tuned to feel worthwhile beside work/crime cooldowns rather than as tiny novelty claims: Echo Cipher pays `$35,000-$100,000` by attempts used, Veil Sequence pays up to `$85,000`, Blade Grid pays `$60,000-$90,000` on survival, and Echo Wheel has a `$10,000` spin cost with boosted cash/jackpot outcomes.
+- Echo Wheel cash outcomes now report positive `contractEarnings` so ritual earnings contracts progress correctly on wallet/bank cash wins. Non-cash perks, neutral outcomes, and losses still do not count as ritual earnings.
 - Echo Arrangement / Echo Seating lives in `data/rituals/echoArrangement.js`, with scenario/name/clue text pools in `data/rituals/echoArrangementScenarios.js`.
 - Echo Seating is a daily public ritual using the `echo_arrangement` cooldown key. It creates a per-user session with 5-10 seats and mistake limits of 2 for 5 seats, 3 for 6-7 seats, and 4 for 8-10 seats.
 - Puzzle generation creates the hidden answer first, generates clues from that answer, and checks uniqueness with a small solver before showing the puzzle. If a generated puzzle is weak or ambiguous, it retries.
 - Answer input is modal-based and accepts comma-separated names, plus space-separated names when unambiguous. Invalid formatting does not spend a mistake.
 - Wrong answers spend one mistake and only reveal limited feedback, currently correct-position count. Final reveal happens only when solved, when mistakes run out, or when the player gives up.
 - Final Echo Seating reveal mirrors Veil Sequence: `Your Order` appears directly above `Correct Order` for comparison. Give-up without any submitted answer shows `No answer submitted.`
-- Successful Echo Seating rewards go through `creditUserWithEffects` with source/type `echo_arrangement`; payout scales by seat count, has a perfect-solve bonus, and is reduced by mistakes used.
+- Successful Echo Seating rewards go through `creditUserWithEffects` with source/type `echo_arrangement`; payout scales by seat count from `8000 + seatCount * 6500`, has a 1.25x perfect-solve bonus, and is reduced by mistakes used down to a 0.65 floor.
 
 ### Scheduled Systems
 

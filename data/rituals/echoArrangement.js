@@ -416,9 +416,9 @@ function correctPositions(guess, answer) {
 }
 
 function rewardFor(session) {
-  const base = 750 + session.seatCount * 350;
-  const perfectMult = session.mistakesUsed === 0 ? 1.5 : 1;
-  const mistakeMult = Math.max(0.5, 1 - session.mistakesUsed * 0.1);
+  const base = 8000 + session.seatCount * 6500;
+  const perfectMult = session.mistakesUsed === 0 ? 1.25 : 1;
+  const mistakeMult = Math.max(0.65, 1 - session.mistakesUsed * 0.12);
   return Math.round(base * perfectMult * mistakeMult);
 }
 

@@ -9,7 +9,7 @@ module.exports = {
   name: "Weekly Ritual",
   shortName: "Weekly Ritual",
   description: "A steadier rite that returns each Sydney week.",
-  payout: { min: 12000, max: 20000 },
+  payout: { min: 175000, max: 275000 },
   nextClaimAt: nextSydneyMondayMidnightUTC,
   claimText: ({ amount }) => `🕯️ **Weekly Ritual complete.** Echo answers with **$${Number(amount).toLocaleString()}**.`,
   cooldownText: ({ unix }) => `⏳ **Weekly Ritual** has already been completed. Return <t:${unix}:R>.`,

@@ -33,10 +33,10 @@ const CLEANUP_AFTER_COMPLETE_MS = 60 * 1000;
 const SLOT_COUNT = 5;
 
 const REWARD_BY_SCORE = {
-  5: 30000,
-  3: 16000,
-  2: 8000,
-  1: 3500,
+  5: 85000,
+  3: 55000,
+  2: 30000,
+  1: 12000,
   0: 0,
 };
 

@@ -33,8 +33,8 @@ const COLS = 5;
 const TILE_COUNT = ROWS * COLS;
 const SESSION_TTL_MS = 20 * 60 * 1000;
 const CLEANUP_AFTER_COMPLETE_MS = 60 * 1000;
-const WIN_REWARD_MIN = 12000;
-const WIN_REWARD_MAX = 18000;
+const WIN_REWARD_MIN = 60000;
+const WIN_REWARD_MAX = 90000;
 
 const sessions = new Map();
 
