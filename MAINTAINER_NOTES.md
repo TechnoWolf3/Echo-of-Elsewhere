@@ -218,7 +218,7 @@ Farming specifics:
 - Fertiliser stock is stored inside the farm JSON as `farm.fertilisers`.
 - Harvested crops are inserted as produce items in `store_items` and quantities in `user_inventory`.
 - Crop selling is handled by `utils/farming/market.js`.
-- Fertiliser definitions live in `data/farming/fertilisers.js`; crops, machines, livestock, weather, and market tuning live in sibling `data/farming/*` files.
+- Fertiliser definitions live in `data/farming/fertilisers.js`; animal husbandry definitions live in `data/farming/animalHusbandry.js`; crops, machines, livestock, weather, and market tuning live in sibling `data/farming/*` files.
 - Farming embeds, buttons, field pages, market pages, and machine shed pages are built in `features/farming/ui.js`.
 - Farming button/select behaviour is handled in `features/farming/handlers.js`.
 - `/job` should mainly route to farming helpers and redraw the current farming view.
@@ -228,7 +228,7 @@ Farming specifics:
 - Machine task speed comes from the best compatible owned/rented machine set. `machineEngine.getBestTaskSpeedMultiplier()` is applied when starting machine-backed field tasks, with a minimum task duration guard.
 - Machine rentals last 24 hours and are stored as leases in `farm_machines.data.rented`.
 - Machine selling pays 60% of the buy price and only allows free owned machines to be sold. Machines busy in active field tasks are protected.
-- Farm Store is a category hub like Machine Shed. Fertiliser is currently its first stocked category; avoid renaming the page to a fertiliser-only shop.
+- Farm Store is a category hub like Machine Shed. Fertiliser and Animal Husbandry are stocked categories; avoid renaming the page to a fertiliser-only shop.
 - Fertiliser can be applied only while a crop is actively growing in the first 10% of the current growth/regrow cycle or from 75% to before ready. It is optional and not applying it should not penalize the crop.
 - Regrowing crops reset fertiliser stage/application data after harvest, so each regrow cycle can be fertilised again in its own early/late windows.
 - Fertiliser purchases use a select-to-modal flow: choose the fertiliser under the Store's Fertiliser category, then enter the quantity to buy. Purchase debits the bank once for `price * qty`.
@@ -236,6 +236,10 @@ Farming specifics:
 - Fertiliser effects are recorded per stage in `field.fertiliserApplications`: growth mixes shorten the current `readyAt`, yield mixes increase the harvest roll through `getScaledYieldRange()`.
 - Barns are represented as farm fields with `kind: "barn"` and livestock metadata from `data/farming/livestock.js`.
 - Barn actions are handled by `farm_barn_collect:*`, `farm_barn_slaughter:*`, `farm_barn_restock:*`, `farm_barn_upgrade:*`, and `farm_barn_demolish:*` in `features/farming/handlers.js`.
+- Field-to-barn conversion and barn-to-field demolition both reset the resulting structure to level 1. Existing barns keep their saved level until players choose a future conversion/demolition path.
+- Barn upgrades are timed tasks controlled by `BARN_UPGRADE_DURATION_MS`. Animals remain inside during the upgrade, but production is paused and `lastCollectedAt` is reset when the upgrade completes.
+- Barn capacity scales by level. Produce output uses adult animals only; young animals count toward capacity but do not produce until their `maturesAt` time has passed.
+- Animal husbandry items are bought from the Farm Store via `farm_store_husbandry_buy:*` and used from barn views via `farm_barn_breed:*`. Breeding requires a matching livestock type, at least two adults, and enough free capacity for the offspring.
 - Barn produce and slaughter outputs are inserted into `store_items`/`user_inventory` through `addFarmItemToInventory()`. That path now validates `item.itemId || item.id` before writing so missing livestock output IDs fail loudly instead of producing confusing DB errors.
 - Barn collect/slaughter currently record contract progress as `farm_crops_harvested` by output quantity, matching the existing farming contract metric naming.
 

@@ -9,7 +9,7 @@ This folder is the new home for farming-specific command pieces.
 - `../../utils/farming/engine.js` controls farming rules such as fields, crops, planting, cultivating, harvesting, and task timers.
 - `../../utils/farming/machineEngine.js` controls machinery rules such as owned machines, rentals, sales, and busy machines.
 - `../../data/farming/config.js` stores field limits and general farming tuning.
-- `../../data/farming/crops.js`, `machines.js`, `fertilisers.js`, `livestock.js`, `weather.js`, and `marketConfig.js` store the farming content/tuning tables.
+- `../../data/farming/crops.js`, `machines.js`, `fertilisers.js`, `animalHusbandry.js`, `livestock.js`, `weather.js`, and `marketConfig.js` store the farming content/tuning tables.
 
 ## Easy Edits
 
@@ -17,6 +17,7 @@ This folder is the new home for farming-specific command pieces.
 - To change crop growth, crop names, seasons, or yields, edit `data/farming/crops.js`.
 - To change produce market prices, edit `data/farming/marketConfig.js`.
 - To change fertiliser prices/effects, edit `data/farming/fertilisers.js`.
+- To change animal breeding prices, offspring counts, or maturity timers, edit `data/farming/animalHusbandry.js`.
 - To change machine buy/rent prices or speed multipliers, edit `data/farming/machines.js`.
 - To change what the farming pages say or which buttons appear, edit `features/farming/ui.js`.
 - To change what happens when someone presses a farming button, edit `features/farming/handlers.js`.
@@ -32,6 +33,16 @@ This folder is the new home for farming-specific command pieces.
 - Regrowing crops reset fertiliser stages after each harvest, so the next regrow cycle can be fertilised again.
 - If a field is in a fertiliser window and the player owns fertiliser, the field page shows an apply dropdown. If they own none, it should show a `Buy Fertiliser` route.
 - Machine speed multipliers apply to field task durations through the best compatible owned/rented machine set.
+
+## Barn And Husbandry Notes
+
+- Converting a field into a barn now creates a level 1 barn, even if the field had been upgraded.
+- Demolishing a barn back into a field also resets the resulting field to level 1.
+- Barn upgrades are timed tasks. Animals can stay inside, but production is paused until the upgrade completes.
+- Barn capacity scales with barn level. More adult animals means more produce; young animals count toward capacity but do not produce.
+- Animal husbandry items live in the Farm Store and are bought through a select-to-modal flow like fertiliser.
+- Breeding requires a matching husbandry item, at least two adult animals, and enough free barn capacity for the young animals.
+- Young animals mature automatically during farming rollovers and when barn views/production calculations are touched.
 
 ## Rule Of Thumb
 

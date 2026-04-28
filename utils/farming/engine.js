@@ -2,6 +2,7 @@ const { pool } = require("../db");
 const crops = require("../../data/farming/crops");
 const livestock = require("../../data/farming/livestock");
 const fertilisers = require("../../data/farming/fertilisers");
+const animalHusbandry = require("../../data/farming/animalHusbandry");
 const config = require("../../data/farming/config");
 const weather = require("./weather");
 const seasonControl = require("./seasonControl");
@@ -76,6 +77,23 @@ function getFertiliserQty(farm, fertiliserId) {
   return Number(getFarmFertiliserInventory(farm)[fertiliserId] || 0);
 }
 
+function listAnimalHusbandryItems() {
+  return Object.values(animalHusbandry);
+}
+
+function getAnimalHusbandryItem(itemId) {
+  return animalHusbandry[itemId] || null;
+}
+
+function getFarmHusbandryInventory(farm) {
+  if (!farm.husbandry || typeof farm.husbandry !== "object") farm.husbandry = {};
+  return farm.husbandry;
+}
+
+function getAnimalHusbandryQty(farm, itemId) {
+  return Number(getFarmHusbandryInventory(farm)[itemId] || 0);
+}
+
 async function buyFertiliser(guildId, userId, farm, fertiliserId, qty = 1) {
   const fertiliser = getFertiliser(fertiliserId);
   if (!fertiliser) return { ok: false, reasonText: "Unknown fertiliser." };
@@ -84,6 +102,16 @@ async function buyFertiliser(guildId, userId, farm, fertiliserId, qty = 1) {
   inventory[fertiliserId] = getFertiliserQty(farm, fertiliserId) + amount;
   await saveFarm(guildId, userId, farm);
   return { ok: true, fertiliser, qty: amount };
+}
+
+async function buyAnimalHusbandryItem(guildId, userId, farm, itemId, qty = 1) {
+  const item = getAnimalHusbandryItem(itemId);
+  if (!item) return { ok: false, reasonText: "Unknown animal husbandry item." };
+  const amount = Math.max(1, Math.floor(Number(qty) || 1));
+  const inventory = getFarmHusbandryInventory(farm);
+  inventory[itemId] = getAnimalHusbandryQty(farm, itemId) + amount;
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, item, qty: amount };
 }
 
 function getCropProgress(field, now = Date.now()) {
@@ -205,6 +233,68 @@ function getBarnCapacity(barn) {
   return Math.max(1, Number(type.capacityBase || 1) + (Math.max(1, Number(barn?.level || 1)) - 1) * 2);
 }
 
+function getBarnUpgradeDurationMs() {
+  return Math.max(60_000, Number(config.BARN_UPGRADE_DURATION_MS || 60 * 60 * 1000));
+}
+
+function normalizeBarnAnimals(barn) {
+  if (!isBarn(barn)) return { adults: 0, babies: [] };
+
+  const adultCount = Number.isFinite(Number(barn.adultCount))
+    ? Math.max(0, Math.floor(Number(barn.adultCount || 0)))
+    : Math.max(0, Math.floor(Number(barn.animalCount || 0)));
+
+  const babies = Array.isArray(barn.babies)
+    ? barn.babies
+        .map((baby) => ({
+          qty: Math.max(0, Math.floor(Number(baby?.qty || 0))),
+          maturesAt: Number(baby?.maturesAt || 0),
+          itemId: baby?.itemId || null,
+        }))
+        .filter((baby) => baby.qty > 0 && baby.maturesAt > 0)
+    : [];
+
+  barn.adultCount = adultCount;
+  barn.babies = babies;
+  barn.animalCount = adultCount + babies.reduce((sum, baby) => sum + baby.qty, 0);
+  return { adults: adultCount, babies };
+}
+
+function matureBarnAnimals(barn, now = Date.now()) {
+  const animals = normalizeBarnAnimals(barn);
+  let matured = 0;
+  const remaining = [];
+
+  for (const baby of animals.babies) {
+    if (now >= Number(baby.maturesAt || 0)) matured += Number(baby.qty || 0);
+    else remaining.push(baby);
+  }
+
+  if (matured > 0) {
+    barn.adultCount = animals.adults + matured;
+    barn.babies = remaining;
+    barn.animalCount = barn.adultCount + remaining.reduce((sum, baby) => sum + baby.qty, 0);
+    if (!barn.lastCollectedAt) barn.lastCollectedAt = now;
+  }
+
+  return matured;
+}
+
+function getBarnAnimalCounts(barn, now = Date.now()) {
+  matureBarnAnimals(barn, now);
+  const animals = normalizeBarnAnimals(barn);
+  return {
+    adults: animals.adults,
+    babies: animals.babies.reduce((sum, baby) => sum + baby.qty, 0),
+    total: Number(barn.animalCount || 0),
+    babyGroups: animals.babies,
+  };
+}
+
+function isBarnTaskActive(barn, now = Date.now()) {
+  return Boolean(isBarn(barn) && barn?.task?.key && barn?.task?.endsAt && now < Number(barn.task.endsAt));
+}
+
 function getBarnUpgradeCost(currentLevel) {
   return Math.round(getUpgradeCost(currentLevel) * 1.15);
 }
@@ -218,13 +308,33 @@ function getBarnDemolitionCost(barn) {
 
 function getBarnReadyAt(barn) {
   const type = getLivestockType(barn?.livestockType);
-  if (!type || !barn?.lastCollectedAt) return null;
+  if (!type || !barn?.lastCollectedAt || isBarnTaskActive(barn)) return null;
   return Number(barn.lastCollectedAt) + Number(type.productionHours || 6) * 60 * 60 * 1000;
 }
 
 function getBarnProductionInfo(barn, now = Date.now()) {
   const type = getLivestockType(barn?.livestockType);
   if (!type) return { readyCycles: 0, readyAt: null };
+  const counts = getBarnAnimalCounts(barn, now);
+  if (isBarnTaskActive(barn, now)) {
+    return {
+      readyCycles: 0,
+      readyAt: Number(barn.task.endsAt || now),
+      cycleMs: Math.max(1, Number(type.productionHours || 6) * 60 * 60 * 1000),
+      paused: true,
+      adultCount: counts.adults,
+      babyCount: counts.babies,
+    };
+  }
+  if (counts.adults <= 0) {
+    return {
+      readyCycles: 0,
+      readyAt: null,
+      cycleMs: Math.max(1, Number(type.productionHours || 6) * 60 * 60 * 1000),
+      adultCount: 0,
+      babyCount: counts.babies,
+    };
+  }
   const cycleMs = Math.max(1, Number(type.productionHours || 6) * 60 * 60 * 1000);
   const lastCollectedAt = Number(barn.lastCollectedAt || barn.stockedAt || now);
   const elapsed = Math.max(0, now - lastCollectedAt);
@@ -233,6 +343,8 @@ function getBarnProductionInfo(barn, now = Date.now()) {
     readyCycles,
     readyAt: lastCollectedAt + cycleMs,
     cycleMs,
+    adultCount: counts.adults,
+    babyCount: counts.babies,
   };
 }
 
@@ -255,8 +367,10 @@ async function convertFieldToBarn(guildId, userId, farm, fieldIndex, livestockTy
   const now = Date.now();
   farm.fields[fieldIndex] = {
     kind: "barn",
-    level: field.level || 1,
+    level: 1,
     livestockType,
+    adultCount: Math.max(1, Number(type.capacityBase || 1)),
+    babies: [],
     animalCount: Math.max(1, Number(type.capacityBase || 1)),
     stockedAt: now,
     lastCollectedAt: now,
@@ -273,12 +387,12 @@ async function collectBarnProducts(guildId, userId, farm, fieldIndex) {
 
   const production = getBarnProductionInfo(barn);
   if (production.readyCycles <= 0) {
-    return { ok: false, reasonText: "That barn is not ready to collect yet." };
+    return { ok: false, reasonText: production.paused ? "Production is halted while the barn is upgrading." : "That barn is not ready to collect yet." };
   }
 
   const [min, max] = [Number(type.output?.min || 1), Number(type.output?.max || 1)];
   let qty = 0;
-  const animalScale = Math.max(1, Number(barn.animalCount || 1)) / Math.max(1, Number(type.capacityBase || 1));
+  const animalScale = Math.max(1, Number(production.adultCount || 1)) / Math.max(1, Number(type.capacityBase || 1));
   for (let i = 0; i < production.readyCycles; i += 1) {
     qty += Math.max(1, Math.round(randInt(min, max) * animalScale));
   }
@@ -303,6 +417,8 @@ async function slaughterBarn(guildId, userId, farm, fieldIndex) {
   let qty = 0;
   for (let i = 0; i < animals; i += 1) qty += randInt(min, max);
 
+  barn.adultCount = 0;
+  barn.babies = [];
   barn.animalCount = 0;
   barn.lastCollectedAt = null;
   await addFarmItemToInventory(guildId, userId, slaughter, qty);
@@ -316,8 +432,11 @@ async function restockBarn(guildId, userId, farm, fieldIndex) {
   const type = getLivestockType(barn?.livestockType);
   if (!isBarn(barn) || !type) return { ok: false, reasonText: "That barn does not exist." };
   const capacity = getBarnCapacity(barn);
-  if (Number(barn.animalCount || 0) >= capacity) return { ok: false, reasonText: "That barn is already stocked." };
+  const counts = getBarnAnimalCounts(barn);
+  if (counts.total >= capacity) return { ok: false, reasonText: "That barn is already stocked." };
 
+  barn.adultCount = capacity;
+  barn.babies = [];
   barn.animalCount = capacity;
   barn.stockedAt = Date.now();
   barn.lastCollectedAt = Date.now();
@@ -330,7 +449,7 @@ async function demolishBarn(guildId, userId, farm, fieldIndex) {
   if (!isBarn(barn)) return { ok: false, reasonText: "That barn does not exist." };
 
   farm.fields[fieldIndex] = {
-    level: barn.level || 1,
+    level: 1,
     cropId: null,
     state: "empty",
     cultivated: false,
@@ -340,6 +459,81 @@ async function demolishBarn(guildId, userId, farm, fieldIndex) {
 
   await saveFarm(guildId, userId, farm);
   return { ok: true, field: farm.fields[fieldIndex] };
+}
+
+async function startBarnUpgrade(guildId, userId, farm, fieldIndex, durationMs = getBarnUpgradeDurationMs()) {
+  const barn = farm.fields?.[fieldIndex];
+  if (!isBarn(barn)) return { ok: false, reasonText: "That barn does not exist." };
+  if (isBarnTaskActive(barn)) return { ok: false, reasonText: "This barn is already upgrading." };
+  if ((barn.level || 1) >= config.MAX_FIELD_LEVEL) return { ok: false, reasonText: "This barn is already max level." };
+  matureBarnAnimals(barn);
+
+  const now = Date.now();
+  barn.task = {
+    key: "upgrade",
+    startedAt: now,
+    endsAt: now + Math.max(60_000, Number(durationMs || getBarnUpgradeDurationMs())),
+    fromLevel: Number(barn.level || 1),
+    toLevel: Number(barn.level || 1) + 1,
+  };
+  barn.productionPausedAt = now;
+
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, task: barn.task };
+}
+
+async function completeBarnTask(guildId, userId, farm, fieldIndex) {
+  const barn = farm.fields?.[fieldIndex];
+  if (!isBarn(barn)) return { ok: false, reasonText: "That barn does not exist." };
+  if (!barn.task?.key) return { ok: false, reasonText: "This barn has no active task." };
+
+  const task = { ...barn.task };
+  barn.task = null;
+
+  if (task.key === "upgrade") {
+    barn.level = Math.min(config.MAX_FIELD_LEVEL, Math.max(Number(barn.level || 1), Number(task.toLevel || 1)));
+    barn.lastCollectedAt = Date.now();
+    barn.productionPausedAt = null;
+    matureBarnAnimals(barn);
+    await saveFarm(guildId, userId, farm);
+    return { ok: true, completedTask: "upgrade", fieldIndex, level: barn.level };
+  }
+
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, completedTask: task.key, fieldIndex };
+}
+
+async function breedBarnAnimals(guildId, userId, farm, fieldIndex, itemId) {
+  const barn = farm.fields?.[fieldIndex];
+  const item = getAnimalHusbandryItem(itemId);
+  const type = getLivestockType(barn?.livestockType);
+
+  if (!isBarn(barn) || !type) return { ok: false, reasonText: "That barn does not exist." };
+  if (!item) return { ok: false, reasonText: "Unknown animal husbandry item." };
+  if (item.livestockType !== barn.livestockType) return { ok: false, reasonText: `That item is for ${getLivestockType(item.livestockType)?.animalName || "different livestock"}.` };
+  if (isBarnTaskActive(barn)) return { ok: false, reasonText: "Animals cannot be bred while the barn is upgrading." };
+  if (getAnimalHusbandryQty(farm, itemId) <= 0) return { ok: false, reasonText: "You do not own that husbandry item." };
+
+  const counts = getBarnAnimalCounts(barn);
+  if (counts.adults < 2) return { ok: false, reasonText: "You need at least 2 adult animals in the barn to breed." };
+
+  const capacity = getBarnCapacity(barn);
+  const room = Math.max(0, capacity - counts.total);
+  if (room <= 0) return { ok: false, reasonText: "That barn is already at capacity." };
+
+  const qty = Math.min(room, Math.max(1, Number(item.offspring || 1)));
+  const now = Date.now();
+  const maturesAt = now + Math.max(1, Number(item.maturityHours || 24)) * 60 * 60 * 1000;
+  barn.babies = Array.isArray(barn.babies) ? barn.babies : [];
+  barn.babies.push({ qty, maturesAt, itemId });
+  normalizeBarnAnimals(barn);
+
+  const inventory = getFarmHusbandryInventory(farm);
+  inventory[itemId] = Math.max(0, Number(inventory[itemId] || 0) - 1);
+  if (inventory[itemId] <= 0) delete inventory[itemId];
+
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, item, type, qty, maturesAt };
 }
 
 async function ensureFarm(guildId, userId) {
@@ -421,7 +615,11 @@ async function applySeasonRollover(guildId, userId, farm) {
   const currentSeason = getCurrentSeason(guildId);
 
   for (const field of farm.fields || []) {
-    if (isBarn(field)) continue;
+    if (isBarn(field)) {
+      const matured = matureBarnAnimals(field);
+      if (matured > 0) changed = true;
+      continue;
+    }
     updateFieldRuntime(field);
 
     if (field.cropId && !isCropValidForSeason(field.cropId, currentSeason)) {
@@ -817,7 +1015,18 @@ async function applyFieldTaskRollovers(guildId, userId, farm) {
 
   for (let i = 0; i < (farm.fields || []).length; i++) {
     const field = farm.fields[i];
-    if (isBarn(field)) continue;
+    if (isBarn(field)) {
+      const matured = matureBarnAnimals(field);
+      if (matured > 0) changed = true;
+      if (field?.task?.key && field?.task?.endsAt && Date.now() >= Number(field.task.endsAt)) {
+        const result = await completeBarnTask(guildId, userId, farm, i);
+        if (result.ok) {
+          completions.push({ fieldIndex: i, ...result });
+          changed = true;
+        }
+      }
+      continue;
+    }
     if (!field?.task?.key || !field.task.endsAt) continue;
 
     if (Date.now() >= Number(field.task.endsAt)) {
@@ -869,6 +1078,10 @@ module.exports = {
   getFertiliser,
   getFertiliserQty,
   buyFertiliser,
+  listAnimalHusbandryItems,
+  getAnimalHusbandryItem,
+  getAnimalHusbandryQty,
+  buyAnimalHusbandryItem,
   getFertiliserWindow,
   getCropProgress,
   getFertiliserYieldBonus,
@@ -876,6 +1089,9 @@ module.exports = {
   getLivestockType,
   isBarn,
   getBarnCapacity,
+  getBarnUpgradeDurationMs,
+  getBarnAnimalCounts,
+  isBarnTaskActive,
   getBarnUpgradeCost,
   getBarnDemolitionCost,
   getBarnReadyAt,
@@ -885,4 +1101,7 @@ module.exports = {
   slaughterBarn,
   restockBarn,
   demolishBarn,
+  startBarnUpgrade,
+  completeBarnTask,
+  breedBarnAnimals,
 };

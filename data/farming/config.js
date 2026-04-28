@@ -21,6 +21,7 @@ module.exports = {
 
   BARN_DEMOLITION_BASE_COST: 120000,
   BARN_DEMOLITION_LEVEL_MULTIPLIER: 35000,
+  BARN_UPGRADE_DURATION_MS: 60 * 60 * 1000,
 
   SEASONS: ["spring", "summer", "autumn", "winter"],
 

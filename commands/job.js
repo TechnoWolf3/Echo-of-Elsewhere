@@ -740,16 +740,19 @@ function scheduleReturnToCategory(delayMs = 5000) {
       if (session.view === "farm_store") {
         const farm = await farming.ensureFarm(guildId, userId);
         const storePage = session.farmStorePage || "home";
+        const storeEmbed = storePage === "fertiliser"
+          ? farmingUi.buildFarmStoreFertiliserEmbed(farm)
+          : storePage === "husbandry"
+            ? farmingUi.buildFarmStoreHusbandryEmbed(farm)
+            : farmingUi.buildFarmStoreHomeEmbed(farm);
+        const storeComponents = storePage === "fertiliser"
+          ? farmingUi.buildFarmStoreFertiliserComponents(farm)
+          : storePage === "husbandry"
+            ? farmingUi.buildFarmStoreHusbandryComponents(farm)
+            : farmingUi.buildFarmStoreHomeComponents(farm);
         return msg.edit({
-          embeds: [
-            storePage === "fertiliser"
-              ? farmingUi.buildFarmStoreFertiliserEmbed(farm)
-              : farmingUi.buildFarmStoreHomeEmbed(farm),
-          ],
-          components:
-            storePage === "fertiliser"
-              ? farmingUi.buildFarmStoreFertiliserComponents(farm)
-              : farmingUi.buildFarmStoreHomeComponents(farm),
+          embeds: [storeEmbed],
+          components: storeComponents,
         }).catch(() => {});
       }
 
@@ -880,7 +883,9 @@ function scheduleReturnToCategory(delayMs = 5000) {
         // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
         const isClerkRuntime = actionId.startsWith("grind_clerk:");
         const isTaxiRuntime = actionId.startsWith("grind_taxi:");
-        const isFarmingModalRuntime = actionId.startsWith("farm_store_fertiliser_buy:");
+        const isFarmingModalRuntime =
+          actionId.startsWith("farm_store_fertiliser_buy:") ||
+          actionId.startsWith("farm_store_husbandry_buy:");
         if (isClerkRuntime || isTaxiRuntime || isFarmingModalRuntime) {
           resetInactivity();
           cancelAutoReturn();

@@ -21,6 +21,7 @@ function isFarmingInteraction(actionId) {
     actionId === "farm_store" ||
     actionId === "farm_store_home" ||
     actionId === "farm_store_fertiliser" ||
+    actionId === "farm_store_husbandry" ||
     actionId === "farm_machines" ||
     actionId === "farm_back" ||
     actionId === "machine_home" ||
@@ -40,12 +41,14 @@ function isFarmingInteraction(actionId) {
     actionId.startsWith("farm_barn_collect:") ||
     actionId.startsWith("farm_barn_slaughter:") ||
     actionId.startsWith("farm_barn_restock:") ||
+    actionId.startsWith("farm_barn_breed:") ||
     actionId.startsWith("farm_barn_upgrade:") ||
     actionId.startsWith("farm_barn_demolish:") ||
     actionId.startsWith("farm_plant:") ||
     actionId.startsWith("farm_harvest:") ||
     actionId.startsWith("farm_fertilise:") ||
     actionId.startsWith("farm_store_fertiliser_buy:") ||
+    actionId.startsWith("farm_store_husbandry_buy:") ||
     actionId.startsWith("farm_sell:") ||
     actionId === "farm_buy"
   );
@@ -93,6 +96,13 @@ async function handleFarmingInteraction({
   if (actionId === "farm_store_fertiliser") {
     session.view = "farm_store";
     session.farmStorePage = "fertiliser";
+    await redraw();
+    return true;
+  }
+
+  if (actionId === "farm_store_husbandry") {
+    session.view = "farm_store";
+    session.farmStorePage = "husbandry";
     await redraw();
     return true;
   }
@@ -335,6 +345,74 @@ async function handleFarmingInteraction({
       return true;
     }
     await submitted.editReply(`Bought ${qty}x ${result.fertiliser.name} for $${totalCost.toLocaleString()}.`).catch(() => {});
+    await redraw();
+    return true;
+  }
+
+  if (actionId.startsWith("farm_store_husbandry_buy:")) {
+    const itemId = actionId.split(":")[1];
+    const farm = await farming.ensureFarm(guildId, userId);
+    const item = farming.getAnimalHusbandryItem(itemId);
+    if (!item) {
+      await interaction.followUp({ content: "Unknown husbandry item.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId(`farm_store_husbandry_qty:${itemId}:${interaction.id}`)
+      .setTitle(`Buy ${item.name}`)
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("qty")
+            .setLabel("Quantity")
+            .setPlaceholder("Example: 2")
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
+      );
+
+    await interaction.showModal(modal);
+    const submitted = await interaction.awaitModalSubmit({
+      time: 60_000,
+      filter: (modalInteraction) =>
+        modalInteraction.user.id === userId &&
+        modalInteraction.customId === `farm_store_husbandry_qty:${itemId}:${interaction.id}`,
+    }).catch(() => null);
+
+    if (!submitted) return true;
+    await submitted.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+
+    const qty = Math.floor(Number(submitted.fields.getTextInputValue("qty")));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      await submitted.editReply("Enter a whole number greater than 0.").catch(() => {});
+      return true;
+    }
+    if (qty > 99) {
+      await submitted.editReply("Buy 99 or fewer at a time.").catch(() => {});
+      return true;
+    }
+
+    const totalCost = Number(item.price || 0) * qty;
+    const debit = await tryDebitBank(guildId, userId, totalCost, "farming_husbandry_purchase", {
+      enterprise: "farming",
+      action: "buy_husbandry",
+      itemId,
+      qty,
+    });
+    if (!debit.ok) {
+      await submitted.editReply(`You need $${totalCost.toLocaleString()} in your bank to buy ${qty}x ${item.name}.`).catch(() => {});
+      return true;
+    }
+
+    const result = await farming.buyAnimalHusbandryItem(guildId, userId, farm, itemId, qty);
+    if (!result.ok) {
+      await creditBank(guildId, userId, totalCost, "farming_husbandry_refund", { itemId, qty });
+      await submitted.editReply(result.reasonText).catch(() => {});
+      return true;
+    }
+
+    await submitted.editReply(`Bought ${qty}x ${result.item.name} for $${totalCost.toLocaleString()}.`).catch(() => {});
     await redraw();
     return true;
   }
@@ -607,6 +685,29 @@ async function handleFarmingInteraction({
     return true;
   }
 
+  if (actionId.startsWith("farm_barn_breed:")) {
+    const [, fieldIndexRaw, itemId] = actionId.split(":");
+    const fieldIndex = Number(fieldIndexRaw);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const result = await farming.breedBarnAnimals(guildId, userId, farm, fieldIndex, itemId);
+
+    if (!result.ok) {
+      await interaction.followUp({ content: `âŒ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `âœ… Added ${result.qty} ${result.item.babyName || "baby animals"} to ${result.type.name}. They mature <t:${Math.floor(Number(result.maturesAt) / 1000)}:R>.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
   if (actionId.startsWith("farm_barn_upgrade:")) {
     const fieldIndex = Number(actionId.split(":")[1]);
     const farm = await farming.ensureFarm(guildId, userId);
@@ -624,28 +725,29 @@ async function handleFarmingInteraction({
 
     if (!debit.ok) {
       await interaction.followUp({
-        content: `❌ You need $${cost.toLocaleString()} in your bank to upgrade this barn.`,
+        content: `Failed: you need $${cost.toLocaleString()} in your bank to upgrade this barn.`,
         flags: MessageFlags.Ephemeral,
       }).catch(() => {});
       return true;
     }
 
-    const field = farm.fields?.[fieldIndex];
-    if (!farming.isBarn(field) || currentLevel >= config.MAX_FIELD_LEVEL) {
+    const result = await farming.startBarnUpgrade(guildId, userId, farm, fieldIndex);
+    if (!result.ok) {
       await creditBank(guildId, userId, cost, "farming_barn_upgrade_refund", {
         enterprise: "farming",
         action: "upgrade_barn_refund",
         fieldIndex,
-        reason: "upgrade_failed",
+        reason: result.reasonText || "upgrade_failed",
       });
-      await interaction.followUp({ content: "❌ This barn cannot be upgraded right now.", flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.followUp({ content: `Failed: ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
 
-    field.level = currentLevel + 1;
-    await farming.saveFarm(guildId, userId, farm);
-
     const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `Barn upgrade started. Production is halted until it completes <t:${Math.floor(Number(result.task.endsAt) / 1000)}:R>.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
     await msg.edit({
       embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
       components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),

@@ -9,7 +9,7 @@ module.exports = {
   name: "Monthly Ritual",
   shortName: "Monthly Ritual",
   description: "A heavier rite paid out once each Sydney month.",
-  payout: { min: 900000, max: 1400000 },
+  payout: { min: 500000, max: 800000 },
   nextClaimAt: nextSydneyMonthMidnightUTC,
   claimText: ({ amount }) => `🕯️ **Monthly Ritual complete.** Echo grants **$${Number(amount).toLocaleString()}**.`,
   cooldownText: ({ unix }) => `⏳ **Monthly Ritual** is not ready yet. Return <t:${unix}:R>.`,

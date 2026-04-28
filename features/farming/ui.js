@@ -77,6 +77,7 @@ function buildFarmStoreHomeEmbed() {
           "Buy supplies for the farm.",
           "",
           "**Fertiliser** - Optional crop boosts for growth speed and yield.",
+          "**Animal Husbandry** - Breeding items for barns.",
         ].join("\n")
       ),
     "job"
@@ -89,6 +90,10 @@ function buildFarmStoreHomeComponents() {
       new ButtonBuilder()
         .setCustomId("farm_store_fertiliser")
         .setLabel("Fertiliser")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId("farm_store_husbandry")
+        .setLabel("Animal Husbandry")
         .setStyle(ButtonStyle.Primary)
     ),
     new ActionRowBuilder().addComponents(
@@ -141,6 +146,54 @@ function buildFarmStoreFertiliserComponents() {
             label: fertiliser.name,
             value: `farm_store_fertiliser_buy:${fertiliser.id}`,
             description: `$${Number(fertiliser.price || 0).toLocaleString()} - ${fertiliser.description}`.slice(0, 100),
+          }))
+        )
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("farm_store_home")
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
+    ),
+  ];
+}
+
+function buildFarmStoreHusbandryEmbed(farm) {
+  const itemLines = farming.listAnimalHusbandryItems().map((item) => {
+    const qty = farming.getAnimalHusbandryQty(farm, item.id);
+    const type = farming.getLivestockType(item.livestockType);
+    return [
+      `**${item.name}** - ${ui.money(item.price)}`,
+      item.description,
+      `Owned: **${qty}** - For: **${type?.animalName || "Livestock"}** - Matures in **${item.maturityHours}h**`,
+    ].join("\n");
+  });
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle("Farm Store - Animal Husbandry")
+      .setDescription("Buy breeding supplies for barns. Baby animals count toward capacity but do not produce until mature.")
+      .addFields({
+        name: "Stock",
+        value: itemLines.join("\n\n"),
+      })
+      .setFooter({ text: "Use husbandry items from the barn page. Barn upgrades pause production until complete." }),
+    "job"
+  );
+}
+
+function buildFarmStoreHusbandryComponents() {
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("farm_store_husbandry_select")
+        .setPlaceholder("Choose husbandry item to buy...")
+        .addOptions(
+          farming.listAnimalHusbandryItems().map((item) => ({
+            label: item.name,
+            value: `farm_store_husbandry_buy:${item.id}`,
+            description: `$${Number(item.price || 0).toLocaleString()} - ${item.description}`.slice(0, 100),
           }))
         )
     ),
@@ -413,12 +466,18 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
       if (farming.isBarn(field)) {
         const type = farming.getLivestockType(field.livestockType);
         const production = farming.getBarnProductionInfo(field);
-        const status = Number(field.animalCount || 0) <= 0
+        const barnCounts = farming.getBarnAnimalCounts(field);
+        const status = farming.isBarnTaskActive(field)
+          ? `Upgrading, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`
+          : barnCounts.total <= 0
           ? "Empty barn"
           : production.readyCycles > 0
             ? `${type?.output?.name || "Products"} ready`
-            : `Next produce <t:${Math.floor(Number(production.readyAt || Date.now()) / 1000)}:R>`;
-        return `**Barn ${index + 1}** - Lv ${field.level || 1} - ${type?.animalName || "Livestock"} - ${status}`;
+            : barnCounts.adults > 0 && production.readyAt
+              ? `Next produce <t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
+              : "Waiting for adults";
+        const babyText = barnCounts.babies > 0 ? ` (${barnCounts.babies} young)` : "";
+        return `**Barn ${index + 1}** - Lv ${field.level || 1} - ${type?.animalName || "Livestock"} - ${barnCounts.adults}/${farming.getBarnCapacity(field)} adults${babyText} - ${status}`;
       }
 
       let status = "Empty";
@@ -594,11 +653,19 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
     const type = farming.getLivestockType(field.livestockType);
     const capacity = farming.getBarnCapacity(field);
     const production = farming.getBarnProductionInfo(field);
-    const readyText = production.readyCycles > 0
+    const counts = farming.getBarnAnimalCounts(field);
+    const babyLine = counts.babyGroups.length
+      ? counts.babyGroups.map((baby) => `${baby.qty} young mature <t:${Math.floor(Number(baby.maturesAt) / 1000)}:R>`).join("\n")
+      : "None";
+    const readyText = production.paused
+      ? `Paused for upgrade until <t:${Math.floor(Number(production.readyAt || Date.now()) / 1000)}:R>`
+      : production.readyCycles > 0
       ? `Ready now (${production.readyCycles} cycle${production.readyCycles === 1 ? "" : "s"})`
-      : field.animalCount > 0 && production.readyAt
+      : counts.adults > 0 && production.readyAt
         ? `<t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
-        : "Restock animals to restart production.";
+        : counts.babies > 0
+          ? "Waiting for adults."
+          : "Restock or breed animals to restart production.";
 
     return new EmbedBuilder()
       .setTitle(`🚜 Barn ${fieldIndex + 1}`)
@@ -617,6 +684,14 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
           `🍂 **Season:** ${farming.getCurrentSeason(guildId)}`,
         ].join("\n")
       )
+      .addFields({
+        name: "Animal Ages",
+        value: [
+          `Adults: **${counts.adults}/${capacity}**`,
+          `Young: **${counts.babies}/${capacity}** capacity used`,
+          `Maturing: ${babyLine}`,
+        ].join("\n"),
+      })
       .setColor(ui.systems.job.color)
       .setFooter({ text: "Barns produce over time. Slaughter clears the current stock." });
   }
@@ -903,7 +978,10 @@ function buildBarnComponents(farm, fieldIndex) {
   if (!farming.isBarn(barn)) return buildFieldComponents(farm, fieldIndex);
 
   const production = farming.getBarnProductionInfo(barn);
-  const hasAnimals = Number(barn.animalCount || 0) > 0;
+  const counts = farming.getBarnAnimalCounts(barn);
+  const hasAnimals = counts.total > 0;
+  const hasAdults = counts.adults > 0;
+  const busy = farming.isBarnTaskActive(barn);
 
   rows.push(
     new ActionRowBuilder().addComponents(
@@ -911,19 +989,56 @@ function buildBarnComponents(farm, fieldIndex) {
         .setCustomId(`farm_barn_collect:${fieldIndex}`)
         .setLabel("Collect Produce")
         .setStyle(ButtonStyle.Success)
-        .setDisabled(!hasAnimals || production.readyCycles <= 0),
+        .setDisabled(busy || !hasAdults || production.readyCycles <= 0),
       new ButtonBuilder()
         .setCustomId(`farm_barn_slaughter:${fieldIndex}`)
         .setLabel("Slaughter")
         .setStyle(ButtonStyle.Danger)
-        .setDisabled(!hasAnimals),
+        .setDisabled(busy || !hasAnimals),
       new ButtonBuilder()
         .setCustomId(`farm_barn_restock:${fieldIndex}`)
         .setLabel("Restock")
         .setStyle(ButtonStyle.Primary)
-        .setDisabled(hasAnimals)
+        .setDisabled(busy || hasAnimals)
     )
   );
+
+  const husbandryOptions = farming
+    .listAnimalHusbandryItems()
+    .filter((item) => item.livestockType === barn.livestockType && farming.getAnimalHusbandryQty(farm, item.id) > 0);
+
+  if (husbandryOptions.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`farm_barn_breed_select:${fieldIndex}`)
+          .setPlaceholder("Breed animals...")
+          .setDisabled(busy)
+          .addOptions(
+            husbandryOptions.map((item) => ({
+              label: `${item.name} (${farming.getAnimalHusbandryQty(farm, item.id)})`,
+              value: `farm_barn_breed:${fieldIndex}:${item.id}`,
+              description: `${item.offspring} ${item.babyName} - matures in ${item.maturityHours}h`,
+            }))
+          )
+      )
+    );
+  } else {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("farm_husbandry_none")
+          .setLabel("No Husbandry Items")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(true),
+        new ButtonBuilder()
+          .setCustomId("farm_store_husbandry")
+          .setLabel("Buy Husbandry")
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(busy)
+      )
+    );
+  }
 
   if ((barn.level || 1) < config.MAX_FIELD_LEVEL) {
     const upgradeCost = farming.getBarnUpgradeCost(barn.level || 1);
@@ -933,6 +1048,7 @@ function buildBarnComponents(farm, fieldIndex) {
           .setCustomId(`farm_barn_upgrade:${fieldIndex}`)
           .setLabel(`Upgrade Barn ($${upgradeCost.toLocaleString()})`)
           .setStyle(ButtonStyle.Primary)
+          .setDisabled(busy)
       )
     );
   }
@@ -943,6 +1059,7 @@ function buildBarnComponents(farm, fieldIndex) {
         .setCustomId(`farm_barn_demolish:${fieldIndex}`)
         .setLabel(`Demolish (${ui.money(farming.getBarnDemolitionCost(barn))})`)
         .setStyle(ButtonStyle.Danger)
+        .setDisabled(busy)
     )
   );
 
@@ -966,6 +1083,8 @@ module.exports = {
   buildFarmStoreHomeComponents,
   buildFarmStoreFertiliserEmbed,
   buildFarmStoreFertiliserComponents,
+  buildFarmStoreHusbandryEmbed,
+  buildFarmStoreHusbandryComponents,
   buildMachineShedHomeEmbed,
   buildMachineShedHomeComponents,
   buildMachineActionEmbed,
