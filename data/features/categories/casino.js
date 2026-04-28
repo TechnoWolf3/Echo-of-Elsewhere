@@ -4,49 +4,66 @@ module.exports = {
   order: 2,
   name: "Casino",
   emoji: "🎰",
-  blurb: "About our Casino.",
+  blurb: "Money games tied directly into the shared economy.",
   description:
-    "The Casino is a money-driven game hub connected directly to the server bank. Place bets, test your luck across multiple games. Wins withdraw from the vault, losses feed it back in.",
+    "The Casino is a money-driven games hub connected to the server bank. Players place bets, test their luck, and move money through the wider economy. Wins withdraw from the vault, losses feed it back in.",
 
-  // Items shown inside the category (like help.commands)
   items: [
     {
-      id: "higher_Lower",
-      name: "🎴 Higher or Lower",
-      short: "Fast-paced risk rounds with instant outcomes.",
+      id: "games_hub_casino",
+      name: "Casino Hub",
+      short: "Launch casino games from /games.",
       detail:
-        "Higher or Lower is built for quick decisions and rapid momentum.\n" +
-        "it’s a streamlined, reaction-driven casino game designed for fast betting cycles without heavy setup.\n" +
-        "Clean visuals, simple choices, and immediate results make it perfect for players who want quick risk with real economic impact.\n" +
-        "Every round ties directly into the server bank, keeping even short sessions meaningful.",
+        "Use **/games** to open the games hub, then choose the Casino category.\n\n" +
+        "The hub tracks whether a game is already active in the channel, supports refresh/back/home controls, and prevents overlapping games in the same channel.",
+    },
+    {
+      id: "higher_lower",
+      name: "Higher or Lower",
+      short: "Build a streak by predicting the next card.",
+      detail:
+        "Higher or Lower is a fast betting game where players predict whether the next card will be higher or lower.\n\n" +
+        "Correct guesses build a streak and grow the potential payout. A wrong guess ends the run, while cashing out locks in the current reward.",
     },
     {
       id: "blackjack",
-      name: "♠️ Blackjack (21)",
-      short: "A structured card table experience with strategic pacing.",
+      name: "Blackjack",
+      short: "Classic 21 with hits, stands, doubles, and splits.",
       detail:
-        "Blackjack delivers a classic table-style experience with interactive actions and clear game flow.\n" +
-        "Designed to feel readable and deliberate, it balances strategy and risk while staying smooth inside Discord.\n" +
-        "Outcomes are resolved cleanly, bets are validated securely, and payouts flow directly between accounts.",
+        "Blackjack delivers a structured table game inside Discord.\n\n" +
+        "Players try to beat the dealer by getting as close to 21 as possible without busting. The game supports core actions like hit, stand, double, and split.",
     },
     {
       id: "roulette",
-      name: "🎰 Roulette",
-      short: "Spin-based betting with instant resolution.",
+      name: "Roulette",
+      short: "Spin-based betting on colours, zero, or numbers.",
       detail:
-        "Roulette brings high-energy, spin-driven betting into the casino suite.\n" +
-        "It’s designed for quick wagers and satisfying outcomes without unnecessary complexity.\n" +
-        "esults are calculated cleanly and reflected immediately in both personal balances and the server vault.\n" +
-        "It’s simple to engage with, but always impactful within the shared economy.",
+        "Roulette lets players place quick wagers on red, black, green zero, or specific numbers.\n\n" +
+        "Safer bets pay less, while exact-number and zero bets carry higher risk for higher payout potential.",
+    },
+    {
+      id: "keno",
+      name: "Keno",
+      short: "Pick numbers and wait for the draw.",
+      detail:
+        "Keno offers draw-based casino play from the games hub.\n\n" +
+        "Players choose entries and wait for the draw result. It is built for simple odds, quick resolution, and clear risk.",
+    },
+    {
+      id: "scratchcards",
+      name: "Scratch Cards",
+      short: "Fast fixed-price scratchie outcomes.",
+      detail:
+        "Scratch Cards are quick casino hits with a fixed entry price.\n\n" +
+        "Players pick a card, reveal the result, and immediately see whether they hit a payout.",
     },
     {
       id: "bullshit",
-      name: "🃏 Bullshit!",
-      short: "A social bluffing card game with calculated chaos.",
+      name: "Bullshit",
+      short: "A social bluffing card game with dangerous calls.",
       detail:
-        "Bullshit! adds a social edge to the casino environment, built around deception, timing, and bold calls.\n" +
-        "Unlike pure luck-based games, this one rewards reading the table and choosing the right moment to challenge.\n" +
-        "- With a twist of Russian Roulette when something goes wrong, Bullshit! is sure to keep you on your toes.",
+        "Bullshit adds a social bluffing game to the casino suite.\n\n" +
+        "Players place cards face down, declare what they played, and dare the table to believe them. Calling a lie can swing the round hard.",
     },
   ],
 };

@@ -7,6 +7,7 @@ const truckerCfg = require("../../data/work/categories/nineToFive/trucker");
 const { emailSorterCfg, generateRun, scoreRun } = require("./emailSorter");
 const ui = require("../../utils/ui");
 const nineToFiveUi = require("./ui");
+const truckerRuns = require("../../utils/truckerRuns");
 
 const JOB_COOLDOWNS = {
   contract: { key: "job:95:contract", label: "Transport Contract", seconds: contractCfg.cooldownSeconds ?? 10 * 60 },
@@ -76,12 +77,16 @@ async function handleNineToFiveInteraction({
       interaction,
       session,
       msg,
+      guildId,
+      userId,
       checkCooldownOrTell,
     });
   }
 
   if (actionId === "job_trucker_collect") {
     return collectTrucker({
+      guildId,
+      userId,
       session,
       msg,
       payUser,
@@ -242,13 +247,15 @@ async function handleNineToFiveEntry({
   if (mode === "trucker") {
     session.view = "trucker";
     if (session.trucker?.interval) clearInterval(session.trucker.interval);
-    session.trucker = {
+    session.trucker = await truckerRuns.getActiveRun(interaction.guildId, interaction.user.id) || {
       manifest: nineToFiveUi.generateTruckerManifest(),
       startMs: 0,
       durationMs: 0,
       ready: false,
       interval: null,
     };
+
+    armTruckerTimer({ session, msg });
 
     await msg.edit({
       embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker)],
@@ -275,7 +282,7 @@ async function handleNineToFiveEntry({
   return true;
 }
 
-async function startTrucker({ interaction, session, msg, checkCooldownOrTell }) {
+async function startTrucker({ interaction, session, msg, guildId, userId, checkCooldownOrTell }) {
   if (!session.trucker) {
     session.trucker = {
       manifest: nineToFiveUi.generateTruckerManifest(),
@@ -291,11 +298,27 @@ async function startTrucker({ interaction, session, msg, checkCooldownOrTell }) 
   session.trucker.startMs = Date.now();
   session.trucker.durationMs = session.trucker.manifest.durationMinutes * 60_000;
   session.trucker.ready = false;
+  session.trucker = await truckerRuns.startRun(
+    guildId,
+    userId,
+    session.trucker.manifest,
+    session.trucker.startMs,
+    session.trucker.durationMs
+  );
 
   await msg.edit({
     embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker)],
     components: nineToFiveUi.buildTruckerButtons(session.trucker),
   }).catch(() => {});
+
+  armTruckerTimer({ session, msg });
+
+  return true;
+}
+
+function armTruckerTimer({ session, msg }) {
+  if (!session.trucker?.startMs) return;
+  if (session.trucker.interval) clearInterval(session.trucker.interval);
 
   const tickMs = Math.max(5_000, (truckerCfg.updateEverySeconds || 30) * 1000);
   session.trucker.interval = setInterval(async () => {
@@ -320,28 +343,39 @@ async function startTrucker({ interaction, session, msg, checkCooldownOrTell }) 
     }
   } catch {}
 }, tickMs);
-
-  return true;
 }
 
-async function collectTrucker({ session, msg, payUser, scheduleReturnToCategory }) {
+async function collectTrucker({ guildId, userId, session, msg, payUser, scheduleReturnToCategory }) {
+  const persistedRun = await truckerRuns.getActiveRun(guildId, userId);
+  if (persistedRun) session.trucker = persistedRun;
   if (!session.trucker?.ready) return true;
 
+  const payableRun = await truckerRuns.claimReadyRun(guildId, userId);
+  if (!payableRun) return true;
+  session.trucker = payableRun;
+
   const manifest = session.trucker.manifest;
-  const paid = await payUser(
-    manifest.payoutBase,
-    "job_95_trucker",
-    truckerCfg.xp?.success ?? 0,
-    {
-      freight: manifest.freight,
-      truckType: manifest.truckType,
-      from: nineToFiveUi.formatRoutePlace(manifest.route.from),
-      to: nineToFiveUi.formatRoutePlace(manifest.route.to),
-      distanceKm: manifest.distanceKm,
-      durationMinutes: manifest.durationMinutes,
-    },
-    { countJob: true, allowLegendarySpawn: true, activityEffects: truckerCfg.activityEffects, cooldownKey: "job:95:trucker", cooldownSeconds: 0 }
-  );
+  let paid;
+  try {
+    paid = await payUser(
+      manifest.payoutBase,
+      "job_95_trucker",
+      truckerCfg.xp?.success ?? 0,
+      {
+        freight: manifest.freight,
+        truckType: manifest.truckType,
+        from: nineToFiveUi.formatRoutePlace(manifest.route.from),
+        to: nineToFiveUi.formatRoutePlace(manifest.route.to),
+        distanceKm: manifest.distanceKm,
+        durationMinutes: manifest.durationMinutes,
+      },
+      { countJob: true, allowLegendarySpawn: true, activityEffects: truckerCfg.activityEffects, cooldownKey: "job:95:trucker", cooldownSeconds: 0 }
+    );
+    await truckerRuns.completePaidRun(guildId, userId);
+  } catch (error) {
+    await truckerRuns.releaseClaim(guildId, userId).catch(() => {});
+    throw error;
+  }
 
   if (session.trucker?.interval) {
     clearInterval(session.trucker.interval);

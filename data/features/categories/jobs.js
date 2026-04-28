@@ -122,5 +122,60 @@ module.exports = {
         "Major Heist sits at the top of the crime ladder.\n\n" +
         "Huge payouts are possible, but so are huge losses, major heat, and hard consequences. It is designed for players who want to push their luck all the way.",
     },
+    {
+      id: "jail_system",
+      name: "Jail System",
+      short: "Crime consequences with bail, prison work, contraband, escape, and cards.",
+      detail:
+        "Jail is what happens when Echo decides your crime career needs a concrete timeout.\n\n" +
+        "While jailed, players can use **/jail** to open the jail hub. From there they can pay harsh bail, work prison details for Prison Money and modest sentence reduction, buy contraband, attempt escape, gamble at the card table, or simply wait it out.\n\n" +
+        "Prison Money only exists inside the current jail session. It is earned from jail activities, spent on contraband or gambling, and converts to wallet cash on release. Wallet and bank money cannot buy contraband.\n\n" +
+        "Jail is interactive now, but it is still punishment: bail is expensive, escape failure is harsh, and work/items cannot erase the full sentence.",
+    },
+    {
+      id: "underworld_overview",
+      name: "Underworld",
+      short: "Persistent illegal operations with buildings, runs, events, suspicion, and raids.",
+      detail:
+        "Underworld is a high-cost, high-risk path inside **/job**. It is built around persistent buildings that keep moving while the player is offline.\n\n" +
+        "The live branch is **Operations**. Players buy warehouse shells, convert them into operations, fund runs, respond to live events, and choose how aggressively to distribute the results.\n\n" +
+        "Underworld is not a quick button payout. It uses bank-funded setup costs, timed conversions, timed runs, suspicion pressure, raid chances, and serious consequences if a full bust hits.",
+    },
+    {
+      id: "underworld_buildings_operations",
+      name: "Underworld - Buildings & Operations",
+      short: "Buy warehouses and convert them into labs or storage operations.",
+      detail:
+        "Underworld starts with buildings. Players can buy Small, Medium, or Large Warehouses, up to the configured building limit.\n\n" +
+        "A purchased shell can be converted into a **Meth Lab**, **Cocaine Lab**, or **Storage House**. Conversion costs bank money, contributes to the server bank, and takes time before the building becomes usable.\n\n" +
+        "Meth and cocaine labs run paid batches that later need distribution. Storage Houses generate fenced goods that can cool off before sale.",
+    },
+    {
+      id: "underworld_runs_events",
+      name: "Underworld - Runs, Events & Distribution",
+      short: "Start paid runs, handle events, then choose safe, standard, or aggressive distribution.",
+      detail:
+        "Once a building has an operation installed, players can start a run by paying the batch cost from the bank.\n\n" +
+        "Runs can open live events such as police patrols, equipment issues, expansion offers, or loose neighborhood talk. Responding can cost money, reduce or increase suspicion, change output, or shift raid odds. Ignored events apply their own penalties when the window expires.\n\n" +
+        "When a run is ready, distribution choices decide the final push: **Safe** pays less and reduces risk, **Standard** is balanced, and **Aggressive** pays more while adding suspicion and raid chance.",
+    },
+    {
+      id: "underworld_suspicion_raids",
+      name: "Underworld - Suspicion, Raids & Dismantling",
+      short: "Manage suspicion or risk raids, lost payouts, full busts, and jail.",
+      detail:
+        "Each building has suspicion. Suspicion decays over time, but events, aggressive distribution, early storage sales, and raid outcomes can push it back up.\n\n" +
+        "Distribution rolls against raid risk. Minor raids reduce payout and add suspicion. Major raids can wipe the payout. A full bust can remove the building and send the player to jail.\n\n" +
+        "Players can dismantle an installed operation for a partial refund based on investment and suspicion. Emergency dismantle is available even in rougher states, but pays much less.",
+    },
+    {
+      id: "underworld_storage",
+      name: "Underworld - Storage Houses",
+      short: "Generate fenced goods, wait through cool-off, or sell early with extra risk.",
+      detail:
+        "Storage Houses turn paid runs into stored goods such as counterfeit electronics, designer knockoffs, auto parts, grey-market phones, and luxury watches.\n\n" +
+        "Goods have cool-off timers before they are safer to sell. Selling early can reduce payout, add suspicion, increase raid risk, and may trigger a stolen-goods report.\n\n" +
+        "Storage buildings have capacity. If storage is full, players need to sell goods before starting another storage run.",
+    },
   ],
 };

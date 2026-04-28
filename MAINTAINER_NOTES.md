@@ -192,8 +192,11 @@ Jail specifics:
 - Bail is based on the original sentence, not remaining time. It uses wallet cash only via `tryDebitUser`; bank and Prison Money are intentionally excluded.
 - Work/items respect the configured reduction cap in `data/jail/config.js` (`sentence.reductionCapPercent`, currently 55%). Bail and successful escape bypass the cap by releasing the player.
 - Work detail tasks are handled in `/jail` with different mechanics: memory order, rule matching, risk tile, route choice, sequence order, and effort choice. Diminishing returns are configured under `work.diminishingReturns`.
-- Contraband prices/effects live in `data/jail/config.js`. Session unlocks/items are stored in the `jail.items` JSONB field and clear on release.
-- NPC gambling requires a Deck of Cards and uses Prison Money only. NPC personalities are in `data/jail/npcs.js`.
+- Contraband prices/effects live in `data/jail/config.js`. Session unlocks/items are stored in the `jail.items` JSONB field and clear on release. The `/jail` shop UI follows the Farm Store/Machine Shed pattern: a category landing page, category buttons, focused stock pages, then a category-specific select menu.
+- Card Table access requires either `Deck of Cards` in the current jail session or at least one other active jailed player in the same guild. NPC gambling still uses Prison Money only. NPC personalities are in `data/jail/npcs.js`.
+- `/jail` panels are public channel messages, not ephemeral. The Close button deletes the panel. Inactive panels auto-delete after 5 minutes of no component activity. If deletion fails, the command clears the panel content/components as a fallback.
+- Global interaction routing in `index.js` explicitly ignores `jail:` component IDs so local `/jail` collectors can own their buttons/selects without the fallback "interaction wasn't handled" message.
+- Jail SQL that performs arithmetic on bind parameters uses explicit PostgreSQL casts (`::bigint` / `::numeric`) to avoid `bigint + text` operator errors from interval concatenation and numeric updates.
 - Existing crime/underworld/ritual call sites still use `setJail()`, but it now initializes a full jail session. Store Robbery and failed bribes use 5-15 minute small-crime jail windows, Scam Call trace uses 20-35 minutes, regular Heist uses 20-35 minutes, Major Heist and Underworld full bust remain 45-60 minutes.
 
 Grind specifics:
