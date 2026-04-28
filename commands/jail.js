@@ -14,7 +14,7 @@ const ui = require("../utils/ui");
 const config = require("../data/jail/config");
 const npcs = require("../data/jail/npcs");
 
-const HUB_TTL_MS = 10 * 60_000;
+const HUB_TTL_MS = 5 * 60_000;
 
 function money(value) {
   return `$${Number(value || 0).toLocaleString("en-AU")}`;
@@ -564,7 +564,25 @@ module.exports = {
       selectedNpcId: npcs[0].id,
     };
 
-    const collector = message.createMessageComponentCollector({ time: HUB_TTL_MS });
+    const collector = message.createMessageComponentCollector({ idle: HUB_TTL_MS });
+    let panelRemoved = false;
+
+    async function removePanel(reason = "closed") {
+      if (panelRemoved) return;
+      panelRemoved = true;
+      try {
+        await message.delete();
+        return;
+      } catch {}
+
+      try {
+        await interaction.editReply({
+          content: reason === "idle" ? "Jail panel closed due to inactivity." : "Jail panel closed.",
+          embeds: [],
+          components: [],
+        });
+      } catch {}
+    }
 
     async function refresh() {
       current = await jail.fetchJailSession(interaction.guildId, interaction.user.id);
@@ -610,7 +628,7 @@ module.exports = {
 
         if (action === "jail:close") {
           collector.stop("closed");
-          return i.editReply({ components: hubRows(true) }).catch(() => {});
+          return removePanel("closed");
         }
 
         if (action === "jail:home" || action === "jail:refresh") return showHub(i);
@@ -837,9 +855,7 @@ module.exports = {
 
     collector.on("end", async (_collected, reason) => {
       if (["released", "bail", "escape"].includes(String(reason))) return;
-      try {
-        await interaction.editReply({ components: hubRows(true) });
-      } catch {}
+      await removePanel(String(reason) === "idle" ? "idle" : "closed");
     });
   },
 };
