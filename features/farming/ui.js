@@ -427,7 +427,7 @@ function buildFarmingComponents(farm) {
 
   actionButtons.push(
     new ButtonBuilder().setCustomId("farm_market").setLabel("💰 Market").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("farm_store").setLabel("Store").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("farm_store").setLabel("🏪 Store").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("farm_machines").setLabel("🚜 Machine Shed").setStyle(ButtonStyle.Primary)
   );
 
