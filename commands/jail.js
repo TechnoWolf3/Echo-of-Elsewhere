@@ -168,46 +168,169 @@ function workRows(disabled = false) {
   ];
 }
 
-function shopEmbed(session) {
-  const cheap = [];
-  const mid = [];
-  const risky = [];
-  for (const item of Object.values(config.shop.items)) {
-    const line = `**${item.name}** ${money(item.price)}`;
-    if (Number(item.price) <= 500) cheap.push(line);
-    else if (item.type === "escape" || Number(item.price) >= 1200) risky.push(line);
-    else mid.push(line);
-  }
+const SHOP_CATEGORIES = [
+  {
+    id: "basics",
+    label: "Basics",
+    button: "Basics",
+    description: "Cheap utility and small favours.",
+    items: ["energy_drink", "guard_snack"],
+  },
+  {
+    id: "paperwork",
+    label: "Paperwork",
+    button: "Paperwork",
+    description: "Sentence-reduction contraband.",
+    items: ["broken_laptop", "fake_id_band", "burner_phone"],
+  },
+  {
+    id: "unlocks",
+    label: "Unlocks",
+    button: "Unlocks",
+    description: "Session unlocks for jail activities.",
+    items: ["contraband_radio", "deck_of_cards"],
+  },
+  {
+    id: "escape",
+    label: "Escape Gear",
+    button: "Escape Gear",
+    description: "High-risk escape support.",
+    items: ["escape_kit", "loose_vent_cover"],
+  },
+  {
+    id: "future",
+    label: "Future Trouble",
+    button: "Future",
+    description: "Tracked for later prison systems.",
+    items: ["shank"],
+  },
+];
+
+function shopCategoryById(categoryId) {
+  return SHOP_CATEGORIES.find((cat) => cat.id === categoryId) || SHOP_CATEGORIES[0];
+}
+
+function shopItemLine(item) {
+  if (!item) return null;
+  const tag = item.type === "escape"
+    ? "Escape"
+    : item.type === "unlock"
+      ? "Unlock"
+      : item.type === "effect"
+        ? "Boost"
+        : "Use";
+  return [
+    `**${item.name}** - ${money(item.price)} PM`,
+    `${tag} - ${item.description}`,
+  ].join("\n");
+}
+
+function shopHomeEmbed(session) {
+  const categoryLines = SHOP_CATEGORIES.map((cat) => `**${cat.label}** - ${cat.description}`);
   return ui.applySystemStyle(
     new EmbedBuilder()
       .setTitle("Contraband Shop")
-      .setDescription("Buy with Prison Money only. Your wallet and bank stay outside the bars.")
+      .setDescription(
+        [
+          "Buy prison-only contraband with Prison Money.",
+          "",
+          ...categoryLines,
+        ].join("\n")
+      )
       .addFields(
-        { name: "Your Prison Money", value: money(session.prisonMoney), inline: true },
-        { name: "Basic", value: cheap.join("\n") || "None", inline: true },
-        { name: "Useful", value: mid.join("\n") || "None", inline: true },
-        { name: "Risky / Expensive", value: risky.join("\n") || "None", inline: false }
+        { name: "Balance", value: `**${money(session.prisonMoney)} PM**`, inline: true },
+        { name: "Rule", value: "Wallet and bank cash cannot be used.", inline: true }
       ),
     "job",
-    "Use the menu to inspect and buy."
+    "Choose a category to browse stock."
   );
 }
 
-function shopRows(disabled = false) {
+function shopHomeRows(disabled = false) {
   return [
     new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("jail:shop_select")
-        .setPlaceholder("Buy contraband with Prison Money")
-        .setDisabled(disabled)
-        .addOptions(Object.entries(config.shop.items).map(([id, item]) => ({
-          label: `${item.name} - ${money(item.price)}`,
-          value: id,
-          description: item.description.slice(0, 100),
-        })).slice(0, 25))
+      SHOP_CATEGORIES.slice(0, 5).map((cat) =>
+        new ButtonBuilder()
+          .setCustomId(`jail:shop_cat:${cat.id}`)
+          .setLabel(cat.button)
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(disabled)
+      )
     ),
     ...backRows(disabled),
   ];
+}
+
+function shopCategoryEmbed(session, categoryId) {
+  const category = shopCategoryById(categoryId);
+  const stockLines = category.items
+    .map((itemId) => shopItemLine(config.shop.items[itemId]))
+    .filter(Boolean);
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle(`Contraband Shop - ${category.label}`)
+      .setDescription(category.description)
+      .addFields(
+        { name: "Balance", value: `**${money(session.prisonMoney)} PM**`, inline: true },
+        { name: "Stock", value: stockLines.join("\n\n") || "No stock in this category.", inline: false }
+      ),
+    "job",
+    "Choose an item below to buy."
+  );
+}
+
+function shopCategoryRows(categoryId, disabled = false) {
+  const category = shopCategoryById(categoryId);
+  const options = category.items
+    .map((itemId) => {
+      const item = config.shop.items[itemId];
+      if (!item) return null;
+      return {
+        label: item.name,
+        value: itemId,
+        description: `${money(item.price)} PM - ${item.description}`.slice(0, 100),
+      };
+    })
+    .filter(Boolean);
+
+  const rows = [];
+  if (options.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("jail:shop_select")
+          .setPlaceholder(`Buy from ${category.label}...`)
+          .setDisabled(disabled)
+          .addOptions(options)
+      )
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("jail:shop")
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
+        .setDisabled(disabled),
+      new ButtonBuilder()
+        .setCustomId("jail:home")
+        .setLabel("Jail Hub")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(disabled)
+    )
+  );
+  return rows;
+}
+
+function shopEmbed(session) {
+  return shopHomeEmbed(session);
+}
+
+function shopRows(disabled = false) {
+  return shopHomeRows(disabled);
 }
 
 function escapeEmbed(session) {
@@ -240,35 +363,51 @@ function escapeRows(disabled = false) {
   ];
 }
 
-function gamblingEmbed(session, selectedNpc = npcs[0]) {
+function hasCardTableAccess(session, otherJailedCount = 0) {
+  return Boolean(session.items.deck_of_cards) || Number(otherJailedCount || 0) > 0;
+}
+
+function cardAccessText(session, otherJailedCount = 0) {
+  if (session.items.deck_of_cards) return "Deck owned";
+  if (Number(otherJailedCount || 0) > 0) return `${otherJailedCount} other inmate${Number(otherJailedCount) === 1 ? "" : "s"} jailed`;
+  return "Requires Deck of Cards or another jailed player";
+}
+
+function gamblingEmbed(session, selectedNpc = npcs[0], otherJailedCount = 0) {
+  const hasAccess = hasCardTableAccess(session, otherJailedCount);
   return ui.applySystemStyle(
     new EmbedBuilder()
       .setTitle("Prison Card Table")
       .setDescription(
-        [
-          selectedNpc ? `**${selectedNpc.name}**: "${selectedNpc.flavor}"` : "Pick a prisoner.",
-          selectedNpc ? selectedNpc.personality : "",
-          "",
-          "Current game: high card. Highest roll wins. Ties push.",
-        ].filter(Boolean).join("\n")
+        hasAccess
+          ? [
+              selectedNpc ? `**${selectedNpc.name}**: "${selectedNpc.flavor}"` : "Pick a prisoner.",
+              selectedNpc ? selectedNpc.personality : "",
+              "",
+              "Current game: high card. Highest roll wins. Ties push.",
+            ].filter(Boolean).join("\n")
+          : [
+              "The card table is locked down.",
+              "Buy a **Deck of Cards** from contraband, or wait until another player is jailed.",
+            ].join("\n")
       )
       .addFields(
         { name: "Your Prison Money", value: money(session.prisonMoney), inline: true },
         { name: "Opponent", value: selectedNpc?.name || "None", inline: true },
-        { name: "Deck", value: session.items.deck_of_cards ? "Owned" : "Required", inline: true }
+        { name: "Access", value: cardAccessText(session, otherJailedCount), inline: true }
       ),
     "job",
     "NPC gambling is for risk and time, not reliable profit."
   );
 }
 
-function gamblingRows(selectedNpcId, disabled = false) {
+function gamblingRows(selectedNpcId, disabled = false, hasAccess = true) {
   return [
     new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId("jail:npc_select")
         .setPlaceholder("Choose an NPC prisoner")
-        .setDisabled(disabled)
+        .setDisabled(disabled || !hasAccess)
         .addOptions(npcs.map((npc) => ({
           label: npc.name,
           value: npc.id,
@@ -277,10 +416,10 @@ function gamblingRows(selectedNpcId, disabled = false) {
         })))
     ),
     new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("jail:bet:50").setLabel("Bet $50").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("jail:bet:100").setLabel("Bet $100").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("jail:bet:250").setLabel("Bet $250").setStyle(ButtonStyle.Success).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("jail:bet:500").setLabel("Bet $500").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+      new ButtonBuilder().setCustomId("jail:bet:50").setLabel("Bet $50").setStyle(ButtonStyle.Secondary).setDisabled(disabled || !hasAccess),
+      new ButtonBuilder().setCustomId("jail:bet:100").setLabel("Bet $100").setStyle(ButtonStyle.Primary).setDisabled(disabled || !hasAccess),
+      new ButtonBuilder().setCustomId("jail:bet:250").setLabel("Bet $250").setStyle(ButtonStyle.Success).setDisabled(disabled || !hasAccess),
+      new ButtonBuilder().setCustomId("jail:bet:500").setLabel("Bet $500").setStyle(ButtonStyle.Danger).setDisabled(disabled || !hasAccess)
     ),
     ...backRows(disabled),
   ];
@@ -509,7 +648,18 @@ module.exports = {
 
         if (action === "jail:shop") {
           state.view = "shop";
-          return i.editReply({ embeds: [shopEmbed(session)], components: shopRows(false) }).catch(() => {});
+          state.shopCategory = null;
+          return i.editReply({ embeds: [shopHomeEmbed(session)], components: shopHomeRows(false) }).catch(() => {});
+        }
+
+        if (id.startsWith("jail:shop_cat:")) {
+          const categoryId = id.split(":")[2];
+          state.view = "shop_category";
+          state.shopCategory = categoryId;
+          return i.editReply({
+            embeds: [shopCategoryEmbed(session, categoryId)],
+            components: shopCategoryRows(categoryId, false),
+          }).catch(() => {});
         }
 
         if (action === "jail:escape") {
@@ -520,7 +670,12 @@ module.exports = {
         if (action === "jail:gamble") {
           state.view = "gamble";
           const npc = npcs.find((entry) => entry.id === state.selectedNpcId) || npcs[0];
-          return i.editReply({ embeds: [gamblingEmbed(session, npc)], components: gamblingRows(npc.id, false) }).catch(() => {});
+          const otherJailed = await jail.countOtherJailedPlayers(interaction.guildId, interaction.user.id);
+          const canUseTable = hasCardTableAccess(session, otherJailed);
+          return i.editReply({
+            embeds: [gamblingEmbed(session, npc, otherJailed)],
+            components: gamblingRows(npc.id, false, canUseTable),
+          }).catch(() => {});
         }
 
         if (action === "jail:work_select") {
@@ -537,51 +692,67 @@ module.exports = {
         if (action === "jail:shop_select") {
           const itemId = String(i.values?.[0] || "");
           const result = await jail.buyContraband(interaction.guildId, interaction.user.id, itemId);
+          const categoryId = state.shopCategory || SHOP_CATEGORIES.find((cat) => cat.items.includes(itemId))?.id || "basics";
           if (!result.ok) {
             if (result.reason === "insufficient_prison_money") {
               return i.editReply({
                 content: `Not enough Prison Money for **${result.item.name}**.`,
-                embeds: [shopEmbed(session)],
-                components: shopRows(false),
+                embeds: [shopCategoryEmbed(session, categoryId)],
+                components: shopCategoryRows(categoryId, false),
               }).catch(() => {});
             }
             return i.editReply({
               content: "That contraband could not be bought.",
-              embeds: [shopEmbed(session)],
-              components: shopRows(false),
+              embeds: [shopCategoryEmbed(session, categoryId)],
+              components: shopCategoryRows(categoryId, false),
             }).catch(() => {});
           }
           const next = await refresh();
-          return i.editReply({ embeds: [shopEmbed(next)], components: shopRows(false), content: result.message }).catch(() => {});
+          return i.editReply({
+            embeds: [shopCategoryEmbed(next, categoryId)],
+            components: shopCategoryRows(categoryId, false),
+            content: result.message,
+          }).catch(() => {});
         }
 
         if (action === "jail:npc_select") {
           state.selectedNpcId = String(i.values?.[0] || npcs[0].id);
           const npc = npcs.find((entry) => entry.id === state.selectedNpcId) || npcs[0];
-          return i.editReply({ embeds: [gamblingEmbed(session, npc)], components: gamblingRows(npc.id, false) }).catch(() => {});
+          const otherJailed = await jail.countOtherJailedPlayers(interaction.guildId, interaction.user.id);
+          const canUseTable = hasCardTableAccess(session, otherJailed);
+          return i.editReply({
+            embeds: [gamblingEmbed(session, npc, otherJailed)],
+            components: gamblingRows(npc.id, false, canUseTable),
+          }).catch(() => {});
         }
 
         if (id.startsWith("jail:bet:")) {
           const bet = Number(id.split(":")[2] || 50);
           const npc = npcs.find((entry) => entry.id === state.selectedNpcId) || npcs[0];
-          const result = await jail.gambleNpc(interaction.guildId, interaction.user.id, npc, "high_card", bet);
+          const otherJailed = await jail.countOtherJailedPlayers(interaction.guildId, interaction.user.id);
+          const canUseTable = hasCardTableAccess(session, otherJailed);
+          const result = await jail.gambleNpc(interaction.guildId, interaction.user.id, npc, "high_card", bet, {
+            allowSharedDeck: canUseTable && !session.items.deck_of_cards,
+          });
           if (!result.ok) {
-            const msg = result.reason === "needs_deck"
-              ? "You need a Deck of Cards from the contraband shop before gambling with NPC prisoners."
+            const msg = result.reason === "needs_deck_or_inmates"
+              ? "You need a Deck of Cards from contraband, or at least one other player must be jailed."
               : "Not enough Prison Money for that bet.";
             const npc = npcs.find((entry) => entry.id === state.selectedNpcId) || npcs[0];
             return i.editReply({
               content: msg,
-              embeds: [gamblingEmbed(session, npc)],
-              components: gamblingRows(npc.id, false),
+              embeds: [gamblingEmbed(session, npc, otherJailed)],
+              components: gamblingRows(npc.id, false, hasCardTableAccess(session, otherJailed)),
             }).catch(() => {});
           }
           const outcome = result.tied ? "Push" : result.won ? "You won" : "You lost";
           const next = result.session || await refresh();
+          const nextOtherJailed = await jail.countOtherJailedPlayers(interaction.guildId, interaction.user.id);
+          const nextAccess = hasCardTableAccess(next, nextOtherJailed);
           return i.editReply({
             content: `${npc.name}: "${npc.flavor}"\n${outcome}. You rolled **${result.playerRoll}**, ${npc.name} rolled **${result.npcRoll}**. Net: **${money(result.delta)}** PM.`,
-            embeds: [gamblingEmbed(next, npc)],
-            components: gamblingRows(npc.id, false),
+            embeds: [gamblingEmbed(next, npc, nextOtherJailed)],
+            components: gamblingRows(npc.id, false, nextAccess),
           }).catch(() => {});
         }
 

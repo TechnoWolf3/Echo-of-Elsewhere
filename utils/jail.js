@@ -120,6 +120,19 @@ async function fetchJailSession(guildId, userId, { releaseExpired = true } = {})
   return session;
 }
 
+async function countOtherJailedPlayers(guildId, userId) {
+  await ensureJailSchema();
+  const res = await pool.query(
+    `SELECT COUNT(*)::int AS count
+     FROM jail
+     WHERE guild_id=$1
+       AND user_id <> $2
+       AND jailed_until > NOW()`,
+    [String(guildId), String(userId)]
+  );
+  return Number(res.rows?.[0]?.count || 0);
+}
+
 async function getJailRelease(guildId, userId) {
   const session = await fetchJailSession(guildId, userId);
   return session?.jailedUntil || null;
@@ -537,11 +550,13 @@ async function attemptEscape(guildId, userId, choices = {}) {
   };
 }
 
-async function gambleNpc(guildId, userId, npc, game, bet) {
+async function gambleNpc(guildId, userId, npc, game, bet, options = {}) {
   await ensureJailSchema();
   const session = await fetchJailSession(guildId, userId);
   if (!session) return { ok: false, reason: "not_jailed" };
-  if (!session.items.deck_of_cards) return { ok: false, reason: "needs_deck", session };
+  if (!session.items.deck_of_cards && !options.allowSharedDeck) {
+    return { ok: false, reason: "needs_deck_or_inmates", session };
+  }
 
   const wager = clamp(Math.floor(Number(bet || 0)), config.gambling.minBet, config.gambling.maxBet);
   if (wager > session.prisonMoney) return { ok: false, reason: "insufficient_prison_money", session };
@@ -599,6 +614,7 @@ module.exports = {
   guardNotJailedComponent,
   setJail,
   getJailRelease,
+  countOtherJailedPlayers,
   fetchJailSession,
   releaseJail,
   reduceSentence,
