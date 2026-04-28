@@ -83,18 +83,20 @@ function buildHubEmbed(user, session) {
   return ui.applySystemStyle(
     new EmbedBuilder()
       .setTitle("Jail")
-      .setDescription(`You are currently locked up in Echo's finest concrete timeout box, **${user.username}**.`)
+      .setDescription([
+        `**${user.username}**, you are locked up in Echo's finest concrete timeout box.`,
+        "Pick an action below. Prison Money is separate from your wallet.",
+      ].join("\n"))
       .addFields(
-        { name: "Sentence", value: `Remaining: **${jail.formatDuration(remainingSeconds(session))}**\nRelease: <t:${unix(session.jailedUntil)}:R>`, inline: true },
-        { name: "Original", value: `**${jail.formatDuration(session.originalSentenceSeconds)}**\nBail: **${money(bail)}**`, inline: true },
-        { name: "Reduction Cap", value: `Used: **${jail.formatDuration(session.sentenceReducedSeconds)}**\nLeft: **${jail.formatDuration(session.maxReducibleRemaining)}**`, inline: true },
+        { name: "Sentence", value: `**${jail.formatDuration(remainingSeconds(session))}** left\n<t:${unix(session.jailedUntil)}:R>`, inline: true },
         { name: "Prison Money", value: `**${money(session.prisonMoney)}**`, inline: true },
-        { name: "Work Count", value: `**${session.workCount}** task${session.workCount === 1 ? "" : "s"}`, inline: true },
-        { name: "Active Items / Effects", value: activeEffectsLine(session).slice(0, 1024), inline: false },
-        { name: "Bail Rule", value: `Bail cost is fixed from your original sentence. Waiting does not make it cheaper. Wallet only.`, inline: false }
+        { name: "Bail", value: `**${money(bail)}**\nWallet only`, inline: true },
+        { name: "Reduction Cap", value: `**${jail.formatDuration(session.maxReducibleRemaining)}** left\n${jail.formatDuration(session.sentenceReducedSeconds)} used`, inline: true },
+        { name: "Work Done", value: `**${session.workCount}** task${session.workCount === 1 ? "" : "s"}`, inline: true },
+        { name: "Items / Effects", value: activeEffectsLine(session).slice(0, 1024), inline: true }
       ),
     "job",
-    "Jail actions use Prison Money unless bail says otherwise."
+    "Bail is fixed from the original sentence. Waiting does not discount it."
   );
 }
 
@@ -125,18 +127,27 @@ function backRows(disabled = false) {
 }
 
 function workEmbed(session) {
-  const taskLines = Object.entries(config.work.tasks).map(([id, task]) => `**${task.name}** - ${task.description}`);
   return ui.applySystemStyle(
     new EmbedBuilder()
       .setTitle("Jail Work Detail")
-      .setDescription(taskLines.join("\n"))
+      .setDescription([
+        "Choose one prison job from the menu.",
+        "Good work earns Prison Money and can trim a little sentence time.",
+      ].join("\n"))
       .addFields(
-        { name: "Payout", value: `${money(config.work.payoutRange[0])}-${money(config.work.payoutRange[1])} Prison Money before task modifiers`, inline: true },
-        { name: "Reduction", value: "About 30-90 seconds per good result before modifiers.", inline: true },
-        { name: "Cap Remaining", value: jail.formatDuration(session.maxReducibleRemaining), inline: true }
+        { name: "Typical Pay", value: `${money(config.work.payoutRange[0])}-${money(config.work.payoutRange[1])} PM`, inline: true },
+        { name: "Time Trim", value: "30-90s on success", inline: true },
+        { name: "Cap Left", value: jail.formatDuration(session.maxReducibleRemaining), inline: true },
+        {
+          name: "Available Details",
+          value: Object.values(config.work.tasks)
+            .map((task) => `**${task.name}**`)
+            .join("  |  "),
+          inline: false,
+        }
       ),
     "job",
-    "Diminishing returns start after repeated work."
+    "Repeated work has diminishing returns."
   );
 }
 
@@ -158,16 +169,27 @@ function workRows(disabled = false) {
 }
 
 function shopEmbed(session) {
-  const lines = Object.entries(config.shop.items).map(([id, item]) =>
-    `**${item.name}** - ${money(item.price)} PM\n${item.description}`
-  );
+  const cheap = [];
+  const mid = [];
+  const risky = [];
+  for (const item of Object.values(config.shop.items)) {
+    const line = `**${item.name}** ${money(item.price)}`;
+    if (Number(item.price) <= 500) cheap.push(line);
+    else if (item.type === "escape" || Number(item.price) >= 1200) risky.push(line);
+    else mid.push(line);
+  }
   return ui.applySystemStyle(
     new EmbedBuilder()
       .setTitle("Contraband Shop")
-      .setDescription(lines.join("\n\n").slice(0, 3900))
-      .addFields({ name: "Your Prison Money", value: money(session.prisonMoney), inline: true }),
+      .setDescription("Buy with Prison Money only. Your wallet and bank stay outside the bars.")
+      .addFields(
+        { name: "Your Prison Money", value: money(session.prisonMoney), inline: true },
+        { name: "Basic", value: cheap.join("\n") || "None", inline: true },
+        { name: "Useful", value: mid.join("\n") || "None", inline: true },
+        { name: "Risky / Expensive", value: risky.join("\n") || "None", inline: false }
+      ),
     "job",
-    "Contraband never accepts wallet or bank money."
+    "Use the menu to inspect and buy."
   );
 }
 
@@ -193,11 +215,14 @@ function escapeEmbed(session) {
   return ui.applySystemStyle(
     new EmbedBuilder()
       .setTitle("Attempt Escape")
-      .setDescription("Pick your route. Success releases you immediately. Failure adds serious time, a wallet fine, and heat.")
+      .setDescription("High risk, high reward. Success releases you. Failure adds time, heat, and a wallet fine.")
       .addFields(
-        { name: "Route", value: "**Quiet** safer, lower chance\n**Quick** baseline\n**Reckless** higher chance, uglier failure", inline: false },
+        { name: "Quiet", value: "Safer failure\nLower chance", inline: true },
+        { name: "Quick", value: "Standard risk\nBaseline chance", inline: true },
+        { name: "Reckless", value: "Better chance\nHarsher failure", inline: true },
         { name: "Gear", value: chanceHint, inline: true },
-        { name: "Attempts", value: `${session.escapeAttempts}`, inline: true }
+        { name: "Attempts", value: `${session.escapeAttempts}`, inline: true },
+        { name: "Warning", value: "Escape items are consumed when used.", inline: true }
       ),
     "job",
     "Escape failure is intentionally harsh."
@@ -229,7 +254,8 @@ function gamblingEmbed(session, selectedNpc = npcs[0]) {
       )
       .addFields(
         { name: "Your Prison Money", value: money(session.prisonMoney), inline: true },
-        { name: "Deck Required", value: session.items.deck_of_cards ? "Owned" : "Buy a Deck of Cards first.", inline: true }
+        { name: "Opponent", value: selectedNpc?.name || "None", inline: true },
+        { name: "Deck", value: session.items.deck_of_cards ? "Owned" : "Required", inline: true }
       ),
     "job",
     "NPC gambling is for risk and time, not reliable profit."
@@ -390,7 +416,6 @@ module.exports = {
     await interaction.reply({
       embeds: [buildHubEmbed(interaction.user, current)],
       components: hubRows(false),
-      flags: MessageFlags.Ephemeral,
     });
 
     const message = await interaction.fetchReply();
@@ -514,9 +539,17 @@ module.exports = {
           const result = await jail.buyContraband(interaction.guildId, interaction.user.id, itemId);
           if (!result.ok) {
             if (result.reason === "insufficient_prison_money") {
-              return i.followUp({ content: `Not enough Prison Money for **${result.item.name}**.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+              return i.editReply({
+                content: `Not enough Prison Money for **${result.item.name}**.`,
+                embeds: [shopEmbed(session)],
+                components: shopRows(false),
+              }).catch(() => {});
             }
-            return i.followUp({ content: "That contraband could not be bought.", flags: MessageFlags.Ephemeral }).catch(() => {});
+            return i.editReply({
+              content: "That contraband could not be bought.",
+              embeds: [shopEmbed(session)],
+              components: shopRows(false),
+            }).catch(() => {});
           }
           const next = await refresh();
           return i.editReply({ embeds: [shopEmbed(next)], components: shopRows(false), content: result.message }).catch(() => {});
@@ -536,7 +569,12 @@ module.exports = {
             const msg = result.reason === "needs_deck"
               ? "You need a Deck of Cards from the contraband shop before gambling with NPC prisoners."
               : "Not enough Prison Money for that bet.";
-            return i.followUp({ content: msg, flags: MessageFlags.Ephemeral }).catch(() => {});
+            const npc = npcs.find((entry) => entry.id === state.selectedNpcId) || npcs[0];
+            return i.editReply({
+              content: msg,
+              embeds: [gamblingEmbed(session, npc)],
+              components: gamblingRows(npc.id, false),
+            }).catch(() => {});
           }
           const outcome = result.tied ? "Push" : result.won ? "You won" : "You lost";
           const next = result.session || await refresh();
@@ -612,7 +650,16 @@ module.exports = {
       } catch (err) {
         console.error("[JAIL] interaction failed:", err);
         try {
-          await i.followUp({ content: "Jail action failed. Check Railway logs.", flags: MessageFlags.Ephemeral });
+          const session = await jail.fetchJailSession(interaction.guildId, interaction.user.id);
+          if (session) {
+            await i.editReply({
+              content: "Jail action failed. Check Railway logs.",
+              embeds: [buildHubEmbed(interaction.user, session)],
+              components: hubRows(false),
+            });
+          } else {
+            await i.editReply({ content: "Jail action failed, but you are no longer jailed.", embeds: [], components: [] });
+          }
         } catch {}
       }
     });

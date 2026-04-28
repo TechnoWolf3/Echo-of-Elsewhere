@@ -206,7 +206,7 @@ async function releaseJail(guildId, userId, reason = "released") {
         [String(guildId), String(userId)]
       );
       await client.query(
-        `UPDATE user_balances SET balance = balance + $3 WHERE guild_id=$1 AND user_id=$2`,
+        `UPDATE user_balances SET balance = balance + $3::bigint WHERE guild_id=$1 AND user_id=$2`,
         [String(guildId), String(userId), convertedMoney]
       );
       await client.query(
@@ -270,7 +270,7 @@ async function addPrisonMoney(guildId, userId, amount, meta = {}) {
   if (!Number.isFinite(delta) || delta === 0) return fetchJailSession(guildId, userId);
   const res = await pool.query(
     `UPDATE jail
-     SET prison_money = GREATEST(0, prison_money + $3), updated_at=NOW()
+     SET prison_money = GREATEST(0, prison_money + $3::bigint), updated_at=NOW()
      WHERE guild_id=$1 AND user_id=$2
      RETURNING *`,
     [String(guildId), String(userId), delta]
@@ -293,8 +293,8 @@ async function reduceSentence(guildId, userId, seconds, source = "jail_reduction
 
   const res = await pool.query(
     `UPDATE jail
-     SET jailed_until = jailed_until - ($3 || ' seconds')::interval,
-         sentence_reduced_seconds = sentence_reduced_seconds + $3,
+     SET jailed_until = jailed_until - ($3::bigint || ' seconds')::interval,
+         sentence_reduced_seconds = sentence_reduced_seconds + $3::bigint,
          updated_at = NOW()
      WHERE guild_id=$1 AND user_id=$2
      RETURNING *`,
@@ -331,7 +331,7 @@ async function recordWorkResult(guildId, userId, taskId, outcome) {
     await client.query("BEGIN");
     const updated = await client.query(
       `UPDATE jail
-       SET prison_money = prison_money + $3,
+       SET prison_money = prison_money + $3::bigint,
            work_count = work_count + 1,
            effects = $4::jsonb,
            updated_at = NOW()
@@ -420,7 +420,7 @@ async function buyContraband(guildId, userId, itemId) {
 
   const res = await pool.query(
     `UPDATE jail
-     SET prison_money = GREATEST(0, prison_money - $3),
+     SET prison_money = GREATEST(0, prison_money - $3::bigint),
          items = $4::jsonb,
          effects = $5::jsonb,
          updated_at = NOW()
@@ -513,9 +513,9 @@ async function attemptEscape(guildId, userId, choices = {}) {
 
   const res = await pool.query(
     `UPDATE jail
-     SET jailed_until = jailed_until + ($3 || ' minutes')::interval,
-         original_sentence_seconds = original_sentence_seconds + ($3 * 60),
-         reduction_cap_seconds = reduction_cap_seconds + CEIL($3 * 60 * $6)::BIGINT,
+     SET jailed_until = jailed_until + ($3::bigint || ' minutes')::interval,
+         original_sentence_seconds = original_sentence_seconds + ($3::bigint * 60),
+         reduction_cap_seconds = reduction_cap_seconds + CEIL($3::numeric * 60 * $6::numeric)::BIGINT,
          items = $4::jsonb,
          escape_attempts = escape_attempts + 1,
          updated_at = NOW()
