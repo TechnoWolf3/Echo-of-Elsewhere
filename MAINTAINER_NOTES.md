@@ -275,6 +275,11 @@ Underworld specifics:
 - Underworld payouts now use the effect-aware credit path through `creditUserWithEffects`, matching the rest of `/job`.
 - Runtime progression is phase-split in `utils/underworld/engine.js` (`applyConversionRollover`, pending event expiry, due-event opening, run finalization, and building runtime application).
 - Police/event choices that reduce suspicion now immediately apply negative `suspicionDelta` to the building as well as the active run, so payoffs visibly reduce suspicion at once.
+- Shared Underworld suspicion lives in `utils/underworld/suspicion.js` and the `underworld_users` table. Reads dynamically decay suspicion after a 3 hour grace period at 3 points per full hour, clamped to 0-100. Operations, labs, and Smuggling should call this helper for all Underworld heat changes.
+- Smuggling is live from `/job -> The Underworld -> Smuggling`. Config/data lives in `data/underworld/products.js`, `data/underworld/smugglingVehicles.js`, and `data/underworld/smugglingEvents.js`; business logic lives in `utils/underworld/smugglingEngine.js`.
+- Smuggling vehicles, inventory, active runs, and recent history follow the existing Underworld persistence pattern inside `underworld_state.data.smuggling`. Purchased cargo is paid up front, produced cargo is removed up front, and payouts only happen from `uw_smuggle_claim` after the run is ready.
+- Finished Cocaine/Meth lab runs can choose `Store For Smuggling` instead of a normal distribution payout. This converts the finished batch into Smuggling inventory and avoids double-paying the same product.
+- Smuggling vehicle repair restores current durability but reduces max durability down to the configured floor. Scrap value is based on original 100-point condition (`durabilityCurrent / 100`), not current/max after repeated repairs.
 - Storage House is now a live storage operation. Finished cooled-off goods move into `building.storage`, clear `building.activeRun`, and allow another run to start while sellable goods remain in storage.
 - Storage House sell options can resolve either a cooling active run or accumulated `building.storage` goods. Selling clears storage after payout.
 - Storage House start is blocked only while an active run exists or storage is full. UI shows both sell buttons and Start Operation when cooled goods are waiting and the building can stockpile more.
@@ -306,6 +311,7 @@ Underworld specifics:
 - Echo Arrangement / Echo Seating lives in `data/rituals/echoArrangement.js`, with scenario/name/clue text pools in `data/rituals/echoArrangementScenarios.js`.
 - Echo Seating is a daily public ritual using the `echo_arrangement` cooldown key. It creates a per-user session with 5-10 seats and mistake limits of 2 for 5 seats, 3 for 6-7 seats, and 4 for 8-10 seats.
 - Puzzle generation creates the hidden answer first, generates clues from that answer, and checks uniqueness with a small solver before showing the puzzle. If a generated puzzle is weak or ambiguous, it retries.
+- Echo Seating clues are pruned where possible while preserving a unique solution, then shuffled before display. Do not render clues in accepted/answer order; ordered hints make the puzzle too easy.
 - Answer input is modal-based and accepts comma-separated names, plus space-separated names when unambiguous. Invalid formatting does not spend a mistake.
 - Wrong answers spend one mistake and only reveal limited feedback, currently correct-position count. Final reveal happens only when solved, when mistakes run out, or when the player gives up.
 - Final Echo Seating reveal mirrors Veil Sequence: `Your Order` appears directly above `Correct Order` for comparison. Give-up without any submitted answer shows `No answer submitted.`

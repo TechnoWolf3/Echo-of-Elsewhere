@@ -41,6 +41,8 @@ const farmingUi = require("../features/farming/ui");
 const { handleFarmingInteraction } = require("../features/farming/handlers");
 const underworld = require("../utils/underworld/engine");
 const underworldUi = require("../features/underworld/ui");
+const underworldSuspicion = require("../utils/underworld/suspicion");
+const smugglingEngine = require("../utils/underworld/smugglingEngine");
 const { handleUnderworldInteraction } = require("../features/underworld/handlers");
 const crimeUi = require("../features/crime/ui");
 const { handleCrimeInteraction } = require("../features/crime/handlers");
@@ -816,6 +818,53 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }).catch(() => {});
       }
 
+      if (session.view === "underworld_smuggling") {
+        const state = await underworld.ensureState(guildId, userId);
+        await underworld.applyRuntime(guildId, userId, state);
+        await smugglingEngine.openDueEvent(guildId, userId, state);
+        await underworld.saveState(guildId, userId, state);
+        const suspicionInfo = await underworldSuspicion.getUnderworldSuspicion(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildSmugglingHomeEmbed(state, suspicionInfo)],
+          components: underworldUi.buildSmugglingHomeComponents(state),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_garage") {
+        const state = await underworld.ensureState(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildVehicleGarageEmbed(state)],
+          components: underworldUi.buildVehicleGarageComponents(state),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_shop") {
+        return msg.edit({
+          embeds: [underworldUi.buildVehicleShopEmbed()],
+          components: underworldUi.buildVehicleShopComponents(),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_start") {
+        const state = await underworld.ensureState(guildId, userId);
+        const suspicionInfo = await underworldSuspicion.getUnderworldSuspicion(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildStartRunEmbed(state, session.underworldSmugglingFlow || {}, suspicionInfo)],
+          components: underworldUi.buildStartRunComponents(state, session.underworldSmugglingFlow || {}),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_active") {
+        const state = await underworld.ensureState(guildId, userId);
+        await smugglingEngine.openDueEvent(guildId, userId, state);
+        await underworld.saveState(guildId, userId, state);
+        const suspicionInfo = await underworldSuspicion.getUnderworldSuspicion(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildActiveRunEmbed(state, suspicionInfo)],
+          components: underworldUi.buildActiveRunComponents(state),
+        }).catch(() => {});
+      }
+
       if (session.view === "enterprises") {
         return msg.edit({
           embeds: [buildEnterprisesEmbed()],
@@ -1078,7 +1127,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
       if (session.returnTimer) return;
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "underworld", "underworld_operations", "underworld_building"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "underworld", "underworld_operations", "underworld_building", "underworld_smuggling", "underworld_smuggling_garage", "underworld_smuggling_shop", "underworld_smuggling_start", "underworld_smuggling_active"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);

@@ -12,10 +12,10 @@ module.exports = [
     id: "smuggling",
     label: "Smuggling",
     emoji: "🚚",
-    description: "Coming later.",
+    description: "Move cargo through risky routes for sharp profit.",
     value: "underworld:smuggling",
-    sessionView: null,
-    available: false,
+    sessionView: "underworld_smuggling",
+    available: true,
   },
   {
     id: "fronts",

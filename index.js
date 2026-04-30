@@ -17,6 +17,7 @@ const contractsCommand = require("./commands/contracts");
 const contracts = require("./utils/contracts");
 const channelPurger = require("./utils/channelPurger");
 const jailSystem = require("./utils/jail");
+const underworldSuspicion = require("./utils/underworld/suspicion");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -726,6 +727,7 @@ client.once(Events.ClientReady, async () => {
       await ensureAchievementTables(client.db);
       await ensureEconomyTables(client.db);
       await jailSystem.ensureJailSchema();
+      await underworldSuspicion.ensureUnderworldUserSchema();
       await ensureEseSchema();
       await bankRecurringDeposits.ensureSchema();
       await contracts.ensureSchema();

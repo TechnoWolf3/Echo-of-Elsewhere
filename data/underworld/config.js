@@ -1,6 +1,15 @@
 module.exports = {
   MAX_BUILDINGS: 5,
   MAX_SUSPICION: 100,
+  UNDERWORLD_SUSPICION: {
+    max: 100,
+    decay: {
+      enabled: true,
+      graceHours: 3,
+      amountPerHour: 3,
+      min: 0,
+    },
+  },
   SUSPICION_DECAY_PER_HOUR: 0.75,
   STORAGE_PASSIVE_SUSPICION_PER_HOUR: 0.45,
   EVENT_WINDOW_MS: 25 * 60 * 1000,
@@ -60,6 +69,24 @@ module.exports = {
       name: "Full Bust",
       payoutMultiplier: 0,
       suspicionDelta: 22,
+    },
+  },
+  SMUGGLING: {
+    enabled: true,
+    parcelSize: 25,
+    maxDeliveriesPerRun: 6,
+    baseMinutes: 8,
+    minutesPerDelivery: 4,
+    eventWindowSeconds: 75,
+    eventChance: 0.45,
+    repair: {
+      maxDurabilityLossPerRepair: 10,
+      minMaxDurability: 5,
+      baseRepairCostRate: 0.12,
+    },
+    scrap: {
+      immediateValueRate: 0.8,
+      chumpChangeMin: 1000,
     },
   },
 };

@@ -6,6 +6,8 @@ const config = require("../../data/underworld/config");
 const storageGoodsConfig = require("../../data/underworld/storageGoods");
 const { tryDebitBank, creditBank, addServerBank } = require("../economy");
 const { setJail } = require("../jail");
+const sharedSuspicion = require("./suspicion");
+const underworldInventory = require("./inventory");
 
 const BUILDING_MAP = Object.fromEntries(buildings.map((entry) => [entry.id, entry]));
 const OPERATION_MAP = Object.fromEntries(OPERATIONS.map((entry) => [entry.id, entry]));
@@ -72,7 +74,15 @@ function getUpgradeLevelBonus(upgradeId, level, field) {
 }
 
 function newState() {
-  return { buildings: [] };
+  return {
+    buildings: [],
+    smuggling: {
+      inventory: {},
+      vehicles: [],
+      runs: [],
+      history: [],
+    },
+  };
 }
 
 async function ensureTable() {
@@ -104,6 +114,11 @@ async function ensureState(guildId, userId) {
 
   const data = res.rows[0]?.data || newState();
   if (!Array.isArray(data.buildings)) data.buildings = [];
+  data.smuggling = data.smuggling || {};
+  data.smuggling.inventory = data.smuggling.inventory || {};
+  data.smuggling.vehicles = Array.isArray(data.smuggling.vehicles) ? data.smuggling.vehicles : [];
+  data.smuggling.runs = Array.isArray(data.smuggling.runs) ? data.smuggling.runs : [];
+  data.smuggling.history = Array.isArray(data.smuggling.history) ? data.smuggling.history : [];
   return data;
 }
 
@@ -569,6 +584,7 @@ async function purchaseBuilding(guildId, userId, state, buildingId) {
 
   state.buildings.push(building);
   await saveState(guildId, userId, state);
+  await sharedSuspicion.recordUnderworldActivity(guildId, userId, "underworld_building_purchase").catch(() => {});
   return { ok: true, building, definition: def };
 }
 
@@ -604,6 +620,7 @@ async function startConversion(guildId, userId, state, buildingRef, operationId)
     completeAt: startedAt + operation.conversionHours * 60 * 60 * 1000,
   };
   await saveState(guildId, userId, state);
+  await sharedSuspicion.addUnderworldSuspicion(guildId, userId, 1, "underworld_conversion_started").catch(() => {});
   return { ok: true, building, operation };
 }
 
@@ -631,6 +648,7 @@ async function dismantleOperation(guildId, userId, state, buildingRef, { emergen
   building.suspicion = clamp(getBuildingSuspicion(building) * (emergency ? 0.85 : 0.65), 0, config.MAX_SUSPICION);
 
   await saveState(guildId, userId, state);
+  await sharedSuspicion.recordUnderworldActivity(guildId, userId, emergency ? "underworld_emergency_dismantle" : "underworld_dismantle").catch(() => {});
 
   if (refund > 0) {
     await creditBank(guildId, userId, refund, "underworld_liquidation_refund", {
@@ -707,6 +725,7 @@ async function startRun(guildId, userId, state, buildingRef) {
   };
 
   await saveState(guildId, userId, state);
+  await sharedSuspicion.addUnderworldSuspicion(guildId, userId, Math.max(1, Math.round(Number(operation.baseSuspicionGain || 0) * 0.25)), "underworld_operation_started").catch(() => {});
   return { ok: true, building, operation };
 }
 
@@ -747,6 +766,11 @@ async function resolveEventChoice(guildId, userId, state, buildingRef, choiceId)
   if (choice.suspicionDelta && choice.suspicionDelta < 0) {
     building.suspicion = clamp(getBuildingSuspicion(building) + Number(choice.suspicionDelta || 0), 0, config.MAX_SUSPICION);
     building.suspicionTickAt = Date.now();
+  }
+  if (choice.suspicionDelta) {
+    await sharedSuspicion.addUnderworldSuspicion(guildId, userId, Number(choice.suspicionDelta || 0), "underworld_event_choice").catch(() => {});
+  } else {
+    await sharedSuspicion.recordUnderworldActivity(guildId, userId, "underworld_event_choice").catch(() => {});
   }
   run.eventLog = run.eventLog || [];
   run.eventLog.push({
@@ -845,7 +869,8 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     Number(earlySale?.payoutMultiplier || 1)
   );
 
-  const suspicionBefore = getBuildingSuspicion(building);
+  const sharedInfo = await sharedSuspicion.getUnderworldSuspicion(guildId, userId).catch(() => ({ suspicion: 0 }));
+  const suspicionBefore = Math.max(getBuildingSuspicion(building), Number(sharedInfo.suspicion || 0));
   let suspicionGain = Number(operation.baseSuspicionGain || 0) + Number(mode.suspicionDelta || 0) + Number(run?.suspicionBonus || 0) - Number(efficiencyReduction || 0);
   suspicionGain += Number(earlySale?.suspicionGain || 0);
   suspicionGain = Math.max(-config.CLEAN_RUN_SUSPICION_REDUCTION, suspicionGain);
@@ -899,6 +924,7 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
   if (raidOutcomeId === "full_bust") {
     state.buildings.splice(buildingIndex, 1);
     await saveState(guildId, userId, state);
+    await sharedSuspicion.addUnderworldSuspicion(guildId, userId, suspicionGain, "underworld_full_bust").catch(() => {});
     await setJail(guildId, userId, config.FULL_BUST_JAIL_MINUTES);
     return {
       ok: true,
@@ -918,6 +944,7 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
   }
 
   await saveState(guildId, userId, state);
+  await sharedSuspicion.addUnderworldSuspicion(guildId, userId, suspicionGain, `underworld_distribution_${raidOutcomeId || "clean"}`).catch(() => {});
 
   if (gross > 0 && typeof options.payoutFn === "function") {
     await options.payoutFn(gross, {
@@ -938,6 +965,41 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     stolenReport,
     buildingLost: false,
   };
+}
+
+async function storeRunForSmuggling(guildId, userId, state, buildingRef) {
+  const { building } = resolveBuilding(state, buildingRef);
+  const run = building?.activeRun;
+  const operation = getOperationDefinition(building?.operationType);
+  if (!building || !run || run.status !== "awaiting_distribution" || !operation) {
+    return { ok: false, reasonText: "This operation does not have a finished batch ready to store." };
+  }
+  if (!["meth_lab", "cocaine_lab"].includes(operation.id)) {
+    return { ok: false, reasonText: "Only lab product can be moved into smuggling storage right now." };
+  }
+
+  const productId = operation.id === "meth_lab" ? "meth" : "cocaine";
+  const divisor = operation.id === "meth_lab" ? 52000 : 68000;
+  const outputMultiplier = clamp(Number(run.outputMultiplier || 1), 0.4, 3);
+  const producedUnits = Math.max(1, Math.floor((Number(run.batchCost || 0) * Number(run.grossMultiplier || 1) * outputMultiplier) / divisor));
+  underworldInventory.addProduct(state, productId, producedUnits);
+
+  const suspicionGain = Math.max(2, Math.ceil(Number(operation.baseSuspicionGain || 0) * 0.45 + Number(run.suspicionBonus || 0)));
+  building.suspicion = clamp(getBuildingSuspicion(building) + suspicionGain, 0, config.MAX_SUSPICION);
+  building.suspicionTickAt = Date.now();
+  building.activeRun = null;
+  building.lastRunAt = Date.now();
+  building.lastOutcome = {
+    completedAt: Date.now(),
+    distributionMode: "stored_for_smuggling",
+    payout: 0,
+    productId,
+    producedUnits,
+  };
+
+  await saveState(guildId, userId, state);
+  await sharedSuspicion.addUnderworldSuspicion(guildId, userId, suspicionGain, "underworld_store_for_smuggling").catch(() => {});
+  return { ok: true, productId, producedUnits, operation };
 }
 
 module.exports = {
@@ -963,4 +1025,5 @@ module.exports = {
   startRun,
   resolveEventChoice,
   chooseDistribution,
+  storeRunForSmuggling,
 };

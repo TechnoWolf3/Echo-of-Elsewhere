@@ -58,9 +58,15 @@ function mistakeLimit(seatCount) {
 }
 
 function clueTarget(seatCount) {
-  if (seatCount <= 5) return randomInt(3, 4);
-  if (seatCount <= 7) return randomInt(4, 6);
-  return randomInt(6, 8);
+  if (seatCount <= 5) return randomInt(2, 3);
+  if (seatCount <= 7) return randomInt(4, 5);
+  return randomInt(5, 7);
+}
+
+function minimumClues(seatCount) {
+  if (seatCount <= 5) return 3;
+  if (seatCount <= 7) return 4;
+  return 5;
 }
 
 function formatClue(scenario, clue) {
@@ -234,29 +240,25 @@ function generatePuzzle() {
       if (clues.length > target + 4) break;
       const unique = clues.length >= target && countSolutions(names, clues, 2) === 1;
       if (unique) {
-        return {
+        return finalisePuzzle({
           scenario,
           seatCount,
           names,
           answer,
           clues,
-          clueTexts: clues.map((entry) => formatClue(scenario, entry)),
-          mistakesAllowed: mistakeLimit(seatCount),
-        };
+        });
       }
     }
 
     const fallback = buildFallbackClues(answer);
     if (countSolutions(names, fallback, 2) === 1) {
-      return {
+      return finalisePuzzle({
         scenario,
         seatCount,
         names,
         answer,
         clues: fallback,
-        clueTexts: fallback.map((entry) => formatClue(scenario, entry)),
-        mistakesAllowed: mistakeLimit(seatCount),
-      };
+      });
     }
   }
   return null;
@@ -271,6 +273,34 @@ function buildFallbackClues(answer) {
     clues.push({ type: "adjacent", a: answer[1], b: answer[2] });
   }
   return clues;
+}
+
+function pruneClues(names, clues, seatCount) {
+  const minimum = minimumClues(seatCount);
+  let pruned = [...clues];
+
+  for (const clue of shuffle(pruned)) {
+    if (pruned.length <= minimum) break;
+    const next = pruned.filter((entry) => entry !== clue);
+    if (countSolutions(names, next, 2) === 1) {
+      pruned = next;
+    }
+  }
+
+  return pruned;
+}
+
+function finalisePuzzle({ scenario, seatCount, names, answer, clues }) {
+  const finalClues = shuffle(pruneClues(names, clues, seatCount));
+  return {
+    scenario,
+    seatCount,
+    names,
+    answer,
+    clues: finalClues,
+    clueTexts: finalClues.map((entry) => formatClue(scenario, entry)),
+    mistakesAllowed: mistakeLimit(seatCount),
+  };
 }
 
 function pruneSessions() {

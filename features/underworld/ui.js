@@ -8,7 +8,9 @@ const {
 
 const ui = require("../../utils/ui");
 const engine = require("../../utils/underworld/engine");
+const smuggling = require("../../utils/underworld/smugglingEngine");
 const config = require("../../data/underworld/config");
+const products = require("../../data/underworld/products");
 
 function suspicionMeter(value) {
   const amount = Math.max(0, Math.min(config.MAX_SUSPICION, Math.round(Number(value || 0))));
@@ -84,12 +86,305 @@ function buildUnderworldHomeComponents() {
         .setLabel("Operations")
         .setStyle(ButtonStyle.Primary),
       new ButtonBuilder()
+        .setCustomId("uw_smuggling")
+        .setLabel("Smuggling")
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
         .setCustomId("job_back:hub")
         .setLabel(ui.nav.back.label)
         .setEmoji(ui.nav.back.emoji)
         .setStyle(ui.nav.back.style)
     ),
   ];
+}
+
+function buildSmugglingHomeEmbed(state, suspicionInfo = { suspicion: 0, band: { label: "Quiet" } }) {
+  const smugglingState = smuggling.ensureSmugglingState(state);
+  const inv = smugglingState.inventory || {};
+  const activeRun = smuggling.getActiveRun(state);
+  const inventoryLines = Object.entries(products)
+    .map(([id, product]) => `${product.label}: **${Number(inv[id] || 0).toLocaleString()} ${product.unitLabel}**`)
+    .join("\n");
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle("🚚 Underworld Smuggling")
+      .setDescription("Cargo moves. Patrols notice. Buyers pay fast and leave faster.")
+      .addFields(
+        {
+          name: "Pressure",
+          value: [
+            `Suspicion: **${Math.round(Number(suspicionInfo.suspicion || 0))}/100**`,
+            `Band: **${suspicionInfo.band?.label || "Quiet"}**`,
+          ].join("\n"),
+          inline: true,
+        },
+        {
+          name: "Garage",
+          value: [
+            `Vehicles: **${smugglingState.vehicles.length.toLocaleString()}**`,
+            `Active run: **${activeRun ? "Yes" : "No"}**`,
+          ].join("\n"),
+          inline: true,
+        },
+        {
+          name: "Product Storage",
+          value: inventoryLines || "No produced product stored yet. Purchased cargo is always available at worse margins.",
+        }
+      ),
+    "job",
+    "Smuggling uses shared Underworld suspicion."
+  );
+}
+
+function buildSmugglingHomeComponents(state) {
+  const hasVehicle = smuggling.ensureSmugglingState(state).vehicles.length > 0;
+  const activeRun = smuggling.getActiveRun(state);
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("uw_smuggle_start")
+        .setLabel("Start Run")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(Boolean(activeRun) || !hasVehicle),
+      new ButtonBuilder()
+        .setCustomId("uw_smuggle_garage")
+        .setLabel("Vehicles")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId("uw_smuggle_active")
+        .setLabel("Active Run")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!activeRun)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("uw_home")
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style),
+      new ButtonBuilder()
+        .setCustomId("uw_refresh")
+        .setLabel(ui.nav.refresh.label)
+        .setEmoji(ui.nav.refresh.emoji)
+        .setStyle(ui.nav.refresh.style)
+    ),
+  ];
+}
+
+function buildVehicleGarageEmbed(state) {
+  const vehicles = smuggling.ensureSmugglingState(state).vehicles;
+  const lines = vehicles.length
+    ? vehicles.map((vehicle, index) => {
+        const def = smuggling.getVehicleDefinition(vehicle.vehicleType);
+        return [
+          `**${index + 1}. ${vehicle.nickname || def?.label || "Vehicle"}**`,
+          `Class: ${def?.class || "unknown"} | Capacity: **${def?.capacity || 0}**`,
+          `Speed: **${def?.speed || 1}x** | Stealth: **${def?.stealth || 1}x** | Heat: **${def?.heatProfile || 1}x**`,
+          `Durability: **${Number(vehicle.durabilityCurrent || 0)}/${Number(vehicle.durabilityMax || 0)}** | Repairs: **${Number(vehicle.repairCount || 0)}**`,
+          `Scrap estimate: **${ui.money(smuggling.getVehicleScrapValue(vehicle))}**`,
+        ].join("\n");
+      }).join("\n\n")
+    : "No vehicles yet. Buy something with wheels and questionable paperwork.";
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle("🚚 Smuggling Garage")
+      .setDescription(lines),
+    "job",
+    "Repairs restore current durability but reduce max durability."
+  );
+}
+
+function buildVehicleGarageComponents(state) {
+  const owned = smuggling.ensureSmugglingState(state).vehicles;
+  const rows = [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("uw_smuggle_shop").setLabel("Buy Vehicle").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("uw_smuggling").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
+    ),
+  ];
+  if (owned.length) {
+    rows.unshift(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId("uw_smuggle_vehicle_action")
+          .setPlaceholder("Repair or scrap a vehicle...")
+          .addOptions(
+            owned.flatMap((vehicle, index) => {
+              const def = smuggling.getVehicleDefinition(vehicle.vehicleType);
+              const name = `${index + 1}. ${vehicle.nickname || def?.label || "Vehicle"}`;
+              return [
+                { label: `Repair ${name}`.slice(0, 100), value: `uw_smuggle_repair:${vehicle.id}`, description: `Cost ${ui.money(smuggling.getRepairCost(vehicle))}`.slice(0, 100) },
+                { label: `Scrap ${name}`.slice(0, 100), value: `uw_smuggle_scrap:${vehicle.id}`, description: `Return ${ui.money(smuggling.getVehicleScrapValue(vehicle))}`.slice(0, 100) },
+              ];
+            }).slice(0, 25)
+          )
+      )
+    );
+  }
+  return rows;
+}
+
+function buildVehicleShopEmbed() {
+  const lines = Object.values(smuggling.vehicles)
+    .slice(0, 18)
+    .map((vehicle) => [
+      `**${vehicle.label}** - ${ui.money(vehicle.price)}`,
+      `${vehicle.class} | Cap **${vehicle.capacity}** | Speed **${vehicle.speed}x** | Stealth **${vehicle.stealth}x** | Heat **${vehicle.heatProfile}x**`,
+      vehicle.flavour,
+    ].join("\n"))
+    .join("\n\n");
+  return ui.applySystemStyle(
+    new EmbedBuilder().setTitle("🚚 Smuggling Vehicle Shop").setDescription(lines),
+    "job",
+    "Vehicles are permanent until scrapped."
+  );
+}
+
+function buildVehicleShopComponents() {
+  const options = Object.values(smuggling.vehicles).slice(0, 25).map((vehicle) => ({
+    label: vehicle.label,
+    value: `uw_smuggle_buy_vehicle:${vehicle.id}`,
+    description: `${ui.money(vehicle.price)} | cap ${vehicle.capacity} | ${vehicle.flavour}`.slice(0, 100),
+  }));
+  return [
+    new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId("uw_smuggle_shop_select")
+        .setPlaceholder("Buy a smuggling vehicle...")
+        .addOptions(options)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("uw_smuggle_garage").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
+    ),
+  ];
+}
+
+function buildStartRunEmbed(state, flow = {}, suspicionInfo = { suspicion: 0 }) {
+  const vehicle = flow.vehicleId ? smuggling.getOwnedVehicle(state, flow.vehicleId) : null;
+  const estimate = flow.productId && flow.sourceType && vehicle && flow.cargoAmount
+    ? smuggling.calculateRunEstimate({ productId: flow.productId, sourceType: flow.sourceType, cargoAmount: flow.cargoAmount, vehicle, suspicionScore: suspicionInfo.suspicion })
+    : null;
+  const product = flow.productId ? products[flow.productId] : null;
+  const vehicleDef = vehicle ? smuggling.getVehicleDefinition(vehicle.vehicleType) : null;
+  const lines = [
+    `Product: **${product?.label || "Choose product"}**`,
+    `Source: **${flow.sourceType || "Choose source"}**`,
+    `Vehicle: **${vehicleDef?.label || "Choose vehicle"}**`,
+    `Cargo: **${flow.cargoAmount || "Choose amount"}**`,
+  ];
+  if (estimate) {
+    lines.push("");
+    lines.push(`Estimated payout: **${ui.money(estimate.estimatedPayout)}**`);
+    lines.push(`Upfront cost: **${ui.money(estimate.upfrontCost)}**`);
+    lines.push(`Estimated profit: **${ui.money(estimate.estimatedProfit)}**`);
+    lines.push(`Duration: **${estimate.durationMinutes} min** | Deliveries: **${estimate.deliveries}**`);
+    lines.push(`Suspicion: **+${estimate.suspicionGain}** | Risk: **${estimate.riskBand}**`);
+    lines.push("Busts can seize cargo, damage vehicles, and cause jail.");
+  }
+  return ui.applySystemStyle(
+    new EmbedBuilder().setTitle("🚚 Plan Smuggling Run").setDescription(lines.join("\n")),
+    "job",
+    "Purchased cargo works without storage, but the margin is rough."
+  );
+}
+
+function buildStartRunComponents(state, flow = {}) {
+  const rows = [];
+  if (!flow.productId) {
+    rows.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId("uw_smuggle_product_select").setPlaceholder("Choose cargo...").addOptions(
+        Object.values(products).map((product) => ({
+          label: product.label,
+          value: `uw_smuggle_product:${product.id}`,
+          description: `${product.unitLabel} | produced $${product.producedSellValue}/unit | purchased $${product.purchasedSellValue}/unit`.slice(0, 100),
+        }))
+      )
+    ));
+  } else if (!flow.sourceType) {
+    const qty = Number(smuggling.ensureSmugglingState(state).inventory[flow.productId] || 0);
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("uw_smuggle_source:produced").setLabel(`Produced (${qty})`).setStyle(ButtonStyle.Success).setDisabled(qty <= 0),
+      new ButtonBuilder().setCustomId("uw_smuggle_source:purchased").setLabel("Purchased").setStyle(ButtonStyle.Danger)
+    ));
+  } else if (!flow.vehicleId) {
+    rows.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId("uw_smuggle_run_vehicle_select").setPlaceholder("Choose vehicle...").addOptions(
+        smuggling.ensureSmugglingState(state).vehicles.slice(0, 25).map((vehicle, index) => {
+          const def = smuggling.getVehicleDefinition(vehicle.vehicleType);
+          return {
+            label: `${index + 1}. ${vehicle.nickname || def?.label || "Vehicle"}`.slice(0, 100),
+            value: `uw_smuggle_run_vehicle:${vehicle.id}`,
+            description: `Cap ${def?.capacity || 0} | Durability ${vehicle.durabilityCurrent}/${vehicle.durabilityMax}`.slice(0, 100),
+          };
+        })
+      )
+    ));
+  } else if (!flow.cargoAmount) {
+    const vehicle = smuggling.getOwnedVehicle(state, flow.vehicleId);
+    const def = smuggling.getVehicleDefinition(vehicle?.vehicleType);
+    const max = Number(def?.capacity || 1);
+    const amounts = [...new Set([Math.min(5, max), Math.floor(max * 0.25), Math.floor(max * 0.5), Math.floor(max * 0.75), max].filter((n) => n > 0))];
+    rows.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder().setCustomId("uw_smuggle_amount_select").setPlaceholder("Choose cargo amount...").addOptions(
+        amounts.map((amount) => ({ label: `${amount} units`, value: `uw_smuggle_amount:${amount}`, description: `${Math.ceil(amount / Number(config.SMUGGLING.parcelSize || 25))} delivery parcel(s)` }))
+      )
+    ));
+  } else {
+    rows.push(new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("uw_smuggle_confirm").setLabel("Start Run").setStyle(ButtonStyle.Danger)
+    ));
+  }
+  rows.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("uw_smuggle_start_reset").setLabel("Reset Plan").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("uw_smuggling").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
+  ));
+  return rows;
+}
+
+function buildActiveRunEmbed(state, suspicionInfo = { suspicion: 0 }) {
+  const run = smuggling.getActiveRun(state);
+  if (!run) {
+    return ui.applySystemStyle(new EmbedBuilder().setTitle("🚚 Active Smuggling Run").setDescription("No cargo is currently moving."), "job");
+  }
+  const product = products[run.productId];
+  const vehicle = smuggling.getOwnedVehicle(state, run.vehicleId);
+  const def = smuggling.getVehicleDefinition(vehicle?.vehicleType);
+  const event = run.eventState?.eventId ? smuggling.events[run.eventState.eventId] : null;
+  const lines = [
+    `Cargo: **${Number(run.cargoRemaining || 0).toLocaleString()} ${product?.unitLabel || "units"} ${product?.label || ""}**`,
+    `Vehicle: **${def?.label || "Unknown"}** (${Number(vehicle?.durabilityCurrent || 0)}/${Number(vehicle?.durabilityMax || 0)})`,
+    `Deliveries: **${Number(run.deliveriesCompleted || 0)}/${Number(run.deliveriesTotal || 0)}**`,
+    `Ends: **<t:${Math.floor(Number(run.endsAt || Date.now()) / 1000)}:R>**`,
+    `Risk: **${Math.round(Number(run.risk?.current || 0) * 100)}%** | Suspicion: **${Math.round(Number(suspicionInfo.suspicion || 0))}/100**`,
+  ];
+  if (event && run.status === "event") {
+    lines.push("");
+    lines.push(`**Route Event: ${event.label}**`);
+    lines.push(event.description);
+    lines.push(`Respond <t:${Math.floor(Number(run.eventState.deadlineAt || Date.now()) / 1000)}:R>, or ignore it for no major penalty.`);
+  }
+  return ui.applySystemStyle(new EmbedBuilder().setTitle("🚚 Active Smuggling Run").setDescription(lines.join("\n")), "job");
+}
+
+function buildActiveRunComponents(state) {
+  const run = smuggling.getActiveRun(state);
+  const rows = [];
+  if (run?.status === "event") {
+    const event = smuggling.events[run.eventState.eventId];
+    rows.push(new ActionRowBuilder().addComponents(
+      ...(event.options || []).slice(0, 5).map((option) =>
+        new ButtonBuilder().setCustomId(`uw_smuggle_event:${option.id}`).setLabel(option.label).setStyle(ButtonStyle.Primary)
+      )
+    ));
+  }
+  rows.push(new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("uw_smuggle_claim").setLabel("Claim/Finish").setStyle(ButtonStyle.Success).setDisabled(!run || run.status === "event" || Date.now() < Number(run.endsAt || 0)),
+    new ButtonBuilder().setCustomId("uw_refresh").setLabel(ui.nav.refresh.label).setEmoji(ui.nav.refresh.emoji).setStyle(ui.nav.refresh.style),
+    new ButtonBuilder().setCustomId("uw_smuggling").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
+  ));
+  return rows;
 }
 
 function buildOperationsEmbed(state) {
@@ -348,6 +643,16 @@ function buildBuildingComponents(state, buildingId) {
           .setStyle(ButtonStyle.Danger)
       )
     );
+    if (run?.status === "awaiting_distribution" && ["meth_lab", "cocaine_lab"].includes(op?.id)) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`uw_store_smuggling:${building.id}`)
+            .setLabel("Store For Smuggling")
+            .setStyle(ButtonStyle.Secondary)
+        )
+      );
+    }
     if (!run && op?.storageEnabled) {
       rows.push(
         new ActionRowBuilder().addComponents(
@@ -417,4 +722,14 @@ module.exports = {
   buildOperationsComponents,
   buildBuildingEmbed,
   buildBuildingComponents,
+  buildSmugglingHomeEmbed,
+  buildSmugglingHomeComponents,
+  buildVehicleGarageEmbed,
+  buildVehicleGarageComponents,
+  buildVehicleShopEmbed,
+  buildVehicleShopComponents,
+  buildStartRunEmbed,
+  buildStartRunComponents,
+  buildActiveRunEmbed,
+  buildActiveRunComponents,
 };
