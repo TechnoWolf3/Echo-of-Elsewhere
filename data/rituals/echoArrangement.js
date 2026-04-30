@@ -203,15 +203,45 @@ function makeCandidateClues(answer) {
 
 function clueWeight(clue, seatCount) {
   if (clue.type === "exact") return seatCount <= 6 ? 3 : 1;
-  if (clue.type === "between" || clue.type === "distance") return seatCount >= 8 ? 8 : 5;
+  if (clue.type === "between" || clue.type === "distance") return seatCount >= 8 ? 10 : 7;
   if (clue.type === "adjacent") return 7;
-  if (clue.type === "leftOf" || clue.type === "rightOf") return 5;
-  if (clue.type === "notAdjacent") return 4;
-  return 3;
+  if (clue.type === "edge" || clue.type === "notEdge") return 6;
+  if (clue.type === "notAdjacent") return 5;
+  if (clue.type === "leftOf" || clue.type === "rightOf") return 2;
+  return 4;
 }
 
 function clueKey(clue) {
   return [clue.type, clue.a, clue.b || "", clue.c || "", clue.pos ?? "", clue.distance ?? ""].join(":");
+}
+
+function clueFamily(clue) {
+  if (clue.type === "leftOf" || clue.type === "rightOf") return "order";
+  if (clue.type === "edge" || clue.type === "notEdge" || clue.type === "exact") return "position";
+  if (clue.type === "adjacent" || clue.type === "notAdjacent" || clue.type === "distance") return "near";
+  if (clue.type === "between") return "between";
+  return clue.type;
+}
+
+function countClueFamilies(clues) {
+  return new Set(clues.map(clueFamily)).size;
+}
+
+function typeCount(clues, type) {
+  return clues.filter((clue) => clue.type === type).length;
+}
+
+function shouldSkipForVariety(clues, clue, seatCount, target) {
+  const family = clueFamily(clue);
+  const orderCount = clues.filter((entry) => clueFamily(entry) === "order").length;
+  const familyCount = clues.filter((entry) => clueFamily(entry) === family).length;
+  const orderLimit = seatCount <= 5 ? 1 : seatCount <= 7 ? 2 : 3;
+  const familyLimit = Math.max(2, Math.ceil(target / 2));
+
+  if (family === "order" && orderCount >= orderLimit) return true;
+  if (familyCount >= familyLimit) return true;
+  if (clue.type === "exact" && typeCount(clues, "exact") >= 1) return true;
+  return false;
 }
 
 function generatePuzzle() {
@@ -226,10 +256,11 @@ function generatePuzzle() {
     const used = new Set();
     let exactUsed = 0;
     const candidates = makeCandidateClues(answer)
-      .sort((a, b) => clueWeight(b, seatCount) - clueWeight(a, seatCount) + randomInt(-1, 1));
+      .sort((a, b) => clueWeight(b, seatCount) - clueWeight(a, seatCount) + randomInt(-2, 2));
 
     for (const clue of candidates) {
       if (clue.type === "exact" && exactUsed >= maxExact) continue;
+      if (shouldSkipForVariety(clues, clue, seatCount, target)) continue;
       const key = clueKey(clue);
       if (used.has(key)) continue;
       const next = [...clues, clue];
@@ -238,7 +269,7 @@ function generatePuzzle() {
       clues.push(clue);
       if (clue.type === "exact") exactUsed += 1;
       if (clues.length > target + 4) break;
-      const unique = clues.length >= target && countSolutions(names, clues, 2) === 1;
+      const unique = clues.length >= target && countClueFamilies(clues) >= 3 && countSolutions(names, clues, 2) === 1;
       if (unique) {
         return finalisePuzzle({
           scenario,
@@ -266,11 +297,15 @@ function generatePuzzle() {
 
 function buildFallbackClues(answer) {
   const clues = [];
+  clues.push({ type: "edge", a: answer[0] });
+  clues.push({ type: "leftOf", a: answer[0], b: answer[answer.length - 1] });
+
   for (let i = 0; i < answer.length - 1; i += 1) {
-    clues.push({ type: "leftOf", a: answer[i], b: answer[i + 1] });
+    clues.push({ type: "adjacent", a: answer[i], b: answer[i + 1] });
   }
   if (answer.length >= 6) {
-    clues.push({ type: "adjacent", a: answer[1], b: answer[2] });
+    clues.push({ type: "between", a: answer[2], b: answer[0], c: answer[4] });
+    clues.push({ type: "distance", a: answer[1], b: answer[3], distance: 2 });
   }
   return clues;
 }
@@ -278,10 +313,13 @@ function buildFallbackClues(answer) {
 function pruneClues(names, clues, seatCount) {
   const minimum = minimumClues(seatCount);
   let pruned = [...clues];
+  const startingFamilyCount = countClueFamilies(pruned);
+  const minimumFamilies = Math.min(3, startingFamilyCount);
 
   for (const clue of shuffle(pruned)) {
     if (pruned.length <= minimum) break;
     const next = pruned.filter((entry) => entry !== clue);
+    if (countClueFamilies(next) < minimumFamilies) continue;
     if (countSolutions(names, next, 2) === 1) {
       pruned = next;
     }
@@ -291,7 +329,7 @@ function pruneClues(names, clues, seatCount) {
 }
 
 function finalisePuzzle({ scenario, seatCount, names, answer, clues }) {
-  const finalClues = shuffle(pruneClues(names, clues, seatCount));
+  const finalClues = shuffle(topUpVariety(answer, pruneClues(names, clues, seatCount)));
   return {
     scenario,
     seatCount,
@@ -301,6 +339,58 @@ function finalisePuzzle({ scenario, seatCount, names, answer, clues }) {
     clueTexts: finalClues.map((entry) => formatClue(scenario, entry)),
     mistakesAllowed: mistakeLimit(seatCount),
   };
+}
+
+function hasClueLike(clues, type) {
+  return clues.some((clue) => clue.type === type);
+}
+
+function maxDisplayedClues(seatCount) {
+  if (seatCount <= 5) return 5;
+  if (seatCount <= 7) return 7;
+  return 9;
+}
+
+function topUpVariety(answer, clues) {
+  const finalClues = [...clues];
+  const pos = positions(answer);
+  const maxClues = maxDisplayedClues(answer.length);
+  const addIfRoom = (clue) => {
+    if (!clue || finalClues.length >= maxClues) return;
+    if (!finalClues.some((entry) => clueKey(entry) === clueKey(clue))) {
+      finalClues.push(clue);
+    }
+  };
+
+  if (!hasClueLike(finalClues, "notAdjacent")) {
+    const pairs = [];
+    for (let i = 0; i < answer.length; i += 1) {
+      for (let j = i + 2; j < answer.length; j += 1) {
+        pairs.push({ type: "notAdjacent", a: answer[i], b: answer[j] });
+      }
+    }
+    addIfRoom(pick(pairs, null));
+  }
+
+  if (!finalClues.some((clue) => clue.type === "edge" || clue.type === "notEdge")) {
+    const edgeTargets = answer.filter((name) => {
+      const idx = pos.get(name);
+      return idx === 0 || idx === answer.length - 1;
+    });
+    addIfRoom({ type: "edge", a: pick(edgeTargets, answer[0]) });
+  }
+
+  if (answer.length >= 6 && !hasClueLike(finalClues, "between")) {
+    const middleIndex = randomInt(1, answer.length - 2);
+    addIfRoom({
+      type: "between",
+      a: answer[middleIndex],
+      b: answer[randomInt(0, middleIndex - 1)],
+      c: answer[randomInt(middleIndex + 1, answer.length - 1)],
+    });
+  }
+
+  return finalClues;
 }
 
 function pruneSessions() {

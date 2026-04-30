@@ -313,7 +313,7 @@ Underworld specifics:
 - Echo Arrangement / Echo Seating lives in `data/rituals/echoArrangement.js`, with scenario/name/clue text pools in `data/rituals/echoArrangementScenarios.js`.
 - Echo Seating is a daily public ritual using the `echo_arrangement` cooldown key. It creates a per-user session with 5-10 seats and mistake limits of 2 for 5 seats, 3 for 6-7 seats, and 4 for 8-10 seats.
 - Puzzle generation creates the hidden answer first, generates clues from that answer, and checks uniqueness with a small solver before showing the puzzle. If a generated puzzle is weak or ambiguous, it retries.
-- Echo Seating clues are pruned where possible while preserving a unique solution, then shuffled before display. Do not render clues in accepted/answer order; ordered hints make the puzzle too easy.
+- Echo Seating clues are pruned where possible while preserving a unique solution, then shuffled before display. The generator should preserve mixed clue families (`order`, `position`, `near`, `between`) and may add true variety clues from the hidden answer; do not let puzzles collapse into only left/right-of hints.
 - Answer input is modal-based and accepts comma-separated names, plus space-separated names when unambiguous. Invalid formatting does not spend a mistake.
 - Wrong answers spend one mistake and only reveal limited feedback, currently correct-position count. Final reveal happens only when solved, when mistakes run out, or when the player gives up.
 - Final Echo Seating reveal mirrors Veil Sequence: `Your Order` appears directly above `Correct Order` for comparison. Give-up without any submitted answer shows `No answer submitted.`
