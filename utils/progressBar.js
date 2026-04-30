@@ -1,4 +1,4 @@
-const DEFAULT_LENGTH = 16;
+const DEFAULT_LENGTH = 10;
 const DEFAULT_FILLED = "▰";
 const DEFAULT_EMPTY = "▱";
 

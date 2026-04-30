@@ -54,7 +54,7 @@ function safeDesc(s) {
   return t.slice(0, 97) + "...";
 }
 
-function progressBar(pct, size = 16) {
+function progressBar(pct, size = 10) {
   return renderProgressBar(pct, 100, { length: size });
 }
 
@@ -69,19 +69,29 @@ function buildNineToFiveEmbed(user, progress, cooldowns = {}) {
 
   const jobLines = nineToFiveIndex.jobs
     .map((job) => {
-      const available = cooldowns[job.key] ? `⏳ Available <t:${cooldowns[job.key]}:R>` : "✅ Available now";
-      return `${job.title} - ${job.desc}\n${available}`;
+      const available = cooldowns[job.key] ? `Status: <t:${cooldowns[job.key]}:R>` : "Status: Available now";
+      return ui.entryBlock(job.title, [
+        job.desc,
+        available,
+      ]);
     })
     .join("\n\n");
 
   return new EmbedBuilder()
     .setTitle(nineToFiveIndex.category?.title || "📦 Work a 9-5")
-    .setDescription(nineToFiveIndex.category?.description || "")
-    .addFields(
-      { name: "Progress", value: `Level ${progress.level} - XP ${progress.xp}/${need} - Bonus +${bonusPct}%` },
-      { name: "Jobs", value: jobLines || "No jobs configured." }
+    .setDescription(
+      [
+        nineToFiveIndex.category?.description || "Classic work. Steady pay.",
+        "",
+        ui.sectionBlock("Progress", [
+          `Level ${progress.level} • ${progress.xp} / ${need} XP`,
+          `Bonus: +${bonusPct}%`,
+        ]),
+        "",
+        ui.sectionBlock("Jobs", jobLines || "No jobs configured."),
+      ].join("\n")
     )
-    .setFooter({ text: nineToFiveIndex.category?.footer || "Cooldown blocks payouts, not browsing." });
+    .setColor(ui.systems.job.color);
 }
 
 function buildNineToFiveComponents({ disabled = false, legendary = false } = {}) {

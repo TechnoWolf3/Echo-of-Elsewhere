@@ -23,6 +23,7 @@ const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { recordProgress: recordContractProgress } = require("../../utils/contracts");
+const ui = require("../../utils/ui");
 
 const {
   getUserCasinoSecurity,
@@ -172,39 +173,56 @@ function cardStr(c) {
 function buildLobbyEmbed(table) {
   const lines = [];
   for (const p of table.players.values()) {
-    const paid = p.paid ? "✅" : "❌";
     const bet = p.betAmount ? `$${Number(p.betAmount).toLocaleString()}` : `$${MIN_BET.toLocaleString()}`;
-    lines.push(`${paid} <@${p.userId}> — Bet: **${bet}**`);
+    lines.push(ui.entryBlock(`<@${p.userId}>`, [
+      `Bet: ${bet}`,
+      `Status: ${p.paid ? "Ready" : "Waiting"}`,
+    ]));
   }
-  const playersBlock = lines.length ? lines.join("\n") : "_No players yet._";
+  const playersBlock = lines.length ? lines.join("\n\n") : "_No players yet._";
 
   return new EmbedBuilder()
     .setTitle("🔼🔽 Higher or Lower")
     .setDescription(
-      `Dealer: ${table.currentCard ? cardStr(table.currentCard) : "*Not dealt yet*"}\n` +
-      `Players (${table.players.size}/${table.maxPlayers}):\n${playersBlock}\n\n` +
-      `**Rules**\nMinimum bet: **$${MIN_BET.toLocaleString()}** • Ties are a loss.`
+      [
+        "Trust the card. Doubt yourself.",
+        "",
+        ui.sectionBlock("Current Card", table.currentCard ? cardStr(table.currentCard) : "Not dealt yet"),
+        "",
+        ui.sectionBlock("Players", playersBlock),
+      ].join("\n")
     )
-    .setFooter({ text: `Table ID: hol${table.tableId}` });
+    .setColor(ui.colors.casino);
 }
 
 function buildRoundEmbed(table) {
   const alive = [...table.players.values()].filter((p) => p.alive);
   const lines = alive.map((p) => {
-    const pick = p.pick ? (p.pick === "higher" ? "🔼" : "🔽") : "…";
-    return `${pick} <@${p.userId}> — streak **${p.streak || 0}**`;
+    const pick = p.pick ? (p.pick === "higher" ? "Higher" : "Lower") : "Choosing";
+    return ui.entryBlock(`<@${p.userId}>`, [
+      `Streak: ${p.streak || 0}`,
+      `Pick: ${pick}`,
+    ]);
   });
 
-  const status = table.currentCard ? `Current card: ${cardStr(table.currentCard)}` : "Current card: —";
+  const resultBlock = table.lastResult
+    ? ui.sectionBlock("Result", table.lastResult)
+    : null;
 
   return new EmbedBuilder()
     .setTitle("🔼🔽 Higher or Lower")
     .setDescription(
-      `${status}\n\n` +
-      `**Alive (${alive.length})**\n${lines.join("\n") || "_Nobody alive._"}\n\n` +
-      `Pick **Higher (🔼)** or **Lower (🔽)**.`
+      [
+        "The next card has opinions.",
+        "",
+        ui.sectionBlock("Current Card", table.currentCard ? cardStr(table.currentCard) : "—"),
+        "",
+        ui.sectionBlock("Players", lines.join("\n\n") || "_Nobody alive._"),
+        resultBlock ? "" : null,
+        resultBlock,
+      ].filter(Boolean).join("\n")
     )
-    .setFooter({ text: `Table ID: hol${table.tableId}` });
+    .setColor(ui.colors.casino);
 }
 
 function btn(tableId, action, label, style, extra = {}) {
@@ -394,6 +412,7 @@ async function resolveRound(table) {
   if (alive.length === 0) {
     table.state = "lobby";
     table.currentCard = null;
+    table.lastResult = null;
     for (const p of table.players.values()) {
       p.paid = false;
       p.pick = null;
@@ -408,15 +427,18 @@ async function resolveRound(table) {
   const next = table.deck.pop() || (table.deck = newDeck(), table.deck.pop());
   const prev = table.currentCard;
   table.currentCard = next;
+  const resultLines = [`Card: ${cardStr(prev)} → ${cardStr(next)}`];
 
   for (const p of alive) {
     const correct =
       (p.pick === "higher" && next.v > prev.v) || (p.pick === "lower" && next.v < prev.v);
     if (correct) {
       p.streak = (p.streak || 0) + 1;
+      resultLines.push(`<@${p.userId}>: Hit • Streak ${p.streak || 0}`);
       p.pick = null;
     } else {
       p.alive = false;
+      resultLines.push(`<@${p.userId}>: Miss • Streak ${p.streak || 0}`);
       p.pick = null;
       const triggerJail = await handleTriggeredEffectEvent({
         guildId: table.guildId,
@@ -431,6 +453,7 @@ async function resolveRound(table) {
       try { await unlockAchievement(table.channel, table.guildId, p.userId, ACH.FIRST_BUST); } catch {}
     }
   }
+  table.lastResult = resultLines.join("\n");
 }
 
 async function startRound(interaction, table) {
@@ -446,6 +469,7 @@ async function startRound(interaction, table) {
   table.state = "round";
   table.deck = newDeck();
   table.currentCard = table.deck.pop();
+  table.lastResult = null;
 
   for (const p of table.players.values()) {
     p.alive = true;

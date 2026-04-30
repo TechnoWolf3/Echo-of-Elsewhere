@@ -1,11 +1,15 @@
 const { ButtonStyle } = require("discord.js");
 
 const colors = {
-  job: 0x2f8f5b,
-  games: 0xd4af37,
+  echo: 0x0875af,
+  job: 0x6f7681,
+  games: 0xb94719,
+  casino: 0xd4af37,
   rituals: 0x7a2bff,
+  underworld: 0x7f1d1d,
   bank: 0x0875af,
   ese: 0x2ecc71,
+  enterprise: 0x2ecc71,
   admin: 0x5865f2,
   neutral: 0x2b2d31,
   success: 0x22aa55,
@@ -14,6 +18,10 @@ const colors = {
 };
 
 const systems = {
+  echo: {
+    color: colors.echo,
+    footer: "Echo of Elsewhere",
+  },
   job: {
     color: colors.job,
     footer: "Echo Work Board",
@@ -22,6 +30,10 @@ const systems = {
     color: colors.games,
     footer: "Echo Games Hub",
   },
+  casino: {
+    color: colors.casino,
+    footer: "Echo Casino",
+  },
   rituals: {
     color: colors.rituals,
     footer: "Echo Rituals",
@@ -29,6 +41,14 @@ const systems = {
   bank: {
     color: colors.bank,
     footer: "Echo Reserve",
+  },
+  enterprise: {
+    color: colors.enterprise,
+    footer: "Echo Enterprises",
+  },
+  underworld: {
+    color: colors.underworld,
+    footer: "Echo Underworld",
   },
 };
 
@@ -60,6 +80,21 @@ function statusEmoji(status) {
   return "🟢";
 }
 
+function section(title) {
+  return `━━━ ${title} ━━━`;
+}
+
+function sectionBlock(title, content) {
+  const value = Array.isArray(content)
+    ? content.filter((line) => line !== null && line !== undefined).join("\n").trim()
+    : String(content || "").trim();
+  return [section(title), value || "—"].join("\n");
+}
+
+function entryBlock(title, lines = []) {
+  return [`**${title}**`, ...lines.filter(Boolean)].join("\n");
+}
+
 module.exports = {
   colors,
   systems,
@@ -67,4 +102,7 @@ module.exports = {
   money,
   applySystemStyle,
   statusEmoji,
+  section,
+  sectionBlock,
+  entryBlock,
 };

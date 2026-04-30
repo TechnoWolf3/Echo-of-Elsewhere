@@ -23,7 +23,7 @@ function safeDesc(s) {
   return t.slice(0, 97) + "...";
 }
 
-function progressBar(value, size = 16) {
+function progressBar(value, size = 10) {
   return renderProgressBar(value, 100, { length: size });
 }
 

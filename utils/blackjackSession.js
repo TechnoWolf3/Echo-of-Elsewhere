@@ -6,6 +6,8 @@ const {
   EmbedBuilder,
 } = require("discord.js");
 
+const ui = require("./ui");
+
 const SUITS = ["♠", "♥", "♦", "♣"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
@@ -511,9 +513,9 @@ playComponents() {
 
     const lines = [...this.players.values()].map((p) => {
       const betText = p.bet && p.paid
-        ? `$${Number(p.bet).toLocaleString()} ✅`
+        ? `$${Number(p.bet).toLocaleString()}`
         : p.bet
-          ? `Pending…`
+          ? `Pending`
           : "No bet";
 
       const hands = p.hands?.length
@@ -529,29 +531,47 @@ playComponents() {
             ? " 👉"
             : "";
         const doubledMark = h.doubled ? " (DOUBLED)" : "";
-        return `• ${label}: ${cards}${total} — **${h.status}**${doubledMark}${activeMark}`;
+        return `${label}: ${cards}${total}\nStatus: ${h.status}${doubledMark}${activeMark}`;
       });
 
-      return `${p.user} — Bet: **${betText}**\n${handLines.join("\n")}`;
+      return ui.entryBlock(p.user, [
+        `Bet: ${betText}`,
+        `Hand: ${handLines.join("\n")}`,
+      ]);
     });
 
-    const joinNote = this.defaultBet
-      ? `Join auto-buy-in: **$${Number(this.defaultBet).toLocaleString()}** (override with **/blackjack bet:<amount>**).`
-      : `Place your buy-in using **Set Bet** (modal) or **Quick Bet**. Minimum **$500**.`;
-
     const turnId = this.currentPlayerId();
-    const turnLine =
-      this.state === "playing" && turnId ? `👉 Turn: <@${turnId}>`
-      : this.state === "lobby" ? joinNote
-      : "Game finished.";
+    const flavour =
+      this.state === "playing" ? "The shoe is live. Count quietly." :
+      this.state === "lobby" ? "The dealer waits behind the shoe." :
+      "The table settles its debts.";
+    const statusLine =
+      this.state === "playing" && turnId ? `Current: <@${turnId}>`
+      : this.state === "lobby" ? (this.allPlayersPaid() ? "Ready to deal" : "Waiting for buy-ins")
+      : "Settled";
+    const dealerSection =
+      this.state === "lobby"
+        ? ui.sectionBlock("Dealer", "Not dealt yet")
+        : ui.sectionBlock("Dealer", revealDealer ? `Hand: ${dealerShown}` : `Visible: ${dealerShown}`);
+    const middleSection =
+      this.state === "lobby"
+        ? ui.sectionBlock("Stakes", statusLine)
+        : ui.sectionBlock(this.state === "ended" ? "Results" : "Turn", statusLine);
 
     return new EmbedBuilder()
-      .setTitle("🃏 Blackjack")
+      .setTitle("🃏 Blackjack Table")
       .setDescription(
-        `**Dealer:** ${dealerShown}\n\n` +
-        `**Players (${this.players.size}/${this.maxPlayers}):**\n${lines.join("\n\n") || "_None yet_"}\n\n` +
-        `${turnLine}`
-      );
+        [
+          flavour,
+          "",
+          dealerSection,
+          "",
+          ui.sectionBlock("Players", lines.join("\n\n") || "_None yet_"),
+          "",
+          middleSection,
+        ].join("\n")
+      )
+      .setColor(ui.colors.casino);
   }
 
   async postOrEditPanel() {

@@ -31,6 +31,7 @@ const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { recordProgress: recordContractProgress } = require("../../utils/contracts");
+const ui = require("../../utils/ui");
 
 const {
   getUserCasinoSecurity,
@@ -715,17 +716,28 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
         wins: (p.result === "win" || p.result === "blackjack_win") && paid > B ? 1 : 0,
         profit: Math.max(0, paid - B),
       });
-      resultsLines.push(`${p.user}${handTag} — **${pv}** — ${label}${paidText}${jailText}`);
+      resultsLines.push(ui.entryBlock(`${p.user}${handTag}`, [
+        `Bet: $${B.toLocaleString()}`,
+        `Hand: ${pv}`,
+        `Result: ${label}`,
+        paid > 0 ? `Payout: $${paid.toLocaleString()}` : "Payout: $0",
+        jailText.trim(),
+      ]));
     }
 
     const dealerLine = `${dealerHand.map(cardStr).join(" ")} (**${dealerValue}**)`;
-    const desc =
-      `**Dealer:** ${dealerLine}\n\n` +
-      resultsLines.join("\n") +
-      (payoutNotes.length ? `\n\n${payoutNotes.join("\n")}` : "");
+    const desc = [
+      "The table settles its debts.",
+      "",
+      ui.sectionBlock("Dealer", `Hand: ${dealerLine}`),
+      "",
+      ui.sectionBlock("Results", resultsLines.join("\n\n")),
+      payoutNotes.length ? "" : null,
+      payoutNotes.length ? ui.sectionBlock("Payouts", payoutNotes.join("\n")) : null,
+    ].filter(Boolean).join("\n");
 
     session.resultsMessage = await session.channel.send({
-      embeds: [{ title: "🃏 Blackjack Results", description: desc }],
+      embeds: [new EmbedBuilder().setTitle("🃏 Blackjack Results").setDescription(desc).setColor(ui.colors.casino)],
     });
 
     collector.stop("game_finished");

@@ -230,10 +230,6 @@ async function handleJobMilestones({ channel, guildId, userId, totalJobs }) {
    UI: Hub + Category Boards
    ============================================================ */
 
-function statusLineFromCooldown(cooldownUnix) {
-  return cooldownUnix ? `⏳ **Next payout** <t:${cooldownUnix}:R>` : `✅ **Ready** — you can work now.`;
-}
-
 function buildHubEmbed(user, progress, cooldownUnix) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
@@ -243,32 +239,28 @@ function buildHubEmbed(user, progress, cooldownUnix) {
     .setTitle("🧰 Job Board")
     .setDescription(
       [
-        `Pick what kind of work you want to do, **${user.username}**.`,
+        `What kind of work are you looking for today, **${user.username}**?`,
         "",
-        statusLineFromCooldown(cooldownUnix),
+        ui.sectionBlock("Progress", [
+          `Level ${progress.level} • ${progress.xp} / ${need} XP`,
+          `Bonus: +${bonusPct}% earnings`,
+        ]),
+        "",
+        ui.sectionBlock("Paths", [
+          ui.entryBlock("📦 Work a 9–5", ["Classic shifts. Steady pay."]),
+          "",
+          ui.entryBlock("🧠 Night Walker", ["Charm, nerve, and the late crowd."]),
+          "",
+          ui.entryBlock("🕒 Grind", ["Longer work for patient hands."]),
+          "",
+          ui.entryBlock("🕶️ Crime", ["Risky moves under rising heat."]),
+          "",
+          ui.entryBlock("🏭 Enterprises", ["Build systems that earn over time."]),
+          "",
+          ui.entryBlock("🕶️ The Underworld", ["Quiet networks. Loud consequences."]),
+        ]),
       ].join("\n")
-    )
-    .addFields(
-      {
-        name: "Progress",
-        value: `Level ${progress.level} • XP ${progress.xp}/${need} • Bonus +${bonusPct}%`,
-      },
-      {
-        name: "Job Type",
-        value: [
-          "📦 **Work a 9–5** — Classic shift work",
-          "🧠 **Night Walker** — Work to please the night",
-          "🕒 **Grind** — Jobs that take time",
-          "🕶️ **Crime** — High risk, heat & jail",
-          "🏭 **Enterprises** — Long-term business systems",
-          "🕶️ **The Underworld** — Illegal operations, suspicion, and raids"
-        ].join("\n"),
-      },
-      {
-        name: "Rules",
-        value: `Work a 9-5 uses per-job cooldowns; other quick payouts use **${JOB_COOLDOWN_SECONDS}s**.\nAuto-clears after **3m** inactivity (or **Stop Work**)`,
-      }
-    ), "job", "Leveling up increases payout bonus.");
+    ), "job", false);
 }
 
 function buildHubComponents(disabled = false) {

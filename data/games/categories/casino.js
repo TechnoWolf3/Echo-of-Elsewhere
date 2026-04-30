@@ -3,7 +3,7 @@ module.exports = {
   id: "casino",
   name: "Casino",
   emoji: "🎰",
-  description: "House games, table fees, and big swings.",
+  description: "Low lights. Sharp cards. Louder consequences.",
   order: 1,
 
   games: [
@@ -11,7 +11,7 @@ module.exports = {
       id: "higherlower",
       name: "Higher or Lower",
       emoji: "🔼",
-      description: "Pick 🔼 or 🔽 • build a streak • cash out",
+      description: "Chase the next card and guard your streak.",
       run: async (interaction, ctx = {}) => {
         const hol = require("../higherLower");
         return hol.startFromHub(interaction, ctx);
@@ -22,7 +22,7 @@ module.exports = {
       id: "blackjack",
       name: "Blackjack",
       emoji: "🃏",
-      description: "1–10 players • splits/double • table fees",
+      description: "Beat the dealer before the table eats you.",
       run: async (interaction, ctx = {}) => {
         const bj = require("../blackjack");
         return bj.startFromHub(interaction, ctx);
@@ -33,7 +33,7 @@ module.exports = {
       id: "roulette",
       name: "Roulette",
       emoji: "🎡",
-      description: "Red/Black/Numbers • table fees",
+      description: "Pick your colour, number, or nerve.",
       run: async (interaction, ctx = {}) => {
         const rou = require("../roulette");
         return rou.startFromHub(interaction, ctx);
@@ -45,7 +45,7 @@ module.exports = {
       id: "keno",
       name: "Keno",
       emoji: "🔢",
-      description: "Classic Keno or Heads/Tails/Draw • 20-ball draw",
+      description: "Mark the board and hope the draw listens.",
       run: async (interaction, ctx = {}) => {
         const keno = require("../keno");
         return keno.startFromHub(interaction, ctx);
@@ -56,7 +56,7 @@ module.exports = {
       id: "scratchcards",
       name: "Scratch Cards",
       emoji: "🎟️",
-      description: "Pick a card • fixed price • fast scratchie hits",
+      description: "Scratch fast and let the prize breathe.",
       run: async (interaction, ctx = {}) => {
         const scratch = require("../scratchcards");
         return scratch.startFromHub(interaction, ctx);
@@ -68,7 +68,7 @@ module.exports = {
       id: "bullshit",
       name: "Bullshit",
       emoji: "💩",
-      description: "Match the rank... or not. Someones lying? **BULLSHIT!**",
+      description: "Play the rank. Sell the lie.",
       run: async (interaction, ctx = {}) => {
         const hol = require("../bullshit");
         return hol.startFromHub(interaction, ctx);

@@ -31,8 +31,8 @@ const panels = new Map(); // channelId -> { messageId, collector, view, catId }
 function statusLine(channelId) {
   const active = getActiveGame(channelId);
   return active
-    ? `${ui.statusEmoji("active")} **Active:** ${active.type} — **${active.state || "active"}**`
-    : `${ui.statusEmoji("ready")} **No active game in this channel**`;
+    ? `Active: **${active.type}** • ${active.state || "active"}`
+    : "Active: No table running";
 }
 
 function buildHomeEmbed(channelId, categories) {
@@ -43,24 +43,24 @@ function buildHomeEmbed(channelId, categories) {
       [
         gamesConfig.description,
         "",
-        statusLine(channelId),
-        `🎲 **${totalGames} games** across **${categories.length} categories**`,
+        ui.sectionBlock("Status", [
+          statusLine(channelId),
+          `Tables: ${totalGames}`,
+        ]),
+        "",
+        ui.sectionBlock("Categories", categories.map((c) =>
+          ui.entryBlock(`${c.emoji || "🎮"} ${c.name}`, [c.description || "Ready to play."])
+        ).join("\n\n")),
       ].join("\n")
     );
-  ui.applySystemStyle(embed, "games");
-
-  for (const c of categories) {
-    embed.addFields({
-      name: `${c.emoji || "🎮"} ${c.name}`,
-      value: `${c.description || "—"}\n**Games:** ${c.games?.length || 0}`,
-      inline: true,
-    });
-  }
+  ui.applySystemStyle(embed, "games", false);
 
   return embed;
 }
 
 function buildCategoryEmbed(channelId, cat) {
+  const isCasino = cat.id === "casino";
+  const sectionTitle = isCasino ? "Tables" : "Games";
   const list = (cat.games?.length || 0)
     ? cat.games
         .map((g) => [
@@ -74,14 +74,11 @@ function buildCategoryEmbed(channelId, cat) {
     .setTitle(`${cat.emoji || "🎮"} ${cat.name}`)
     .setDescription(
       [
-        statusLine(channelId),
-        "",
         cat.description || "",
         "",
-        `**Available Games (${cat.games?.length || 0})**`,
-        list,
+        ui.sectionBlock(sectionTitle, list),
       ].join("\n")
-    ), "games", "Choose a game below to launch it in this channel.");
+    ), isCasino ? "casino" : "games", false);
 }
 
 
