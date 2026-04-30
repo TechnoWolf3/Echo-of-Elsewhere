@@ -839,6 +839,12 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "underworld_smuggling_shop") {
+        if (session.underworldSmugglingShopClass) {
+          return msg.edit({
+            embeds: [underworldUi.buildVehicleShopCategoryEmbed(session.underworldSmugglingShopClass)],
+            components: underworldUi.buildVehicleShopCategoryComponents(session.underworldSmugglingShopClass),
+          }).catch(() => {});
+        }
         return msg.edit({
           embeds: [underworldUi.buildVehicleShopEmbed()],
           components: underworldUi.buildVehicleShopComponents(),

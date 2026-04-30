@@ -271,6 +271,7 @@ Underworld specifics:
 - Business rules and runtime progression live in `utils/underworld/engine.js`.
 - `/job` owns the top-level Underworld category board, but detailed building rendering and actions should stay in the feature/engine modules.
 - Underworld branch selection is data-driven from `data/underworld/branches.js`.
+- Underworld UI should use the shared `utils/progressBar.js` renderer for suspicion/pressure bars and the `underworld` system style so Operations and Smuggling read as one feature family.
 - Building actions use stable `building.id` values in component payloads; do not switch back to array indexes.
 - Underworld payouts now use the effect-aware credit path through `creditUserWithEffects`, matching the rest of `/job`.
 - Runtime progression is phase-split in `utils/underworld/engine.js` (`applyConversionRollover`, pending event expiry, due-event opening, run finalization, and building runtime application).
@@ -280,6 +281,7 @@ Underworld specifics:
 - Smuggling vehicles, inventory, active runs, and recent history follow the existing Underworld persistence pattern inside `underworld_state.data.smuggling`. Purchased cargo is paid up front, produced cargo is removed up front, and payouts only happen from `uw_smuggle_claim` after the run is ready.
 - Finished Cocaine/Meth lab runs can choose `Store For Smuggling` instead of a normal distribution payout. This converts the finished batch into Smuggling inventory and avoids double-paying the same product.
 - Smuggling vehicle repair restores current durability but reduces max durability down to the configured floor. Scrap value is based on original 100-point condition (`durabilityCurrent / 100`), not current/max after repeated repairs.
+- Smuggling Vehicle Shop follows the Machine Shed browse pattern: class landing page first, then a focused class page with compact vehicle comparisons and a select menu. Avoid returning to one giant catalogue embed.
 - Storage House is now a live storage operation. Finished cooled-off goods move into `building.storage`, clear `building.activeRun`, and allow another run to start while sellable goods remain in storage.
 - Storage House sell options can resolve either a cooling active run or accumulated `building.storage` goods. Selling clears storage after payout.
 - Storage House start is blocked only while an active run exists or storage is full. UI shows both sell buttons and Start Operation when cooled goods are waiting and the building can stockpile more.

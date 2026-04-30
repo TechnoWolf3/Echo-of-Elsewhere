@@ -7,6 +7,7 @@ const {
 } = require("discord.js");
 
 const ui = require("../../utils/ui");
+const { renderProgressBar } = require("../../utils/progressBar");
 const engine = require("../../utils/underworld/engine");
 const smuggling = require("../../utils/underworld/smugglingEngine");
 const config = require("../../data/underworld/config");
@@ -14,8 +15,7 @@ const products = require("../../data/underworld/products");
 
 function suspicionMeter(value) {
   const amount = Math.max(0, Math.min(config.MAX_SUSPICION, Math.round(Number(value || 0))));
-  const filled = Math.round((amount / config.MAX_SUSPICION) * 8);
-  return `${"■".repeat(filled)}${"□".repeat(Math.max(0, 8 - filled))} ${amount}/${config.MAX_SUSPICION}`;
+  return `${renderProgressBar(amount, config.MAX_SUSPICION, { length: 10 })} ${amount}/${config.MAX_SUSPICION}`;
 }
 
 function formatStatus(building) {
@@ -66,14 +66,14 @@ function buildUnderworldHomeEmbed(state) {
         {
           name: "Pressure",
           value: [
-            `Average suspicion: **${averageSuspicion}**`,
+            `Average suspicion: ${suspicionMeter(averageSuspicion)}`,
             `Converting: **${summary.converting}**`,
             `Risk profile: **High**`,
           ].join("\n"),
           inline: true,
         }
       ),
-    "job",
+    "underworld",
     "Underworld runs are expensive, risky, and persistent."
   );
 }
@@ -114,10 +114,10 @@ function buildSmugglingHomeEmbed(state, suspicionInfo = { suspicion: 0, band: { 
         {
           name: "Pressure",
           value: [
-            `Suspicion: **${Math.round(Number(suspicionInfo.suspicion || 0))}/100**`,
+            `Suspicion: ${suspicionMeter(suspicionInfo.suspicion || 0)}`,
             `Band: **${suspicionInfo.band?.label || "Quiet"}**`,
           ].join("\n"),
-          inline: true,
+          inline: false,
         },
         {
           name: "Garage",
@@ -132,7 +132,7 @@ function buildSmugglingHomeEmbed(state, suspicionInfo = { suspicion: 0, band: { 
           value: inventoryLines || "No produced product stored yet. Purchased cargo is always available at worse margins.",
         }
       ),
-    "job",
+    "underworld",
     "Smuggling uses shared Underworld suspicion."
   );
 }
@@ -191,7 +191,7 @@ function buildVehicleGarageEmbed(state) {
     new EmbedBuilder()
       .setTitle("🚚 Smuggling Garage")
       .setDescription(lines),
-    "job",
+    "underworld",
     "Repairs restore current durability but reduce max durability."
   );
 }
@@ -227,38 +227,113 @@ function buildVehicleGarageComponents(state) {
 }
 
 function buildVehicleShopEmbed() {
-  const lines = Object.values(smuggling.vehicles)
-    .slice(0, 18)
-    .map((vehicle) => [
-      `**${vehicle.label}** - ${ui.money(vehicle.price)}`,
-      `${vehicle.class} | Cap **${vehicle.capacity}** | Speed **${vehicle.speed}x** | Stealth **${vehicle.stealth}x** | Heat **${vehicle.heatProfile}x**`,
-      vehicle.flavour,
-    ].join("\n"))
-    .join("\n\n");
   return ui.applySystemStyle(
-    new EmbedBuilder().setTitle("🚚 Smuggling Vehicle Shop").setDescription(lines),
-    "job",
-    "Vehicles are permanent until scrapped."
+    new EmbedBuilder()
+      .setTitle("🚚 Smuggling Vehicle Shop")
+      .setDescription(
+        [
+          "Choose a class to browse vehicles.",
+          "",
+          "🏍️ **Bikes** - tiny cargo, fast routes, low attention.",
+          "🚗 **Street Cars** - flexible daily-driver cover.",
+          "🚐 **Vans** - balanced capacity and subtlety.",
+          "🚛 **Trucks** - heavy cargo, heavy attention.",
+          "🛻 **Utility** - practical cover for rougher routes.",
+          "🧰 **Specialist** - expensive tricks and odd advantages.",
+        ].join("\n")
+      ),
+    "underworld",
+    "Vehicles are permanent until scrapped. Repairs reduce max durability."
   );
 }
 
 function buildVehicleShopComponents() {
-  const options = Object.values(smuggling.vehicles).slice(0, 25).map((vehicle) => ({
-    label: vehicle.label,
-    value: `uw_smuggle_buy_vehicle:${vehicle.id}`,
-    description: `${ui.money(vehicle.price)} | cap ${vehicle.capacity} | ${vehicle.flavour}`.slice(0, 100),
-  }));
   return [
     new ActionRowBuilder().addComponents(
-      new StringSelectMenuBuilder()
-        .setCustomId("uw_smuggle_shop_select")
-        .setPlaceholder("Buy a smuggling vehicle...")
-        .addOptions(options)
+      new ButtonBuilder().setCustomId("uw_smuggle_shop_class:bike").setLabel("🏍️ Bikes").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("uw_smuggle_shop_class:street car").setLabel("🚗 Street Cars").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("uw_smuggle_shop_class:van").setLabel("🚐 Vans").setStyle(ButtonStyle.Primary)
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("uw_smuggle_shop_class:truck").setLabel("🚛 Trucks").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("uw_smuggle_shop_class:utility").setLabel("🛻 Utility").setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId("uw_smuggle_shop_class:specialist").setLabel("🧰 Specialist").setStyle(ButtonStyle.Primary)
     ),
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("uw_smuggle_garage").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
     ),
   ];
+}
+
+function vehicleClassList(vehicleClass) {
+  return Object.values(smuggling.vehicles)
+    .filter((vehicle) => vehicle.class === vehicleClass)
+    .sort((a, b) => Number(a.price || 0) - Number(b.price || 0));
+}
+
+function vehicleClassLabel(vehicleClass) {
+  return {
+    bike: "Bikes",
+    "street car": "Street Cars",
+    van: "Vans",
+    truck: "Trucks",
+    utility: "Utility Vehicles",
+    specialist: "Specialist Vehicles",
+  }[vehicleClass] || "Vehicles";
+}
+
+function formatVehicleStats(vehicle) {
+  return [
+    `Price: **${ui.money(vehicle.price)}**`,
+    `Capacity: **${vehicle.capacity}**`,
+    `Speed: **${vehicle.speed}x**`,
+    `Stealth: **${vehicle.stealth}x**`,
+    `Heat: **${vehicle.heatProfile}x**`,
+  ].join(" | ");
+}
+
+function buildVehicleShopCategoryEmbed(vehicleClass) {
+  const list = vehicleClassList(vehicleClass);
+  const lines = list.map((vehicle) => [
+    `**${vehicle.label}**`,
+    formatVehicleStats(vehicle),
+    vehicle.flavour,
+  ].join("\n"));
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle(`🚚 Smuggling Vehicle Shop - ${vehicleClassLabel(vehicleClass)}`)
+      .setDescription(lines.length ? lines.join("\n\n") : "No vehicles found in this class."),
+    "underworld",
+    "Pick one vehicle from the menu below."
+  );
+}
+
+function buildVehicleShopCategoryComponents(vehicleClass) {
+  const list = vehicleClassList(vehicleClass);
+  const rows = [];
+  if (list.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`uw_smuggle_shop_select:${vehicleClass}`)
+          .setPlaceholder("Choose a vehicle to buy...")
+          .addOptions(
+            list.map((vehicle) => ({
+              label: vehicle.label,
+              value: `uw_smuggle_buy_vehicle:${vehicle.id}`,
+              description: `${ui.money(vehicle.price)} | cap ${vehicle.capacity} | speed ${vehicle.speed}x | stealth ${vehicle.stealth}x`.slice(0, 100),
+            }))
+          )
+      )
+    );
+  }
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("uw_smuggle_shop").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style)
+    )
+  );
+  return rows;
 }
 
 function buildStartRunEmbed(state, flow = {}, suspicionInfo = { suspicion: 0 }) {
@@ -285,7 +360,7 @@ function buildStartRunEmbed(state, flow = {}, suspicionInfo = { suspicion: 0 }) 
   }
   return ui.applySystemStyle(
     new EmbedBuilder().setTitle("🚚 Plan Smuggling Run").setDescription(lines.join("\n")),
-    "job",
+    "underworld",
     "Purchased cargo works without storage, but the margin is rough."
   );
 }
@@ -346,7 +421,7 @@ function buildStartRunComponents(state, flow = {}) {
 function buildActiveRunEmbed(state, suspicionInfo = { suspicion: 0 }) {
   const run = smuggling.getActiveRun(state);
   if (!run) {
-    return ui.applySystemStyle(new EmbedBuilder().setTitle("🚚 Active Smuggling Run").setDescription("No cargo is currently moving."), "job");
+    return ui.applySystemStyle(new EmbedBuilder().setTitle("🚚 Active Smuggling Run").setDescription("No cargo is currently moving."), "underworld");
   }
   const product = products[run.productId];
   const vehicle = smuggling.getOwnedVehicle(state, run.vehicleId);
@@ -357,7 +432,8 @@ function buildActiveRunEmbed(state, suspicionInfo = { suspicion: 0 }) {
     `Vehicle: **${def?.label || "Unknown"}** (${Number(vehicle?.durabilityCurrent || 0)}/${Number(vehicle?.durabilityMax || 0)})`,
     `Deliveries: **${Number(run.deliveriesCompleted || 0)}/${Number(run.deliveriesTotal || 0)}**`,
     `Ends: **<t:${Math.floor(Number(run.endsAt || Date.now()) / 1000)}:R>**`,
-    `Risk: **${Math.round(Number(run.risk?.current || 0) * 100)}%** | Suspicion: **${Math.round(Number(suspicionInfo.suspicion || 0))}/100**`,
+    `Risk: **${Math.round(Number(run.risk?.current || 0) * 100)}%**`,
+    `Suspicion: ${suspicionMeter(suspicionInfo.suspicion || 0)}`,
   ];
   if (event && run.status === "event") {
     lines.push("");
@@ -365,7 +441,7 @@ function buildActiveRunEmbed(state, suspicionInfo = { suspicion: 0 }) {
     lines.push(event.description);
     lines.push(`Respond <t:${Math.floor(Number(run.eventState.deadlineAt || Date.now()) / 1000)}:R>, or ignore it for no major penalty.`);
   }
-  return ui.applySystemStyle(new EmbedBuilder().setTitle("🚚 Active Smuggling Run").setDescription(lines.join("\n")), "job");
+  return ui.applySystemStyle(new EmbedBuilder().setTitle("🚚 Active Smuggling Run").setDescription(lines.join("\n")), "underworld");
 }
 
 function buildActiveRunComponents(state) {
@@ -409,7 +485,7 @@ function buildOperationsEmbed(state) {
         name: "Building Types",
         value: engine.buildings.map((entry) => `${entry.name} - ${ui.money(entry.purchaseCost)}`).join("\n"),
       }),
-    "job",
+    "underworld",
     "Pick a building to inspect, or buy another shell."
   );
 }
@@ -480,7 +556,7 @@ function buildBuildingEmbed(state, buildingId) {
       new EmbedBuilder()
         .setTitle("🕶️ Underworld Building")
         .setDescription("That building no longer exists."),
-      "job"
+      "underworld"
     );
   }
 
@@ -546,7 +622,7 @@ function buildBuildingEmbed(state, buildingId) {
     new EmbedBuilder()
       .setTitle(`🕶️ Building ${buildingIndex + 1}`)
       .setDescription(lines.join("\n")),
-    "job",
+    "underworld",
     "High suspicion lowers liquidation returns and raises raid odds."
   );
 
@@ -728,6 +804,8 @@ module.exports = {
   buildVehicleGarageComponents,
   buildVehicleShopEmbed,
   buildVehicleShopComponents,
+  buildVehicleShopCategoryEmbed,
+  buildVehicleShopCategoryComponents,
   buildStartRunEmbed,
   buildStartRunComponents,
   buildActiveRunEmbed,

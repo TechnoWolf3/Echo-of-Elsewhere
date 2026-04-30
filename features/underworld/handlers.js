@@ -117,6 +117,15 @@ async function handleUnderworldInteraction({
   if (actionId === "uw_smuggle_shop") {
     await load();
     session.view = "underworld_smuggling_shop";
+    session.underworldSmugglingShopClass = null;
+    await redraw();
+    return true;
+  }
+
+  if (actionId.startsWith("uw_smuggle_shop_class:")) {
+    await load();
+    session.view = "underworld_smuggling_shop";
+    session.underworldSmugglingShopClass = actionId.slice("uw_smuggle_shop_class:".length);
     await redraw();
     return true;
   }
@@ -132,6 +141,7 @@ async function handleUnderworldInteraction({
     await engine.saveState(guildId, userId, state);
     await tell(interaction, `✅ Purchased ${result.definition.label}.`);
     session.view = "underworld_smuggling_garage";
+    session.underworldSmugglingShopClass = null;
     await redraw();
     return true;
   }
