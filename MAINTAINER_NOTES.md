@@ -48,6 +48,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `/rituals` - timed ritual hub.
 - `/roles` - self-assign role board management.
 - `/shop` - buy/sell shop panel.
+- `/timers` - countdown/alarm hub with persistent reminders.
 
 ## Global Interaction Routing
 
@@ -57,6 +58,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `ese-*` and `ese-view-stock` go to `commands/ese.js`.
 - `adminpanel:*` goes to `utils/adminPanel.js`.
 - `bank:*` goes to `commands/bank.js`.
+- `timers:*` goes to `commands/timers.js`.
 - `contracts:*` goes to `commands/contracts.js`, which delegates to `utils/contracts.js`.
 - `rituals:*` and ritual-specific IDs go to `commands/rituals.js`.
 - Blood Tax buttons go to `utils/echoCurses.js`.
@@ -328,6 +330,7 @@ Underworld specifics:
 - Lottery: `utils/lottery.js`, weekly Powerball using configured timezone.
 - Echo Rift: `utils/echoRift.js`, scheduled random rift event.
 - Echo Stock Exchange: `utils/ese/engine.js`, ticked by `index.js` interval.
+- Timers: `utils/userTimers.js`, 15-second poller for persisted countdowns and alarms.
 
 ### Contracts
 

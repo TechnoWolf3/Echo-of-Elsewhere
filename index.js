@@ -11,7 +11,9 @@ const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
 const bankCommand = require("./commands/bank");
+const timersCommand = require("./commands/timers");
 const bankRecurringDeposits = require("./utils/bankRecurringDeposits");
+const userTimers = require("./utils/userTimers");
 const ritualsCommand = require("./commands/rituals");
 const contractsCommand = require("./commands/contracts");
 const contracts = require("./utils/contracts");
@@ -730,6 +732,7 @@ client.once(Events.ClientReady, async () => {
       await underworldSuspicion.ensureUnderworldUserSchema();
       await ensureEseSchema();
       await bankRecurringDeposits.ensureSchema();
+      await userTimers.ensureSchema();
       await contracts.ensureSchema();
       await channelPurger.ensureSchema(client.db);
       console.log("[ESE] schema ready");
@@ -748,6 +751,9 @@ client.once(Events.ClientReady, async () => {
 
       // Daily bank auto-deposits
       bankRecurringDeposits.startScheduler(client);
+
+      // User timers / alarms
+      userTimers.startScheduler(client);
 
       // 🧹 Scheduled channel purger
       channelPurger.startScheduler(client);
@@ -884,6 +890,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[BANK] handler failed:", e);
+  }
+
+  // Timers interactions
+  try {
+    const handled = await timersCommand.handleInteraction?.(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[TIMERS] handler failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ Timers failed to handle that interaction.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ Timers failed to handle that interaction.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
   }
 
 
