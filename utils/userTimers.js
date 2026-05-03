@@ -2,7 +2,7 @@ const { pool } = require("./db");
 
 const TIMEZONE_LABEL = "Australia/Brisbane";
 const BRISBANE_OFFSET_HOURS = 10;
-const POLL_INTERVAL_MS = 15 * 1000;
+const POLL_INTERVAL_MS = 5 * 1000;
 const MAX_DUE_PER_TICK = 50;
 
 let schedulerStarted = false;
