@@ -37,6 +37,9 @@ const market = require("../utils/farming/market");
 const machineEngine = require("../utils/farming/machineEngine");
 const farmingUi = require("../features/farming/ui");
 const { handleFarmingInteraction } = require("../features/farming/handlers");
+const manufacturing = require("../utils/manufacturing/engine");
+const manufacturingUi = require("../features/manufacturing/ui");
+const { handleManufacturingInteraction } = require("../features/manufacturing/handlers");
 const crimeUi = require("../features/crime/ui");
 const { handleCrimeInteraction } = require("../features/crime/handlers");
 const { CRIME_GLOBAL_KEY, CRIME_KEYS } = require("../features/crime/constants");
@@ -298,8 +301,8 @@ function buildEnterprisesEmbed({ cooldownUnix } = {}) {
         "Build long-term operations that grow over time.",
         "",
         "🌾 **Farming** — Fields, machinery, contracts, and produce markets.",
+        "🏭 **Manufacturing** — Factory plots, recipes, contracts, and finished-goods markets.",
         "⛏️ **Mining** — Coming later.",
-        "🏭 **Manufacturing** — Coming later.",
       ].join("\n")
     ), "job");
 }
@@ -328,6 +331,11 @@ function buildEnterprisesComponents(disabled = false) {
           label: "Farming",
           value: "enterprise:farming",
           emoji: "🌾"
+        },
+        {
+          label: "Manufacturing",
+          value: "enterprise:manufacturing",
+          emoji: "🏭"
         }
       )
       .setDisabled(disabled)
@@ -645,6 +653,91 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
       }
 
+      if (session.view === "manufacturing") {
+        try {
+          let plant = await manufacturing.ensureState(guildId, userId);
+          const runtime = await manufacturing.applyRuntimeRollovers(guildId, userId, plant);
+          plant = runtime.state;
+
+          return msg.edit({
+            embeds: [manufacturingUi.buildManufacturingEmbed(plant)],
+            components: manufacturingUi.buildManufacturingComponents(plant),
+          }).catch(() => {});
+        } catch (err) {
+          console.error("[MANUFACTURING] redraw failed:", err);
+          return msg.edit({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle("🏭 Manufacturing")
+                .setDescription("❌ Manufacturing failed to load. Check the bot logs for details.")
+                .setColor(ui.colors.danger)
+            ],
+            components: buildEnterprisesComponents(false),
+          }).catch(() => {});
+        }
+      }
+
+      if (session.view === "manu_plot") {
+        let plant = await manufacturing.ensureState(guildId, userId);
+        const runtime = await manufacturing.applyRuntimeRollovers(guildId, userId, plant);
+        plant = runtime.state;
+
+        return msg.edit({
+          embeds: [manufacturingUi.buildPlotEmbed(plant, session.manuPlotIndex)],
+          components: manufacturingUi.buildPlotComponents(plant, session.manuPlotIndex),
+        }).catch(() => {});
+      }
+
+      if (session.view === "manu_plot_type") {
+        const plant = await manufacturing.ensureState(guildId, userId);
+        const plot = plant.plots?.[session.manuPlotIndex] || null;
+        return msg.edit({
+          embeds: [manufacturingUi.buildFactoryTypeEmbed(plot, session.manuPlotIndex)],
+          components: manufacturingUi.buildFactoryTypeComponents(session.manuPlotIndex),
+        }).catch(() => {});
+      }
+
+      if (session.view === "manu_plot_import") {
+        const plant = await manufacturing.ensureState(guildId, userId);
+        const plot = plant.plots?.[session.manuPlotIndex];
+        const items = plot ? await manufacturing.listFarmImportCandidates(guildId, userId, plot) : [];
+        return msg.edit({
+          embeds: [manufacturingUi.buildImportEmbed(plot || {}, session.manuPlotIndex, items)],
+          components: manufacturingUi.buildImportComponents(session.manuPlotIndex, items),
+        }).catch(() => {});
+      }
+
+      if (session.view === "manu_plot_materials") {
+        const plant = await manufacturing.ensureState(guildId, userId);
+        const plot = plant.plots?.[session.manuPlotIndex] || plant.plots?.[0] || {};
+        return msg.edit({
+          embeds: [manufacturingUi.buildMaterialsEmbed(plot, session.manuPlotIndex || 0)],
+          components: manufacturingUi.buildMaterialsComponents(plot, session.manuPlotIndex || 0),
+        }).catch(() => {});
+      }
+
+      if (session.view === "manu_market") {
+        let plant = await manufacturing.ensureState(guildId, userId);
+        const runtime = await manufacturing.applyRuntimeRollovers(guildId, userId, plant);
+        plant = runtime.state;
+
+        return msg.edit({
+          embeds: [manufacturingUi.buildMarketEmbed(plant)],
+          components: manufacturingUi.buildMarketComponents(plant),
+        }).catch(() => {});
+      }
+
+      if (session.view === "manu_contracts") {
+        let plant = await manufacturing.ensureState(guildId, userId);
+        plant = manufacturing.refreshContractBoard(plant);
+        await manufacturing.saveState(guildId, userId, plant);
+
+        return msg.edit({
+          embeds: [manufacturingUi.buildContractsEmbed(plant)],
+          components: manufacturingUi.buildContractsComponents(plant),
+        }).catch(() => {});
+      }
+
       if (session.view === "enterprises") {
         return msg.edit({
           embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
@@ -792,6 +885,15 @@ function scheduleReturnToCategory(delayMs = 5000) {
           redraw,
         })) return;
 
+        if (await handleManufacturingInteraction({
+          actionId,
+          interaction: btn,
+          session,
+          guildId,
+          userId,
+          redraw,
+        })) return;
+
         if (await handleCrimeInteraction({
           actionId,
           interaction: btn,
@@ -871,7 +973,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "manufacturing", "manu_plot", "manu_plot_type", "manu_plot_import", "manu_plot_materials", "manu_market", "manu_contracts"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);
