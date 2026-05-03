@@ -57,36 +57,38 @@ function buildDerivedShopBundle(recipe) {
 }
 
 function getShopItemsForPlot(plot = null) {
-  const catalog = new Map();
-  for (const item of Object.values(materials)) {
-    catalog.set(item.id, { ...item, derived: false });
-  }
-
   if (!plot?.factoryType) {
-    return Array.from(catalog.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return Object.values(materials)
+      .map((item) => ({ ...item, derived: false }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  const catalog = new Map();
   const unlockedRecipes = getRecipesForFactory(plot.factoryType, plot.level);
-  const unlockedRecipeOutputs = new Set(unlockedRecipes.map((recipe) => recipe.output?.itemId).filter(Boolean));
 
   for (const recipe of unlockedRecipes) {
     for (const input of recipe.inputs || []) {
-      if (catalog.has(input.itemId)) continue;
       if (isFarmCropItem(input.itemId)) continue;
-      if (!unlockedRecipeOutputs.has(input.itemId)) continue;
+      if (catalog.has(input.itemId)) continue;
+
+      const stockMaterial = materials[input.itemId];
+      if (stockMaterial && stockMaterial.factoryTypes?.includes(plot.factoryType)) {
+        catalog.set(input.itemId, { ...stockMaterial, derived: false });
+        continue;
+      }
 
       const sourceRecipe = getRecipeByOutputItem(input.itemId);
-      if (!sourceRecipe || sourceRecipe.unlockLevel > Number(plot.level || 1)) continue;
+      if (!sourceRecipe) continue;
+      if (sourceRecipe.factoryType !== plot.factoryType) continue;
+      if (sourceRecipe.unlockLevel > Number(plot.level || 1)) continue;
       catalog.set(input.itemId, buildDerivedShopBundle(sourceRecipe));
     }
   }
 
   return Array.from(catalog.values()).sort((a, b) => {
-    const aRelevant = a.factoryTypes?.includes(plot.factoryType) ? 1 : 0;
-    const bRelevant = b.factoryTypes?.includes(plot.factoryType) ? 1 : 0;
     const aDerived = a.derived ? 1 : 0;
     const bDerived = b.derived ? 1 : 0;
-    return bRelevant - aRelevant || bDerived - aDerived || a.name.localeCompare(b.name);
+    return bDerived - aDerived || a.name.localeCompare(b.name);
   });
 }
 
