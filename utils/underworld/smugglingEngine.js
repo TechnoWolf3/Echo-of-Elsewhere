@@ -6,6 +6,7 @@ const inventory = require("./inventory");
 const suspicion = require("./suspicion");
 const economy = require("../economy");
 const { setJail } = require("../jail");
+const timers = require("../timers");
 
 const cfg = config.SMUGGLING || {};
 
@@ -225,16 +226,17 @@ async function openDueEvent(guildId, userId, state) {
   if (!run || !run.eventState || run.eventState.resolved) return null;
   if (!run.eventState.deadlineAt && Date.now() >= Number(run.eventState.opensAt || 0)) {
     run.status = "event";
-    run.eventState.deadlineAt = Date.now() + Number(cfg.eventWindowSeconds || 75) * 1000;
+    run.eventState.deadlineAt = Number(run.eventState.opensAt || Date.now()) + Number(cfg.eventWindowSeconds || 75) * 1000;
     run.updatedAt = Date.now();
-    return events[run.eventState.eventId] || null;
   }
-  if (run.eventState.deadlineAt && Date.now() >= Number(run.eventState.deadlineAt || 0)) {
+
+  if (run.eventState.deadlineAt && timers.hasElapsed(run.eventState.deadlineAt)) {
     const event = events[run.eventState.eventId];
     applyEventOutcome(run, event?.ignored || {}, "ignored");
     run.status = "active";
     return null;
   }
+
   return run.status === "event" ? events[run.eventState.eventId] || null : null;
 }
 
@@ -261,6 +263,10 @@ async function resolveEventChoice(guildId, userId, state, choiceId) {
   const run = getActiveRun(state);
   const event = run?.eventState?.eventId ? events[run.eventState.eventId] : null;
   if (!run || run.status !== "event" || !event) return { ok: false, reasonText: "There is no live smuggling event right now." };
+  if (timers.hasElapsed(run?.eventState?.deadlineAt)) {
+    await openDueEvent(guildId, userId, state);
+    return { ok: false, reasonText: "That route event has already expired." };
+  }
   const choice = (event.options || []).find((entry) => entry.id === choiceId);
   if (!choice) return { ok: false, reasonText: "That route choice is not available anymore." };
   const cost = Number(choice.costFlat || 0);

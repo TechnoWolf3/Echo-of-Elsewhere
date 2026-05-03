@@ -8,6 +8,7 @@ const { tryDebitBank, creditBank, addServerBank } = require("../economy");
 const { setJail } = require("../jail");
 const sharedSuspicion = require("./suspicion");
 const underworldInventory = require("./inventory");
+const timers = require("../timers");
 
 const BUILDING_MAP = Object.fromEntries(buildings.map((entry) => [entry.id, entry]));
 const OPERATION_MAP = Object.fromEntries(OPERATIONS.map((entry) => [entry.id, entry]));
@@ -347,10 +348,10 @@ function nextPendingEvent(run) {
   if (!eventId) return null;
   const event = EVENTS[eventId];
   if (!event) return null;
+  const openedAt = Number(run.eventSchedule?.[run.nextEventIndex] || Date.now());
   return {
     eventId,
-    openedAt: Date.now(),
-    deadlineAt: Date.now() + config.EVENT_WINDOW_MS,
+    ...timers.buildTimedWindow(openedAt, config.EVENT_WINDOW_MS),
   };
 }
 
@@ -400,8 +401,7 @@ function openDueEvent(run, now) {
 
   run.pendingEvent = {
     eventId: run.eventQueue[run.nextEventIndex],
-    openedAt: now,
-    deadlineAt: now + config.EVENT_WINDOW_MS,
+    ...timers.buildTimedWindow(nextAt, config.EVENT_WINDOW_MS),
   };
   return true;
 }
@@ -411,8 +411,7 @@ function finalizeCompletedRun(building, now) {
   if (!run || run.status !== "running" || run.pendingEvent) return false;
   if (now < Number(run.readyAt || 0)) return false;
   if (Number(run.nextEventIndex || 0) < Number(run.eventQueue?.length || 0)) {
-    run.pendingEvent = nextPendingEvent(run);
-    return Boolean(run.pendingEvent);
+    return openDueEvent(run, now);
   }
 
   const operation = getOperationDefinition(run.operationId || building.operationType);
@@ -736,6 +735,10 @@ async function resolveEventChoice(guildId, userId, state, buildingRef, choiceId)
   const event = pending?.eventId ? EVENTS[pending.eventId] : null;
   if (!building || !run || !pending || !event) {
     return { ok: false, reasonText: "There is no active event waiting here." };
+  }
+  if (timers.hasElapsed(pending.deadlineAt)) {
+    await applyRuntime(guildId, userId, state);
+    return { ok: false, reasonText: "That event window has already closed." };
   }
 
   const choice = (event.choices || []).find((entry) => entry.id === choiceId);

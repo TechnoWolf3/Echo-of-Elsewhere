@@ -24,6 +24,22 @@ module.exports = {
   BARN_DEMOLITION_BASE_COST: 120000,
   BARN_DEMOLITION_LEVEL_MULTIPLIER: 35000,
   BARN_UPGRADE_DURATION_MS: 60 * 60 * 1000,
+  BARN_CAPACITY_LEVEL_MULTIPLIERS: {
+    1: 1,
+    2: 1.28,
+    3: 1.6,
+    4: 1.95,
+    5: 2.35,
+    6: 2.8,
+    7: 3.3,
+    8: 3.85,
+    9: 4.45,
+    10: 5.1,
+  },
+
+  CROP_YIELD_SCALING: {
+    perLevelBeyondUnlock: 0.13,
+  },
 
   SEASONS: ["spring", "summer", "autumn", "winter"],
 

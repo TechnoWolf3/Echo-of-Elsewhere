@@ -47,6 +47,7 @@ const underworldUi = require("../features/underworld/ui");
 const underworldSuspicion = require("../utils/underworld/suspicion");
 const smugglingEngine = require("../utils/underworld/smugglingEngine");
 const { handleUnderworldInteraction } = require("../features/underworld/handlers");
+const { renderEnterpriseView } = require("../features/job/enterpriseViews");
 const crimeUi = require("../features/crime/ui");
 const { handleCrimeInteraction } = require("../features/crime/handlers");
 const { CRIME_GLOBAL_KEY, CRIME_KEYS } = require("../features/crime/constants");
@@ -689,6 +690,18 @@ function scheduleReturnToCategory(delayMs = 5000) {
             components: grindUi.buildGrindComponents(false),
           })
           .catch(() => {});
+      }
+
+      if (await renderEnterpriseView({
+        session,
+        msg,
+        guildId,
+        userId,
+        buildUnderworldEmbed,
+        buildUnderworldComponents,
+        buildEnterprisesComponents,
+      })) {
+        return;
       }
 
       if (session.view === "farming") {

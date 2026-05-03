@@ -253,11 +253,13 @@ Farming specifics:
 - Fertiliser purchases use a select-to-modal flow: choose the fertiliser under the Store's Fertiliser category, then enter the quantity to buy. Purchase debits the bank once for `price * qty`.
 - Field views show the current fertiliser window in the embed. During an active window, the controls show either an apply dropdown for owned fertiliser or a `Buy Fertiliser` route when the player has none.
 - Fertiliser effects are recorded per stage in `field.fertiliserApplications`: growth mixes shorten the current `readyAt`, yield mixes increase the harvest roll through `getScaledYieldRange()`.
+- `ensureFarm()` now reconciles season rollovers and overdue field/barn tasks before returning. Use it as the normal read path so farming timers keep progressing from persisted timestamps even when the UI has been closed.
+- Higher-level crop yield scaling is now unlock-aware. `getScaledYieldRange()` uses the crop's unlock level as its baseline and only applies extra level yield scaling from levels earned beyond that unlock point through `data/farming/config.js -> CROP_YIELD_SCALING`.
 - Barns are represented as farm fields with `kind: "barn"` and livestock metadata from `data/farming/livestock.js`.
 - Barn actions are handled by `farm_barn_collect:*`, `farm_barn_slaughter:*`, `farm_barn_restock:*`, `farm_barn_upgrade:*`, and `farm_barn_demolish:*` in `features/farming/handlers.js`.
 - Field-to-barn conversion and barn-to-field demolition both reset the resulting structure to level 1. Existing barns keep their saved level until players choose a future conversion/demolition path.
 - Barn upgrades are timed tasks controlled by `BARN_UPGRADE_DURATION_MS`. Animals remain inside during the upgrade, but production is paused and `lastCollectedAt` is reset when the upgrade completes.
-- Barn capacity scales by level. Produce output uses adult animals only; young animals count toward capacity but do not produce until their `maturesAt` time has passed.
+- Barn capacity scales by level through `data/farming/config.js -> BARN_CAPACITY_LEVEL_MULTIPLIERS`. Existing barns pick up the new capacity automatically because `getBarnCapacity()` is level-driven at runtime. Produce output uses adult animals only; young animals count toward capacity but do not produce until their `maturesAt` time has passed.
 - Animal husbandry items are bought from the Farm Store via `farm_store_husbandry_buy:*` and used from barn views via `farm_barn_breed:*`. Breeding requires a matching livestock type, at least two adults, and enough free capacity for the offspring.
 - Barn produce and slaughter outputs are inserted into `store_items`/`user_inventory` through `addFarmItemToInventory()`. That path now validates `item.itemId || item.id` before writing so missing livestock output IDs fail loudly instead of producing confusing DB errors.
 - Barn collect/slaughter currently record contract progress as `farm_crops_harvested` by output quantity, matching the existing farming contract metric naming.
@@ -275,6 +277,7 @@ Underworld specifics:
 - Building actions use stable `building.id` values in component payloads; do not switch back to array indexes.
 - Underworld payouts now use the effect-aware credit path through `creditUserWithEffects`, matching the rest of `/job`.
 - Runtime progression is phase-split in `utils/underworld/engine.js` (`applyConversionRollover`, pending event expiry, due-event opening, run finalization, and building runtime application).
+- Timed Underworld events should always derive their response windows from the original scheduled/open time, not from the moment the player reopens the page. Reopening late should expire overdue events, not refresh them with a brand-new timer.
 - Police/event choices that reduce suspicion now immediately apply negative `suspicionDelta` to the building as well as the active run, so payoffs visibly reduce suspicion at once.
 - Shared Underworld suspicion lives in `utils/underworld/suspicion.js` and the `underworld_users` table. Reads dynamically decay suspicion after a 3 hour grace period at 3 points per full hour, clamped to 0-100. Operations, labs, and Smuggling should call this helper for all Underworld heat changes.
 - Smuggling is live from `/job -> The Underworld -> Smuggling`. Config/data lives in `data/underworld/products.js`, `data/underworld/smugglingVehicles.js`, and `data/underworld/smugglingEvents.js`; business logic lives in `utils/underworld/smugglingEngine.js`.

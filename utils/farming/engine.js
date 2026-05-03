@@ -7,6 +7,7 @@ const config = require("../../data/farming/config");
 const weather = require("./weather");
 const seasonControl = require("./seasonControl");
 const { recordProgress: recordContractProgress } = require("../contracts");
+const timers = require("../timers");
 
 async function recordFarmContractProgress(guildId, userId, metric, amount) {
   await recordContractProgress({ guildId, userId, metric, amount }).catch(() => {});
@@ -39,6 +40,20 @@ function getUsablePlots(field) {
   return Math.max(1, Math.floor(total * multiplier));
 }
 
+function getCropYieldScale(field, crop) {
+  const fieldLevel = Math.max(1, Number(field?.level || 1));
+  if (!crop) {
+    return getUsablePlots(field) / 9;
+  }
+
+  const unlockLevel = Math.max(1, Number(crop.level || 1));
+  const unlockPlots = getTotalPlots(unlockLevel);
+  const extraLevels = Math.max(0, fieldLevel - unlockLevel);
+  const perLevelBonus = Number(config.CROP_YIELD_SCALING?.perLevelBeyondUnlock || 0);
+  const usablePlotScale = weather.getUsablePlotMultiplier(field);
+  return Math.max(1, (unlockPlots * usablePlotScale * (1 + extraLevels * Math.max(0, perLevelBonus))) / 9);
+}
+
 function getTaskDurationMs(field, taskKey, baseMs = 60000) {
   const scale = getTotalPlots(field) / 9;
   let duration = Math.max(baseMs, Math.round(baseMs * scale));
@@ -52,7 +67,7 @@ function getTaskDurationMs(field, taskKey, baseMs = 60000) {
 
 function getScaledYieldRange(crop, field) {
   const [min, max] = crop?.yield || [1, 1];
-  const plotScale = getUsablePlots(field) / 9;
+  const plotScale = getCropYieldScale(field, crop);
   const yieldMult = weather.getYieldMultiplier(field);
   const fertiliserMult = 1 + getFertiliserYieldBonus(field);
   const scaledMin = Math.max(1, Math.round(min * plotScale * yieldMult * fertiliserMult));
@@ -230,7 +245,11 @@ function isBarn(field) {
 function getBarnCapacity(barn) {
   const type = getLivestockType(barn?.livestockType);
   if (!type) return 0;
-  return Math.max(1, Number(type.capacityBase || 1) + (Math.max(1, Number(barn?.level || 1)) - 1) * 2);
+  const level = Math.max(1, Number(barn?.level || 1));
+  const multipliers = config.BARN_CAPACITY_LEVEL_MULTIPLIERS || {};
+  const fallbackMultiplier = 1 + (level - 1) * 0.35;
+  const multiplier = Number(multipliers[level] || fallbackMultiplier);
+  return Math.max(1, Math.round(Number(type.capacityBase || 1) * Math.max(1, multiplier)));
 }
 
 function getBarnUpgradeDurationMs() {
@@ -488,13 +507,14 @@ async function completeBarnTask(guildId, userId, farm, fieldIndex) {
   if (!barn.task?.key) return { ok: false, reasonText: "This barn has no active task." };
 
   const task = { ...barn.task };
+  const resolvedAt = Math.min(Date.now(), timers.toTimestamp(task.endsAt, Date.now()));
   barn.task = null;
 
   if (task.key === "upgrade") {
     barn.level = Math.min(config.MAX_FIELD_LEVEL, Math.max(Number(barn.level || 1), Number(task.toLevel || 1)));
-    barn.lastCollectedAt = Date.now();
+    barn.lastCollectedAt = resolvedAt;
     barn.productionPausedAt = null;
-    matureBarnAnimals(barn);
+    matureBarnAnimals(barn, resolvedAt);
     await saveFarm(guildId, userId, farm);
     return { ok: true, completedTask: "upgrade", fieldIndex, level: barn.level };
   }
@@ -556,6 +576,8 @@ async function ensureFarm(guildId, userId) {
 
   const data = res.rows[0].data || { fields: [] };
   if (!Array.isArray(data.fields)) data.fields = [];
+  await applySeasonRollover(guildId, userId, data);
+  await applyFieldTaskRollovers(guildId, userId, data);
   return data;
 }
 
@@ -744,6 +766,59 @@ function rollYield(crop, field = null) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
+function getTaskResolvedAt(taskMeta = {}) {
+  return Math.min(Date.now(), timers.toTimestamp(taskMeta.endsAt, Date.now()));
+}
+
+function estimateSeasonalCropValue({
+  cropId,
+  fieldLevel,
+  fieldCount = 1,
+  fertilised = false,
+  averagePrice = null,
+  seasonLengthMs = config.SEASON_LENGTH_MS,
+}) {
+  const crop = crops[cropId];
+  if (!crop) return null;
+
+  const simulatedField = {
+    level: Math.max(1, Number(fieldLevel || crop.level || 1)),
+    cropId,
+    state: "growing",
+    fertiliserApplications: fertilised
+      ? {
+          early: { fertiliserId: "yield_plus" },
+          late: { fertiliserId: "yield_plus" },
+        }
+      : {},
+  };
+
+  const [yieldMin, yieldMax] = getScaledYieldRange(crop, simulatedField);
+  const averageYield = (yieldMin + yieldMax) / 2;
+  const firstCycleMs = Math.max(1, Number(crop.growthHours || 1)) * 60 * 60 * 1000;
+  const repeatCycleMs = Math.max(
+    1,
+    Number(crop.regrow ? crop.regrowHours || crop.growthHours : crop.growthHours || 1)
+  ) * 60 * 60 * 1000;
+  const totalSeasonMs = Math.max(firstCycleMs, Number(seasonLengthMs || config.SEASON_LENGTH_MS || 0));
+  const extraHarvests = crop.regrow
+    ? Math.max(0, Math.floor((totalSeasonMs - firstCycleMs) / repeatCycleMs))
+    : Math.max(0, Math.floor(totalSeasonMs / firstCycleMs) - 1);
+  const harvestsPerField = 1 + extraHarvests;
+  const totalFields = Math.max(1, Number(fieldCount || 1));
+  const totalUnits = averageYield * harvestsPerField * totalFields;
+
+  return {
+    cropId,
+    fieldLevel: simulatedField.level,
+    fieldCount: totalFields,
+    estimatedHarvestsPerField: harvestsPerField,
+    estimatedYieldPerHarvest: Math.round(averageYield),
+    estimatedUnits: Math.round(totalUnits),
+    estimatedValue: Math.round(totalUnits * Math.max(0, Number(averagePrice || 0))),
+  };
+}
+
 async function harvestField(guildId, userId, farm, fieldIndex) {
   const field = farm.fields?.[fieldIndex];
   if (!field) return { ok: false, reasonText: "That field does not exist." };
@@ -924,7 +999,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
   }
 
   if (taskKey === "seed") {
-    const cropId = extra.cropId;
+    const cropId = taskMeta.cropId;
     const crop = crops[cropId];
     if (!crop) return failAndSave("Unknown crop.");
     if (crop.level > field.level) {
@@ -940,7 +1015,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
       return failAndSave("That crop cannot be planted in the current season.");
     }
 
-    const now = Date.now();
+    const now = getTaskResolvedAt(taskMeta);
     field.cropId = cropId;
     field.state = "growing";
     field.plantedAt = now;
@@ -950,6 +1025,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     field.fertiliserApplications = {};
     const weatherState = await weather.ensureDailyWeatherState(guildId);
     weather.maybeApplyActiveEventToField(field, weatherState, now);
+    updateFieldRuntime(field);
 
     await saveFarm(guildId, userId, farm);
     await recordFarmContractProgress(guildId, userId, "farm_fields_planted", 1);
@@ -975,12 +1051,13 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     weather.clearHarvestWeather(field);
 
     if (crop.regrow && isCropValidForSeason(field.cropId, getCurrentSeason(guildId)) && !hasFieldDamage) {
-      const now = Date.now();
+      const now = getTaskResolvedAt(taskMeta);
       field.state = "growing";
       field.plantedAt = now;
       field.readyAt = now + (crop.regrowHours || crop.growthHours) * 60 * 60 * 1000;
       field.fertiliserStages = {};
       field.fertiliserApplications = {};
+      updateFieldRuntime(field);
     } else {
       const leavesDebris =
         Math.random() < (crop.debrisChance ?? config.NON_REGROW_DEBRIS_CHANCE_AFTER_HARVEST ?? 0.35);
@@ -1015,14 +1092,18 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     field.fertiliserStages[stage] = fertiliser.id;
     field.fertiliserApplications[stage] = {
       fertiliserId: fertiliser.id,
-      appliedAt: Date.now(),
+      appliedAt: getTaskResolvedAt(taskMeta),
     };
 
     const growthReduction = Number(fertiliser.growthReductionPct || 0);
     if (growthReduction > 0 && field.plantedAt && field.readyAt) {
       const totalMs = Math.max(0, Number(field.readyAt) - Number(field.plantedAt));
-      field.readyAt = Math.max(Date.now(), Number(field.readyAt) - Math.round(totalMs * growthReduction));
+      field.readyAt = Math.max(
+        getTaskResolvedAt(taskMeta),
+        Number(field.readyAt) - Math.round(totalMs * growthReduction)
+      );
     }
+    updateFieldRuntime(field);
 
     await saveFarm(guildId, userId, farm);
     return { ok: true, completedTask: taskKey, fertiliserName: fertiliser.name, stage };
@@ -1057,7 +1138,7 @@ async function applyFieldTaskRollovers(guildId, userId, farm) {
     if (isBarn(field)) {
       const matured = matureBarnAnimals(field);
       if (matured > 0) changed = true;
-      if (field?.task?.key && field?.task?.endsAt && Date.now() >= Number(field.task.endsAt)) {
+      if (field?.task?.key && field?.task?.endsAt && timers.hasElapsed(field.task.endsAt)) {
         const result = await completeBarnTask(guildId, userId, farm, i);
         if (result.ok) {
           completions.push({ fieldIndex: i, ...result });
@@ -1068,7 +1149,7 @@ async function applyFieldTaskRollovers(guildId, userId, farm) {
     }
     if (!field?.task?.key || !field.task.endsAt) continue;
 
-    if (Date.now() >= Number(field.task.endsAt)) {
+    if (timers.hasElapsed(field.task.endsAt)) {
       const taskMeta = { ...(field.task || {}) };
       const result = await completeFieldTask(guildId, userId, farm, i, taskMeta);
 
@@ -1113,8 +1194,10 @@ module.exports = {
   getFieldSize,
   getTotalPlots,
   getUsablePlots,
+  getCropYieldScale,
   getTaskDurationMs,
   getScaledYieldRange,
+  estimateSeasonalCropValue,
   listFertilisers,
   getFertiliser,
   getFertiliserQty,
