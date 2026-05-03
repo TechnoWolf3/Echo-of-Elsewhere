@@ -45,6 +45,23 @@ function buildRecipeSummary(recipe, plot) {
   return `**${recipe.name}**\nNeeds: ${inputText}\nMakes: ${engine.getOutputItemName(recipe.output.itemId)} x${recipe.output.amount} in ${recipe.baseTimeSeconds}s`;
 }
 
+function formatBundleText(item, multiplier = 1) {
+  const totalAmount = Number(item.bundleAmount || 0) * Math.max(1, Number(multiplier || 1));
+  return `${ui.money(Number(item.price || 0) * Math.max(1, Number(multiplier || 1)))} for ${totalAmount} ${item.unitName}`;
+}
+
+function getMaterialQuantityOptions(plot, item) {
+  const capacity = engine.getStorageCapacity(plot?.level || 1);
+  const used = engine.sumStorage(plot?.inputStorage) + ((plot?.pendingImports || []).reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
+  const freeSpace = Math.max(0, capacity - used);
+  const bundleAmount = Math.max(1, Number(item?.bundleAmount || 1));
+  const maxBundles = Math.max(0, Math.floor(freeSpace / bundleAmount));
+  const preferred = [1, 2, 3, 5, 10, 20];
+  const options = preferred.filter((qty) => qty <= maxBundles);
+  if (maxBundles > 0 && !options.includes(maxBundles)) options.push(maxBundles);
+  return options.slice(0, 25);
+}
+
 function buildManufacturingEmbed(state) {
   const plots = state.plots || [];
   const nextCost = plots.length < config.MAX_PLOTS ? engine.getNextPlotCost(plots.length) : null;
@@ -187,7 +204,7 @@ function buildPlotEmbed(state, plotIndex) {
         : slot.event?.handled
           ? " - Bonus locked in"
           : "";
-      return `Slot ${index + 1}: ${recipe?.name || slot.recipeId} until <t:${Math.floor(Number(slot.endsAt || 0) / 1000)}:R>${eventLine}`;
+      return `Slot ${index + 1}: ${recipe?.name || slot.recipeId} completes <t:${Math.floor(Number(slot.endsAt || 0) / 1000)}:R>${eventLine}`;
     });
   const availableRecipes = plot.factoryType
     ? engine.getRecipesForFactory(plot.factoryType, plot.level).slice(0, 4)
@@ -429,7 +446,7 @@ function buildMaterialsEmbed(plot, plotIndex) {
         items.slice(0, 10).map((item) => {
           const relevant = !plot.factoryType || item.factoryTypes.includes(plot.factoryType);
           const sourceLine = item.derived ? `\nRecipe item: ${item.sourceRecipeName}` : "";
-          return `${relevant ? "⭐ " : ""}**${item.name}**\n${ui.money(item.price)} for ${item.bundleAmount} ${item.unitName}${item.bundleAmount === 1 ? "" : "s"}${sourceLine}`;
+          return `${relevant ? "⭐ " : ""}**${item.name}**\n${formatBundleText(item)}${sourceLine}`;
         }).join("\n\n") || "No shop bundles are available for this plot yet."
       ),
     "job",
@@ -446,11 +463,11 @@ function buildMaterialsComponents(plot, plotIndex) {
       new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
           .setCustomId(`manu_material_select:${plotIndex}`)
-          .setPlaceholder("Buy a materials bundle...")
+          .setPlaceholder("Choose a material to buy...")
           .addOptions(
             items.slice(0, 25).map((item) => ({
               label: item.name,
-              value: `manu_material:${plotIndex}:${item.id}`,
+              value: `manu_material_pick:${plotIndex}:${item.id}`,
               description: `${
                 !plot.factoryType
                   ? "General stock"
@@ -470,6 +487,75 @@ function buildMaterialsComponents(plot, plotIndex) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`manu_return_plot:${plotIndex}`)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
+    )
+  );
+
+  return rows;
+}
+
+function buildMaterialQuantityEmbed(plot, plotIndex, item) {
+  if (!item) {
+    return ui.applySystemStyle(
+      new EmbedBuilder()
+        .setTitle(`🛒 Plot ${plotIndex + 1} Supply Shop`)
+        .setDescription("That supply bundle is no longer available for this plot."),
+      "job"
+    );
+  }
+
+  const capacity = engine.getStorageCapacity(plot.level);
+  const used = engine.sumStorage(plot.inputStorage) + ((plot.pendingImports || []).reduce((sum, entry) => sum + Number(entry.amount || 0), 0));
+  const freeSpace = Math.max(0, capacity - used);
+  const quantityOptions = getMaterialQuantityOptions(plot, item);
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle(`🛒 Plot ${plotIndex + 1} Supply Shop`)
+      .setDescription(
+        [
+          `**${item.name}**`,
+          formatBundleText(item),
+          item.derived ? `Recipe item: ${item.sourceRecipeName}` : item.description || "Purchased manufacturing stock.",
+          "",
+          `Input space free: **${freeSpace}/${capacity}**`,
+          quantityOptions.length
+            ? `Choose how many bundles to buy for Plot ${plotIndex + 1}.`
+            : "This plot does not have enough free input storage for even one bundle.",
+        ].join("\n")
+      ),
+    "job",
+    "Each quantity buys full bundles into this plot's input storage."
+  );
+}
+
+function buildMaterialQuantityComponents(plot, plotIndex, item) {
+  const rows = [];
+  const quantityOptions = item ? getMaterialQuantityOptions(plot, item) : [];
+
+  if (item && quantityOptions.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`manu_material_qty_select:${plotIndex}:${item.id}`)
+          .setPlaceholder("Choose how many bundles to buy...")
+          .addOptions(
+            quantityOptions.map((qty) => ({
+              label: `${qty} bundle${qty === 1 ? "" : "s"}`,
+              value: `manu_material:${plotIndex}:${item.id}:${qty}`,
+              description: formatBundleText(item, qty).slice(0, 100),
+            }))
+          )
+      )
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`manu_plot_materials:${plotIndex}`)
         .setLabel(ui.nav.back.label)
         .setEmoji(ui.nav.back.emoji)
         .setStyle(ui.nav.back.style)
@@ -586,6 +672,8 @@ module.exports = {
   buildImportComponents,
   buildMaterialsEmbed,
   buildMaterialsComponents,
+  buildMaterialQuantityEmbed,
+  buildMaterialQuantityComponents,
   buildMarketEmbed,
   buildMarketComponents,
   buildContractsEmbed,

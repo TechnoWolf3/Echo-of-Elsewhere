@@ -461,6 +461,9 @@ module.exports = {
 
       // Night Walker state
       nw: null,
+
+      // Manufacturing state
+      manuMaterialId: null,
     };
 
     const collector = msg.createMessageComponentCollector({ time: BOARD_INACTIVITY_MS });
@@ -844,6 +847,17 @@ function scheduleReturnToCategory(delayMs = 5000) {
         return msg.edit({
           embeds: [manufacturingUi.buildMaterialsEmbed(plot, session.manuPlotIndex || 0)],
           components: manufacturingUi.buildMaterialsComponents(plot, session.manuPlotIndex || 0),
+        }).catch(() => {});
+      }
+
+      if (session.view === "manu_material_qty") {
+        const plant = await manufacturing.ensureState(guildId, userId);
+        const plotIndex = session.manuPlotIndex || 0;
+        const plot = plant.plots?.[plotIndex] || plant.plots?.[0] || {};
+        const item = manufacturing.getShopItemsForPlot(plot).find((entry) => entry.id === session.manuMaterialId) || null;
+        return msg.edit({
+          embeds: [manufacturingUi.buildMaterialQuantityEmbed(plot, plotIndex, item)],
+          components: manufacturingUi.buildMaterialQuantityComponents(plot, plotIndex, item),
         }).catch(() => {});
       }
 
@@ -1235,7 +1249,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
       if (session.returnTimer) return;
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "manufacturing", "manu_plot", "manu_plot_type", "manu_plot_import", "manu_plot_materials", "manu_market", "manu_contracts", "underworld", "underworld_operations", "underworld_building", "underworld_smuggling", "underworld_smuggling_garage", "underworld_smuggling_shop", "underworld_smuggling_start", "underworld_smuggling_active"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "manufacturing", "manu_plot", "manu_plot_type", "manu_plot_import", "manu_plot_materials", "manu_material_qty", "manu_market", "manu_contracts", "underworld", "underworld_operations", "underworld_building", "underworld_smuggling", "underworld_smuggling_garage", "underworld_smuggling_shop", "underworld_smuggling_start", "underworld_smuggling_active"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);

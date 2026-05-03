@@ -20,6 +20,7 @@ function isManufacturingInteraction(actionId) {
     actionId.startsWith("manu_plot_import:") ||
     actionId.startsWith("manu_plot_materials:") ||
     actionId.startsWith("manu_import:") ||
+    actionId.startsWith("manu_material_pick:") ||
     actionId.startsWith("manu_material:") ||
     actionId.startsWith("manu_start:") ||
     actionId.startsWith("manu_upgrade:") ||
@@ -53,18 +54,21 @@ async function handleManufacturingInteraction({
   if (actionId === "manu_back") {
     session.view = "manufacturing";
     session.manuPlotIndex = null;
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
 
   if (actionId === "manu_market") {
     session.view = "manu_market";
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
 
   if (actionId === "manu_contracts") {
     session.view = "manu_contracts";
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
@@ -72,11 +76,12 @@ async function handleManufacturingInteraction({
   if (actionId === "manu_shop") {
     const state = await engine.ensureState(guildId, userId);
     if (!state.plots.length) {
-      await followUp(interaction, "❌ Buy a factory plot first, then open that plot to buy materials into its input storage.");
+      await followUp(interaction, "Buy a factory plot first, then open that plot to buy materials into its input storage.");
       return true;
     }
     session.view = "manu_plot_materials";
     session.manuPlotIndex = 0;
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
@@ -91,13 +96,13 @@ async function handleManufacturingInteraction({
     });
 
     if (!debit.ok) {
-      await followUp(interaction, `❌ You need $${cost.toLocaleString()} in your bank.`);
+      await followUp(interaction, `You need $${cost.toLocaleString()} in your bank.`);
       return true;
     }
 
     const result = await engine.buyPlot(guildId, userId, state);
     if (!result.ok) {
-      await followUp(interaction, `❌ ${result.reasonText}`);
+      await followUp(interaction, result.reasonText);
       return true;
     }
 
@@ -108,6 +113,7 @@ async function handleManufacturingInteraction({
   if (actionId.startsWith("manu_select:")) {
     session.view = "manu_plot";
     session.manuPlotIndex = Number(actionId.split(":")[1]);
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
@@ -115,6 +121,7 @@ async function handleManufacturingInteraction({
   if (actionId.startsWith("manu_plot_type:")) {
     session.view = "manu_plot_type";
     session.manuPlotIndex = Number(actionId.split(":")[1]);
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
@@ -122,6 +129,7 @@ async function handleManufacturingInteraction({
   if (actionId.startsWith("manu_return_plot:")) {
     session.view = "manu_plot";
     session.manuPlotIndex = Number(actionId.split(":")[1]);
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
@@ -136,17 +144,18 @@ async function handleManufacturingInteraction({
       : await engine.assignFactoryType(guildId, userId, state, plotIndex, factoryType);
 
     if (!result.ok) {
-      await followUp(interaction, `❌ ${result.reasonText}`);
+      await followUp(interaction, result.reasonText);
       return true;
     }
 
     session.view = "manu_plot";
     session.manuPlotIndex = plotIndex;
+    session.manuMaterialId = null;
     await followUp(
       interaction,
       result.changed
-        ? `✅ Plot ${plotIndex + 1} switched to ${engine.getFactoryTypes()[factoryType].name}. Stored stock was reduced to ${Math.round((result.retainRate || 0) * 100)}% and active work was cleared.`
-        : `✅ Plot ${plotIndex + 1} assigned to ${engine.getFactoryTypes()[factoryType].name}.`
+        ? `Plot ${plotIndex + 1} switched to ${engine.getFactoryTypes()[factoryType].name}. Stored stock was reduced to ${Math.round((result.retainRate || 0) * 100)}% and active work was cleared.`
+        : `Plot ${plotIndex + 1} assigned to ${engine.getFactoryTypes()[factoryType].name}.`
     );
     await redraw();
     return true;
@@ -155,6 +164,7 @@ async function handleManufacturingInteraction({
   if (actionId.startsWith("manu_plot_import:")) {
     session.view = "manu_plot_import";
     session.manuPlotIndex = Number(actionId.split(":")[1]);
+    session.manuMaterialId = null;
     await redraw();
     return true;
   }
@@ -162,6 +172,16 @@ async function handleManufacturingInteraction({
   if (actionId.startsWith("manu_plot_materials:")) {
     session.view = "manu_plot_materials";
     session.manuPlotIndex = Number(actionId.split(":")[1]);
+    session.manuMaterialId = null;
+    await redraw();
+    return true;
+  }
+
+  if (actionId.startsWith("manu_material_pick:")) {
+    const [, plotIndexRaw, materialId] = actionId.split(":");
+    session.view = "manu_material_qty";
+    session.manuPlotIndex = Number(plotIndexRaw);
+    session.manuMaterialId = materialId;
     await redraw();
     return true;
   }
@@ -176,52 +196,58 @@ async function handleManufacturingInteraction({
     const result = await engine.startImport(guildId, userId, state, plotIndex, itemId, amount);
 
     if (!result.ok) {
-      await followUp(interaction, `❌ ${result.reasonText}`);
+      await followUp(interaction, result.reasonText);
       return true;
     }
 
-    await followUp(interaction, `✅ Import started for ${amount}x ${engine.getOutputItemName(itemId)}. It will arrive <t:${Math.floor(Number(result.importRun.arrivesAt || 0) / 1000)}:R>.`);
+    await followUp(interaction, `Import started for ${amount}x ${engine.getOutputItemName(itemId)}. It will arrive <t:${Math.floor(Number(result.importRun.arrivesAt || 0) / 1000)}:R>.`);
     await redraw();
     return true;
   }
 
   if (actionId.startsWith("manu_material:")) {
-    const [, plotIndexRaw, materialId] = actionId.split(":");
+    const [, plotIndexRaw, materialId, bundleCountRaw] = actionId.split(":");
     const plotIndex = Number(plotIndexRaw);
+    const bundleCount = Math.max(1, Number(bundleCountRaw || 1));
     const state = await engine.ensureState(guildId, userId);
     const plot = state.plots?.[plotIndex];
     if (!plot) {
-      await followUp(interaction, "❌ That factory plot does not exist.");
+      await followUp(interaction, "That factory plot does not exist.");
       return true;
     }
 
     const material = engine.getShopItemsForPlot(plot).find((item) => item.id === materialId) || null;
     if (!material) {
-      await followUp(interaction, "❌ That material bundle is not available for this plot right now.");
+      await followUp(interaction, "That material bundle is not available for this plot right now.");
       return true;
     }
 
     const capacity = engine.getStorageCapacity(plot.level);
     const used = engine.sumStorage(plot.inputStorage) + (plot.pendingImports || []).reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-    if (used + Number(material.bundleAmount || 0) > capacity) {
-      await followUp(interaction, "❌ That plot does not have enough input storage for this bundle.");
+    const totalUnits = Number(material.bundleAmount || 0) * bundleCount;
+    const totalPrice = Number(material.price || 0) * bundleCount;
+    if (used + totalUnits > capacity) {
+      await followUp(interaction, "That plot does not have enough input storage for that many bundles.");
       return true;
     }
 
-    const debit = await tryDebitBank(guildId, userId, Number(material.price || 0), "manufacturing_material_purchase", {
+    const debit = await tryDebitBank(guildId, userId, totalPrice, "manufacturing_material_purchase", {
       enterprise: "manufacturing",
       plotIndex,
       materialId,
-      qty: material.bundleAmount,
+      bundleCount,
+      qty: totalUnits,
     });
     if (!debit.ok) {
-      await followUp(interaction, `❌ You need $${Number(material.price || 0).toLocaleString()} in your bank.`);
+      await followUp(interaction, `You need $${totalPrice.toLocaleString()} in your bank.`);
       return true;
     }
 
-    plot.inputStorage[material.id] = Number(plot.inputStorage[material.id] || 0) + Number(material.bundleAmount || 0);
+    plot.inputStorage[material.id] = Number(plot.inputStorage[material.id] || 0) + totalUnits;
     await engine.saveState(guildId, userId, state);
-    await followUp(interaction, `✅ Bought ${material.bundleAmount}x ${material.unitName}${material.bundleAmount === 1 ? "" : "s"} for plot ${plotIndex + 1}.`);
+    session.view = "manu_plot_materials";
+    session.manuMaterialId = null;
+    await followUp(interaction, `Bought ${bundleCount} bundle${bundleCount === 1 ? "" : "s"} of ${material.name} for Plot ${plotIndex + 1}.`);
     await redraw();
     return true;
   }
@@ -233,11 +259,11 @@ async function handleManufacturingInteraction({
     const result = await engine.startProduction(guildId, userId, state, plotIndex, recipeId);
 
     if (!result.ok) {
-      await followUp(interaction, `❌ ${result.reasonText}`);
+      await followUp(interaction, result.reasonText);
       return true;
     }
 
-    await followUp(interaction, `✅ ${result.recipe.name} started in slot ${result.slotIndex + 1}. It will finish <t:${Math.floor(Number(result.slot.endsAt || 0) / 1000)}:R>.`);
+    await followUp(interaction, `${result.recipe.name} started in Slot ${result.slotIndex + 1}. It completes <t:${Math.floor(Number(result.slot.endsAt || 0) / 1000)}:R>.`);
     await redraw();
     return true;
   }
@@ -248,7 +274,7 @@ async function handleManufacturingInteraction({
     const plot = state.plots?.[plotIndex];
     const cost = engine.getUpgradeCost(plot?.level || 1);
     if (cost <= 0) {
-      await followUp(interaction, "❌ This plot cannot be upgraded right now.");
+      await followUp(interaction, "This plot cannot be upgraded right now.");
       return true;
     }
 
@@ -259,17 +285,17 @@ async function handleManufacturingInteraction({
       toLevel: (plot?.level || 1) + 1,
     });
     if (!debit.ok) {
-      await followUp(interaction, `❌ You need $${cost.toLocaleString()} in your bank to upgrade this plot.`);
+      await followUp(interaction, `You need $${cost.toLocaleString()} in your bank to upgrade this plot.`);
       return true;
     }
 
     const result = await engine.upgradePlot(guildId, userId, state, plotIndex);
     if (!result.ok) {
-      await followUp(interaction, `❌ ${result.reasonText}`);
+      await followUp(interaction, result.reasonText);
       return true;
     }
 
-    await followUp(interaction, `✅ Plot ${plotIndex + 1} upgraded to level ${result.plot.level}.`);
+    await followUp(interaction, `Plot ${plotIndex + 1} upgraded to level ${result.plot.level}.`);
     await redraw();
     return true;
   }
@@ -280,13 +306,13 @@ async function handleManufacturingInteraction({
     const items = market.getSellableItems(state);
     const item = items.find((entry) => entry.itemId === itemId);
     if (!item) {
-      await followUp(interaction, "❌ You do not have that finished good ready for market.");
+      await followUp(interaction, "You do not have that finished good ready for market.");
       return true;
     }
 
     const removed = engine.takeFromOutputStorage(state, itemId, Number(item.qty || 0));
     if (!removed) {
-      await followUp(interaction, "❌ Failed to reserve those finished goods for sale.");
+      await followUp(interaction, "Failed to reserve those finished goods for sale.");
       return true;
     }
 
@@ -299,7 +325,7 @@ async function handleManufacturingInteraction({
     });
     await engine.saveState(guildId, userId, state);
 
-    await followUp(interaction, `✅ Sold ${item.qty}x ${item.name} for $${Number(item.totalValue || 0).toLocaleString()}.`);
+    await followUp(interaction, `Sold ${item.qty}x ${item.name} for $${Number(item.totalValue || 0).toLocaleString()}.`);
     await redraw();
     return true;
   }
@@ -309,11 +335,11 @@ async function handleManufacturingInteraction({
     const state = await engine.ensureState(guildId, userId);
     const result = await contracts.fulfillContract(guildId, userId, state, offerId);
     if (!result.ok) {
-      await followUp(interaction, `❌ ${result.reasonText}`);
+      await followUp(interaction, result.reasonText);
       return true;
     }
 
-    await followUp(interaction, `✅ Contract fulfilled for ${result.offer.qty}x ${result.offer.name}. Paid $${result.payout.toLocaleString()} to your bank.`);
+    await followUp(interaction, `Contract fulfilled for ${result.offer.qty}x ${result.offer.name}. Paid $${result.payout.toLocaleString()} to your bank.`);
     await redraw();
     return true;
   }
@@ -325,11 +351,11 @@ async function handleManufacturingInteraction({
     const state = await engine.ensureState(guildId, userId);
     const result = await engine.handleFactoryEvent(guildId, userId, state, plotIndex, slotIndex);
     if (!result.ok) {
-      await followUp(interaction, `❌ ${result.reasonText}`);
+      await followUp(interaction, result.reasonText);
       return true;
     }
 
-    await followUp(interaction, `✅ ${result.event.name} handled. Bonus locked in for this production run.`);
+    await followUp(interaction, `${result.event.name} handled. Bonus locked in for this production run.`);
     await redraw();
     return true;
   }
