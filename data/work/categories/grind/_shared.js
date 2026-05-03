@@ -34,15 +34,15 @@ async function mintUser(db, guildId, userId, amount, type, meta = {}, options = 
   });
 }
 
-async function setJobCooldownSeconds(db, guildId, userId, seconds) {
+async function setJobCooldownSeconds(db, guildId, userId, seconds, key = "job") {
   const sec = Math.max(0, Math.floor(Number(seconds || 0)));
   const next = new Date(Date.now() + sec * 1000);
   await db.query(
     `INSERT INTO cooldowns (guild_id, user_id, key, next_claim_at)
-     VALUES ($1,$2,'job',$3)
+     VALUES ($1,$2,$3,$4)
      ON CONFLICT (guild_id, user_id, key)
      DO UPDATE SET next_claim_at = EXCLUDED.next_claim_at`,
-    [guildId, userId, next.toISOString()]
+    [guildId, userId, key, next.toISOString()]
   );
   return next;
 }

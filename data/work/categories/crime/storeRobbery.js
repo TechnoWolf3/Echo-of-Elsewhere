@@ -19,8 +19,8 @@ const MIN_STEPS = 3;
 const MAX_STEPS = 5;
 
 // Cooldowns (minutes)
-const GLOBAL_LOCKOUT_MINUTES = 10;
-const STORE_COOLDOWN_MINUTES = 10;
+const GLOBAL_LOCKOUT_MINUTES = 15;
+const STORE_COOLDOWN_MINUTES = 15;
 
 // Heat tiers => outcomes
 const HEAT_TIERS = {
@@ -32,8 +32,8 @@ const HEAT_TIERS = {
 };
 
 // Payouts / fines
-const PAYOUT_MIN = 2000;
-const PAYOUT_MAX = 6000;
+const PAYOUT_MIN = 9000;
+const PAYOUT_MAX = 18000;
 
 const FINE_MIN = 3000;
 const FINE_MAX = 8000;
@@ -41,8 +41,8 @@ const FINE_MAX = 8000;
 // Jail chance (only on busted tiers)
 const JAIL_CHANCE_BUSTED = 0.18;       // uncommon
 const JAIL_CHANCE_BUSTED_HARD = 0.28;  // rare-ish
-const JAIL_MIN_MINUTES = 2;
-const JAIL_MAX_MINUTES = 5;
+const JAIL_MIN_MINUTES = 5;
+const JAIL_MAX_MINUTES = 15;
 
 // Random run events
 const LOOT_DROP_CHANCE = 0.12;
@@ -489,7 +489,7 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       if (outcome === "clean" || outcome === "spotted") {
         const payout = computeSuccessPayout(outcome) + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
-        await addUserWallet(guildId, userId, finalPayout, mode === "major" ? "crime_major_heist_success" : "crime_heist_success", { job: mode });
+        await addUserWallet(guildId, userId, finalPayout, "crime_store_success", { job: "store_robbery" });
 
         resultLines.push(
           outcome === "clean"
@@ -501,7 +501,7 @@ module.exports = function startStoreRobbery(interaction, context = {}) {
       } else if (outcome === "partial") {
         const payout = computeSuccessPayout("partial") + eventNotes.payoutDelta;
         const finalPayout = Math.max(0, payout);
-        await addUserWallet(guildId, userId, finalPayout, mode === "major" ? "crime_major_heist_success" : "crime_heist_success", { job: mode });
+        await addUserWallet(guildId, userId, finalPayout, "crime_store_success", { job: "store_robbery" });
 
         resultLines.push(`😬 You got something, but not much. You pocket **$${finalPayout.toLocaleString()}**.`);
       } else {

@@ -34,6 +34,17 @@ const {
   tryDebitUser,
   creditUser,
 } = require("../utils/economy");
+const { recordProgress: recordContractProgress } = require("../utils/contracts");
+
+async function recordStockContractProgress(guildId, userId, gross) {
+  await recordContractProgress({ guildId, userId, metric: "stock_trades", amount: 1 }).catch(() => {});
+  await recordContractProgress({
+    guildId,
+    userId,
+    metric: "stock_volume",
+    amount: Math.round(Math.max(0, Number(gross) || 0)),
+  }).catch(() => {});
+}
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString("en-AU", {
@@ -482,6 +493,7 @@ module.exports = {
           shares,
           company.price
         );
+        await recordStockContractProgress(interaction.guildId, interaction.user.id, gross);
 
         return interaction.reply({
           embeds: [
@@ -526,6 +538,7 @@ module.exports = {
         "ese_sell",
         { symbol, shares, gross, fee, price: company.price }
       );
+      await recordStockContractProgress(interaction.guildId, interaction.user.id, gross);
 
       return interaction.reply({
         embeds: [

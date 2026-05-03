@@ -11,7 +11,13 @@ const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
 const bankCommand = require("./commands/bank");
+const bankRecurringDeposits = require("./utils/bankRecurringDeposits");
 const ritualsCommand = require("./commands/rituals");
+const contractsCommand = require("./commands/contracts");
+const contracts = require("./utils/contracts");
+const channelPurger = require("./utils/channelPurger");
+const jailSystem = require("./utils/jail");
+const underworldSuspicion = require("./utils/underworld/suspicion");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -720,7 +726,12 @@ client.once(Events.ClientReady, async () => {
     try {
       await ensureAchievementTables(client.db);
       await ensureEconomyTables(client.db);
+      await jailSystem.ensureJailSchema();
+      await underworldSuspicion.ensureUnderworldUserSchema();
       await ensureEseSchema();
+      await bankRecurringDeposits.ensureSchema();
+      await contracts.ensureSchema();
+      await channelPurger.ensureSchema(client.db);
       console.log("[ESE] schema ready");
 
       // Start Bot Games AFTER DB tables exist
@@ -731,6 +742,15 @@ client.once(Events.ClientReady, async () => {
 
       // 🕳️ Echo Rift (daily random event)
       echoRift.startScheduler(client);
+
+      // 📜 Contracts
+      contracts.startScheduler(client);
+
+      // Daily bank auto-deposits
+      bankRecurringDeposits.startScheduler(client);
+
+      // 🧹 Scheduled channel purger
+      channelPurger.startScheduler(client);
 
       const count = await syncAchievements(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements/*`);
@@ -866,6 +886,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     console.error("[BANK] handler failed:", e);
   }
 
+
+  // 📜 Contracts interactions
+  try {
+    const handled = await contractsCommand.handleInteraction?.(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[CONTRACTS] handler failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ Contracts failed to handle that interaction.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ Contracts failed to handle that interaction.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
+  }
 
   // 🕯️ Ritual hub interactions
   try {
@@ -1029,7 +1065,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Let message-collector based hubs handle themselves
     const _cid = String(interaction.customId || "");
     if (_cid.startsWith("games:")) return;
-    if (_cid.startsWith("job_select:") || _cid.startsWith("job_") || _cid.startsWith("farm_") || _cid.startsWith("machine_") || _cid.startsWith("enterprise:")) return;
+    if (_cid.startsWith("job_select:") || _cid.startsWith("job_") || _cid.startsWith("jail:") || _cid.startsWith("farm_") || _cid.startsWith("machine_") || _cid.startsWith("enterprise:") || _cid.startsWith("uw_")) return;
 
       try {
         if (typeof rouletteGame.handleInteraction === "function") {

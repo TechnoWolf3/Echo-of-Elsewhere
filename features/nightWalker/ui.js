@@ -31,11 +31,11 @@ function safeDesc(s) {
   return t.slice(0, 97) + "...";
 }
 
-function statusLineFromCooldown(cooldownUnix) {
-  return cooldownUnix ? `⏳ Next payout: <t:${cooldownUnix}:R>` : "✅ Ready for payout.";
+function availabilityLine(unixTs) {
+  return unixTs ? `⏳ Available <t:${unixTs}:R>` : "✅ Available now";
 }
 
-function buildNightWalkerEmbed(user, progress, cooldownUnix) {
+function buildNightWalkerEmbed(user, progress, cooldowns = {}) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
   const bonusPct = Math.round((mult - 1) * 100);
@@ -46,14 +46,17 @@ function buildNightWalkerEmbed(user, progress, cooldownUnix) {
     .map((key) => {
       const cfg = jobs[key];
       if (!cfg) return null;
-      return `• **${cfg.title || key}** - ${cfg.rounds ? `${cfg.rounds} rounds` : "interactive"}`;
+      return [
+        `• **${cfg.title || key}** - ${cfg.rounds ? `${cfg.rounds} rounds` : "interactive"}`,
+        availabilityLine(cooldowns[key]),
+      ].join("\n");
     })
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 
   return new EmbedBuilder()
     .setTitle(nightWalker.category?.title || "🧠 Night Walker")
-    .setDescription([statusLineFromCooldown(cooldownUnix), "", nightWalker.category?.description || ""].join("\n").trim())
+    .setDescription(nightWalker.category?.description || "")
     .addFields(
       { name: "Progress", value: `Level ${progress.level} - XP ${progress.xp}/${need} - Bonus +${bonusPct}%` },
       { name: "Jobs", value: lines || "No jobs configured." }
@@ -71,7 +74,8 @@ function buildNightWalkerComponents(disabled = false) {
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠", default: true },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );
@@ -126,7 +130,7 @@ function buildNWChoiceComponents({ jobKey, roundIndex, choices, disabled = false
     row,
     new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("job_back:nw").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
-      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+      new ButtonBuilder().setCustomId("job_stop").setLabel("Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     ),
   ];
 }

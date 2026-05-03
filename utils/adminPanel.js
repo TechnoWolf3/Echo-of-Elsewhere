@@ -23,6 +23,10 @@ const {
   clearStockFloor,
   resetStockToLaunch,
 } = require('./ese/engine');
+const contracts = require('./contracts');
+const farming = require('./farming/engine');
+const seasonControl = require('./farming/seasonControl');
+const channelPurger = require('./channelPurger');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -42,6 +46,8 @@ const CATEGORIES = [
   { value: 'botgames', label: 'Bot Games' },
   { value: 'rift', label: 'Echo Rift' },
   { value: 'ese', label: 'Echo Stock Exchange' },
+  { value: 'contracts', label: 'Contracts' },
+  { value: 'enterprises', label: 'Enterprises' },
   { value: 'misc', label: 'Misc' },
 ];
 
@@ -60,6 +66,9 @@ const ACTIONS_BY_CATEGORY = {
   ],
   moderation: [
     { id: 'moderation:purge', label: 'Purge Messages', style: ButtonStyle.Danger, modal: true },
+    { id: 'moderation:purge_schedule', label: 'Schedule Purge', style: ButtonStyle.Primary, modal: true },
+    { id: 'moderation:purge_status', label: 'Purge Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'moderation:purge_disable', label: 'Disable Purge', style: ButtonStyle.Secondary, modal: false },
     { id: 'moderation:setheat', label: 'Set Heat', style: ButtonStyle.Secondary, modal: true },
     { id: 'moderation:setjail', label: 'Set Jail', style: ButtonStyle.Secondary, modal: true },
     { id: 'moderation:cooldown_clear', label: 'Clear Cooldowns', style: ButtonStyle.Secondary, modal: true },
@@ -113,6 +122,19 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'ese:setfloor', label: 'Set Floor', style: ButtonStyle.Secondary, modal: true },
     { id: 'ese:clearfloor', label: 'Clear Floor', style: ButtonStyle.Secondary, modal: true },
     { id: 'ese:reset', label: 'Reset Stock', style: ButtonStyle.Danger, modal: true },
+  ],
+  contracts: [
+    { id: 'contracts:status', label: 'Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'contracts:toggle_auto', label: 'Toggle Auto', style: ButtonStyle.Primary, modal: false },
+    { id: 'contracts:settings', label: 'Settings', style: ButtonStyle.Secondary, modal: true },
+    { id: 'contracts:start', label: 'Start Manual', style: ButtonStyle.Primary, modal: true },
+    { id: 'contracts:stop', label: 'Stop Active', style: ButtonStyle.Danger, modal: false },
+    { id: 'contracts:rotate', label: 'Rotate', style: ButtonStyle.Secondary, modal: false },
+    { id: 'contracts:post_daily', label: 'Post Daily Now', style: ButtonStyle.Secondary, modal: false },
+  ],
+  enterprises: [
+    { id: 'enterprises:season_status', label: 'Season Status', style: ButtonStyle.Secondary, modal: false },
+    { id: 'enterprises:next_season', label: 'Skip To Next Season', style: ButtonStyle.Primary, modal: false },
   ],
   misc: [
     { id: 'misc:ping', label: 'Ping', style: ButtonStyle.Secondary, modal: false },
@@ -194,23 +216,68 @@ function parseKeyValueLines(text) {
   return out;
 }
 
+function parseBool(value, fallback = false) {
+  if (value === true || value === false) return value;
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return fallback;
+  if (['true', '1', 'yes', 'y', 'on', 'enabled'].includes(raw)) return true;
+  if (['false', '0', 'no', 'n', 'off', 'disabled'].includes(raw)) return false;
+  return fallback;
+}
+
+class AdminPanelValidationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'AdminPanelValidationError';
+  }
+}
+
+function parseOptionalNumber(value, fieldName, { min = -Infinity, max = Infinity } = {}) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < min || n > max) {
+    throw new AdminPanelValidationError(`${fieldName} must be a number${Number.isFinite(min) ? ` >= ${min}` : ''}${Number.isFinite(max) ? ` and <= ${max}` : ''}.`);
+  }
+  return n;
+}
+
+function parseCsvNumbers(value, fieldName) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return undefined;
+  const nums = raw.split(',').map((part) => parseOptionalNumber(part, fieldName, { min: 0 }));
+  if (!nums.length || nums.some((n) => n === undefined)) {
+    throw new AdminPanelValidationError(`${fieldName} must be comma-separated numbers.`);
+  }
+  return nums;
+}
+
+function normalizeContractMode(value) {
+  const mode = String(value || 'random').trim().toLowerCase();
+  return ['random', 'co_op', 'competitive'].includes(mode) ? mode : 'random';
+}
+
+function cleanId(value) {
+  return String(value || '').replace(/[^0-9]/g, '');
+}
+
 async function fetchUserSafe(client, userId) {
   if (!userId) return null;
-  const id = String(userId).replace(/[^0-9]/g, '');
+  const id = cleanId(userId);
   if (!id) return null;
   return client.users.fetch(id).catch(() => null);
 }
 
 async function fetchChannelSafe(guild, channelId) {
   if (!channelId) return null;
-  const id = String(channelId).replace(/[^0-9]/g, '');
+  const id = cleanId(channelId);
   if (!id) return null;
   return guild.channels.fetch(id).catch(() => null);
 }
 
 async function fetchRoleSafe(guild, roleId) {
   if (!roleId) return null;
-  const id = String(roleId).replace(/[^0-9]/g, '');
+  const id = cleanId(roleId);
   if (!id) return null;
   return guild.roles.fetch(id).catch(() => null);
 }
@@ -289,12 +356,22 @@ async function runLegacyCommand({ interaction, commandFile, subcommand = null, v
     const origReply = interaction.reply?.bind(interaction);
     const origEditReply = interaction.editReply?.bind(interaction);
     const origFollowUp = interaction.followUp?.bind(interaction);
+    const origDeferReply = interaction.deferReply?.bind(interaction);
 
     if (origReply && origEditReply) {
       interaction.reply = async (payload) => {
         if (interaction.deferred) return origEditReply(payload);
         if (interaction.replied) return origFollowUp ? origFollowUp(payload) : origEditReply(payload);
         return origReply(payload);
+      };
+    }
+
+    if (origDeferReply) {
+      interaction.deferReply = async (payload) => {
+        if (interaction.deferred || interaction.replied) {
+          return interaction;
+        }
+        return origDeferReply(payload);
       };
     }
 
@@ -310,21 +387,26 @@ async function runLegacyCommand({ interaction, commandFile, subcommand = null, v
 }
 
 function buildModal(actionId) {
+  const MAX_MODAL_TITLE = 45;
+  const MAX_INPUT_LABEL = 45;
+  const MAX_INPUT_PLACEHOLDER = 100;
+  const trimForDiscord = (value, max) => String(value ?? '').slice(0, max);
   const modal = new ModalBuilder().setCustomId(`adminpanel:modal:${actionId}`).setTitle('Admin Panel');
+  const setTitle = (title) => modal.setTitle(trimForDiscord(title, MAX_MODAL_TITLE));
 
   const addInput = (customId, label, style, required = true, placeholder = '') =>
     new ActionRowBuilder().addComponents(
       new TextInputBuilder()
         .setCustomId(customId)
-        .setLabel(label)
+        .setLabel(trimForDiscord(label, MAX_INPUT_LABEL))
         .setStyle(style)
         .setRequired(required)
-        .setPlaceholder(placeholder)
+        .setPlaceholder(trimForDiscord(placeholder, MAX_INPUT_PLACEHOLDER))
     );
 
   // Economy
   if (actionId === 'economy:addbalance') {
-    modal.setTitle('Add Balance');
+    setTitle('Add Balance');
     modal.addComponents(
       addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'),
       addInput('amount', 'Amount', TextInputStyle.Short, true, '1000'),
@@ -334,7 +416,7 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'economy:addserverbal') {
-    modal.setTitle('Add Server Bank');
+    setTitle('Add Server Bank');
     modal.addComponents(addInput('amount', 'Amount', TextInputStyle.Short, true, '5000'));
     return modal;
   }
@@ -342,7 +424,7 @@ function buildModal(actionId) {
 
   // Effects
   if (actionId === 'effects:give') {
-    modal.setTitle('Give Effect');
+    setTitle('Give Effect');
     modal.addComponents(
       addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'),
       addInput('effect_id', 'Effect ID', TextInputStyle.Short, true, 'echo_blessing_minor_percent'),
@@ -354,26 +436,36 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'effects:view') {
-    modal.setTitle('View Active Effect');
+    setTitle('View Active Effect');
     modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'));
     return modal;
   }
 
   if (actionId === 'effects:clear') {
-    modal.setTitle('Clear Active Effect');
+    setTitle('Clear Active Effect');
     modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123456789012345678'));
     return modal;
   }
 
   // Moderation
   if (actionId === 'moderation:purge') {
-    modal.setTitle('Purge Messages');
+    setTitle('Purge Messages');
     modal.addComponents(addInput('amount', 'How many messages (1-200)', TextInputStyle.Short, true, '25'));
     return modal;
   }
 
+  if (actionId === 'moderation:purge_schedule') {
+    setTitle('Schedule Channel Purge');
+    modal.addComponents(
+      addInput('channel_id', 'Channel ID (or #channel)', TextInputStyle.Short, true, '123456789012345678'),
+      addInput('frequency_hours', 'Frequency in hours', TextInputStyle.Short, true, '24'),
+      addInput('mode', 'Mode: once or recurring', TextInputStyle.Short, true, 'recurring')
+    );
+    return modal;
+  }
+
   if (actionId === 'moderation:setheat') {
-    modal.setTitle('Set Heat');
+    setTitle('Set Heat');
     modal.addComponents(
       addInput('value', 'Heat value (0-100)', TextInputStyle.Short, true, '0'),
       addInput('user_id', 'User ID (blank = you)', TextInputStyle.Short, false, '123...'),
@@ -383,7 +475,7 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'moderation:setjail') {
-    modal.setTitle('Set Jail');
+    setTitle('Set Jail');
     modal.addComponents(
       addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'),
       addInput('minutes', 'Minutes (0 clears)', TextInputStyle.Short, true, '10'),
@@ -393,7 +485,7 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'moderation:cooldown_clear') {
-    modal.setTitle('Clear Cooldowns');
+    setTitle('Clear Cooldowns');
     modal.addComponents(
       addInput('user_id', 'User ID (blank = you)', TextInputStyle.Short, false, '123...'),
       addInput('key', 'Cooldown key (blank=all)', TextInputStyle.Short, false, 'job | crime_heist | all')
@@ -402,14 +494,14 @@ function buildModal(actionId) {
   }
 
   if (actionId === 'moderation:resetach') {
-    modal.setTitle('Reset Achievements');
+    setTitle('Reset Achievements');
     modal.addComponents(addInput('user_id', 'User ID (or mention)', TextInputStyle.Short, true, '123...'));
     return modal;
   }
 
   // Boards
   if (actionId.startsWith('boards:')) {
-    modal.setTitle(`Board: ${actionId.split(':')[1]}`);
+    setTitle(`Board: ${actionId.split(':')[1]}`);
     // For list: no modal
     if (actionId === 'boards:list') return null;
 
@@ -441,7 +533,7 @@ function buildModal(actionId) {
 
   // Bot Games
   if (actionId === 'botgames:force_spawn') {
-    modal.setTitle('Force Spawn Bot Game');
+    setTitle('Force Spawn Bot Game');
     modal.addComponents(
       addInput('event_id', 'Event ID (blank = random)', TextInputStyle.Short, false, 'mystery_box | risk_ladder | ...'),
       addInput('channel_id', 'Channel ID (blank = configured)', TextInputStyle.Short, false, '123...'),
@@ -453,7 +545,7 @@ function buildModal(actionId) {
 
   // Patchboard
   if (actionId.startsWith('patchboard:')) {
-    modal.setTitle(`Patchboard: ${actionId.split(':')[1]}`);
+    setTitle(`Patchboard: ${actionId.split(':')[1]}`);
     modal.addComponents(addInput('channel_id', 'Channel ID (blank = current channel)', TextInputStyle.Short, false, '123...'));
 
     if (actionId === 'patchboard:set') {
@@ -474,7 +566,7 @@ function buildModal(actionId) {
 
   // Shop / inv
   if (actionId.startsWith('shop:')) {
-    modal.setTitle(`Shop: ${actionId.split(':')[1]}`);
+    setTitle(`Shop: ${actionId.split(':')[1]}`);
 
     if (actionId === 'shop:inv_remove') {
       modal.addComponents(
@@ -520,7 +612,7 @@ function buildModal(actionId) {
   // Echo Stock Exchange
   if (actionId.startsWith('ese:')) {
     const sub = actionId.split(':')[1];
-    modal.setTitle(`ESE: ${sub}`);
+    setTitle(`ESE: ${sub}`);
 
     if (sub === 'view') {
       modal.addComponents(addInput('symbol', 'Stock symbol', TextInputStyle.Short, true, 'LOE'));
@@ -553,9 +645,37 @@ function buildModal(actionId) {
     }
   }
 
+  // Contracts
+  if (actionId.startsWith('contracts:')) {
+    const sub = actionId.split(':')[1];
+    setTitle(`Contracts: ${sub}`);
+
+    if (sub === 'settings') {
+      modal.addComponents(
+        addInput('auto_enabled', 'Auto contracts', TextInputStyle.Short, true, 'true / false'),
+        addInput('auto_rotate', 'Auto rotate', TextInputStyle.Short, true, 'true / false'),
+        addInput('community_mode', 'Community mode', TextInputStyle.Short, true, 'random / co_op / competitive'),
+        addInput('daily', 'Daily post settings', TextInputStyle.Paragraph, false, 'enabled=true\nchannel_id=1449217901306581074'),
+        addInput('personal', 'Personal contract settings', TextInputStyle.Paragraph, true, 'enabled=true\nslots=3')
+      );
+      return modal;
+    }
+
+    if (sub === 'start') {
+      modal.addComponents(
+        addInput('template_id', 'Template ID (blank = random from mode)', TextInputStyle.Short, false, 'co_op_shift_surge'),
+        addInput('mode', 'Mode (random / co_op / competitive)', TextInputStyle.Short, false, 'random'),
+        addInput('duration_hours', 'Duration hours (blank = template)', TextInputStyle.Short, false, '48'),
+        addInput('numbers', 'Numeric overrides', TextInputStyle.Paragraph, false, 'target=100\nreward_pool=25000\npenalty_amount=2000\nstandings_rewards=12000,7000,4000\nopt_in=false'),
+        addInput('title', 'Title override (blank = template)', TextInputStyle.Short, false, 'Citywide Push')
+      );
+      return modal;
+    }
+  }
+
   // Rift
   if (actionId.startsWith('rift:')) {
-    modal.setTitle(`Rift: ${actionId.split(':')[1]}`);
+    setTitle(`Rift: ${actionId.split(':')[1]}`);
     if (actionId === 'rift:schedule') {
       modal.addComponents(addInput('unix', 'Next spawn unix (seconds)', TextInputStyle.Short, true, String(nowUnix() + 3600)));
       return modal;
@@ -664,6 +784,19 @@ async function handleInteraction(interaction) {
   } catch (e) {
     console.error('[ADMINPANEL] interaction failed:', e);
     try {
+      const content = e?.name === 'AdminPanelValidationError'
+        ? `❌ ${e.message}`
+        : '❌ Admin panel interaction failed. Check Railway logs.';
+      if (e?.name === 'AdminPanelValidationError') {
+        if (interaction.deferred) {
+          await interaction.editReply({ content, flags: MessageFlags.Ephemeral });
+        } else if (interaction.replied) {
+          await interaction.followUp({ content, flags: MessageFlags.Ephemeral });
+        } else {
+          await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+        }
+        return true;
+      }
       if (interaction.deferred || interaction.replied) {
         await interaction.followUp({ content: '❌ Admin panel interaction failed. Check Railway logs.', flags: MessageFlags.Ephemeral });
       } else {
@@ -695,6 +828,97 @@ async function runActionFromId({ interaction, actionId, fields }) {
       } catch (_) {}
     }
   };
+
+  // CONTRACTS
+  if (actionId.startsWith('contracts:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'status') {
+      const settings = await contracts.getSettings(guild.id);
+      const active = await contracts.getActiveCommunityContract(guild.id);
+      const lines = [
+        `📜 **Contracts Status**`,
+        `• Auto contracts: **${settings.autoEnabled ? 'ON' : 'OFF'}**`,
+        `• Auto rotate: **${settings.autoRotate ? 'ON' : 'OFF'}**`,
+        `• Mode: **${settings.communityMode}**`,
+        `• Daily posts: **${settings.dailyPostEnabled ? 'ON' : 'OFF'}**`,
+        `• Daily channel: ${settings.dailyPostChannelId ? `<#${settings.dailyPostChannelId}>` : 'Not set'}`,
+        `• Personal contracts: **${settings.personalEnabled ? 'ON' : 'OFF'}** (${settings.personalSlots} slots)`,
+      ];
+      if (active) {
+        lines.push('', `**Active Community Contract**`, `• ${active.title} (${active.type})`, `• Metric: ${active.metric}`, `• Progress: ${active.progress}/${active.target}`, `• Ends: <t:${Math.floor(new Date(active.ends_at).getTime() / 1000)}:R>`);
+      } else {
+        lines.push('', 'No active community contract.');
+      }
+      return safeReply(lines.join('\n'));
+    }
+
+    if (sub === 'toggle_auto') {
+      const current = await contracts.getSettings(guild.id);
+      const next = await contracts.updateSettings(guild.id, { autoEnabled: !current.autoEnabled });
+      return safeReply(`✅ Auto contracts are now **${next.autoEnabled ? 'ON' : 'OFF'}**.`);
+    }
+
+    if (sub === 'settings') {
+      const kv = parseKeyValueLines(fields.personal || '');
+      const daily = parseKeyValueLines(fields.daily || '');
+      const current = await contracts.getSettings(guild.id);
+      const dailyChannelRaw = daily.channel_id ?? fields.daily_post_channel_id ?? current.dailyPostChannelId ?? '';
+      const dailyChannelId = cleanId(dailyChannelRaw);
+      const personalSlots = parseOptionalNumber(kv.slots ?? current.personalSlots, 'personal slots', { min: 1, max: 10 }) ?? current.personalSlots;
+      const next = await contracts.updateSettings(guild.id, {
+        autoEnabled: parseBool(fields.auto_enabled, current.autoEnabled),
+        autoRotate: parseBool(fields.auto_rotate, current.autoRotate),
+        communityMode: normalizeContractMode(fields.community_mode || current.communityMode),
+        dailyPostEnabled: parseBool(daily.enabled, current.dailyPostEnabled),
+        dailyPostChannelId: dailyChannelId || null,
+        personalEnabled: parseBool(kv.enabled, current.personalEnabled),
+        personalSlots,
+      });
+      return safeReply(`✅ Contracts settings updated.\n• Auto: **${next.autoEnabled ? 'ON' : 'OFF'}**\n• Rotate: **${next.autoRotate ? 'ON' : 'OFF'}**\n• Mode: **${next.communityMode}**\n• Daily posts: **${next.dailyPostEnabled ? 'ON' : 'OFF'}**\n• Daily channel: ${next.dailyPostChannelId ? `<#${next.dailyPostChannelId}>` : 'Not set'}\n• Personal: **${next.personalEnabled ? 'ON' : 'OFF'}** (${next.personalSlots} slots)`);
+    }
+
+    if (sub === 'start') {
+      const nums = parseKeyValueLines(fields.numbers || '');
+      const overrides = {
+        templateId: String(fields.template_id || '').trim() || null,
+        mode: normalizeContractMode(fields.mode),
+        durationHours: parseOptionalNumber(fields.duration_hours, 'duration_hours', { min: 1, max: 720 }),
+        target: parseOptionalNumber(nums.target, 'target', { min: 1 }),
+        rewardPool: parseOptionalNumber(nums.reward_pool, 'reward_pool', { min: 0 }),
+        penaltyAmount: parseOptionalNumber(nums.penalty_amount, 'penalty_amount', { min: 0 }),
+        standingsRewards: parseCsvNumbers(nums.standings_rewards, 'standings_rewards'),
+        optIn: nums.opt_in == null ? undefined : parseBool(nums.opt_in, false),
+        title: String(fields.title || '').trim() || undefined,
+      };
+      const res = await contracts.createCommunityContract(guild.id, {
+        ...overrides,
+      });
+      if (!res.ok) {
+        if (res.reason === 'already_active') return safeReply('⚠️ A community contract is already active. Stop or rotate it first.');
+        return safeReply(`❌ Could not start a contract: ${res.reason}`);
+      }
+      return safeReply(`✅ Started **${res.contract.title}** (${res.contract.type}).`);
+    }
+
+    if (sub === 'stop') {
+      const res = await contracts.stopCommunityContract(guild.id);
+      if (!res.ok) return safeReply('⚠️ There is no active community contract to stop.');
+      return safeReply('🛑 Active community contract stopped.');
+    }
+
+    if (sub === 'rotate') {
+      const res = await contracts.forceRotateCommunity(guild.id);
+      if (res?.contract) return safeReply(`🔄 Rotated contracts. New active contract: **${res.contract.title}**.`);
+      return safeReply('🔄 Rotation triggered, but no new contract could be started.');
+    }
+
+    if (sub === 'post_daily') {
+      const res = await contracts.postDailyUpdate(interaction.client, guild.id, true);
+      if (!res.ok) return safeReply(`⚠️ Could not post the daily contract update: ${res.reason}`);
+      return safeReply('✅ Daily contract update posted.');
+    }
+  }
 
   // BOT GAMES (Random Events)
   if (actionId.startsWith('botgames:')) {
@@ -858,6 +1082,44 @@ async function runActionFromId({ interaction, actionId, fields }) {
     }
   }
 
+
+  // ENTERPRISES
+  if (actionId.startsWith('enterprises:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'season_status') {
+      await seasonControl.ensureSeasonStateLoaded(guild.id);
+      const summary = seasonControl.getSeasonStateSummary(guild.id);
+      const lines = [
+        `🌾 **Enterprise Season Status**`,
+        `• Current season: **${summary.season}**`,
+        `• Next season: **${summary.nextSeason}**`,
+        `• Weekly rollover: <t:${Math.floor(summary.nextWeekStartUtcMs / 1000)}:F>`,
+        `• Timezone: **Australia/Brisbane**`,
+        `• Manual skips applied: **${summary.manualOffsetWeeks}**`,
+      ];
+      if (summary.lastAdvancedAt) {
+        lines.push(`• Last manual skip: <t:${Math.floor(Number(summary.lastAdvancedAt) / 1000)}:R>`);
+      }
+      return safeReply(lines.join('\n'));
+    }
+
+    if (sub === 'next_season') {
+      const before = await seasonControl.ensureSeasonStateLoaded(guild.id).then(() => seasonControl.getSeasonStateSummary(guild.id));
+      const after = await seasonControl.advanceToNextSeason(guild.id, 1);
+      const rollover = await farming.applySeasonRolloverToAllFarms(guild.id);
+      await require('./farming/weather').ensureDailyWeatherState(guild.id);
+      return safeReply([
+        `✅ Farming season advanced.`,
+        `• ${before.season} → **${after.season}**`,
+        `• Next weekly rollover: <t:${Math.floor(after.nextWeekStartUtcMs / 1000)}:F>`,
+        `• Farms updated: **${rollover.changedCount}**`,
+      ].join('\n'));
+    }
+
+    return safeReply('❌ Unknown enterprises admin action.');
+  }
+
   // ECONOMY
   if (actionId === 'economy:serverbal') {
     return runLegacyCommand({ interaction, commandFile: getLegacy('serverbal') });
@@ -928,6 +1190,45 @@ async function runActionFromId({ interaction, actionId, fields }) {
       commandFile: getLegacy('purge'),
       values: { amount: Number(fields.amount) },
     });
+  }
+
+  if (actionId === 'moderation:purge_schedule') {
+    const channel = await channelFromField('channel_id');
+    if (!channel) return interaction.editReply('❌ Could not resolve that channel. Use Channel ID or #channel mention.');
+
+    try {
+      const job = await channelPurger.scheduleFromAdmin(interaction, {
+        channel,
+        frequencyHours: fields.frequency_hours,
+        mode: fields.mode,
+      });
+      return interaction.editReply({
+        content: `✅ Scheduled purge for <#${job.channel_id}>.\n\n${channelPurger.formatScheduleLine(job)}\n\nThis keeps the same channel ID and deletes messages inside the existing channel.`,
+        flags: MessageFlags.Ephemeral,
+      });
+    } catch (error) {
+      return interaction.editReply(`❌ ${error.message || 'Could not schedule that purge.'}`);
+    }
+  }
+
+  if (actionId === 'moderation:purge_status') {
+    try {
+      const job = await channelPurger.getStatus(interaction.client, guild.id);
+      if (!job) return safeReply('ℹ️ No scheduled purge is configured for this server.');
+      return safeReply(`🧹 **Scheduled Purge Status**\n\n${channelPurger.formatScheduleLine(job)}\n\nChannel ID will stay the same when this runs.`);
+    } catch (error) {
+      return safeReply(`❌ ${error.message || 'Could not load purge status.'}`);
+    }
+  }
+
+  if (actionId === 'moderation:purge_disable') {
+    try {
+      const job = await channelPurger.disableJob(interaction.client, guild.id);
+      if (!job) return safeReply('ℹ️ No scheduled purge was configured for this server.');
+      return safeReply(`✅ Disabled scheduled purge for <#${job.channel_id}>.`);
+    } catch (error) {
+      return safeReply(`❌ ${error.message || 'Could not disable the purge schedule.'}`);
+    }
   }
 
   if (actionId === 'moderation:setheat') {

@@ -480,8 +480,10 @@ async function maybeSeedJackpot(guildId, nowMs, drawUtcMs) {
   return { seeded };
 }
 
-async function upsertWeeklyPost(client, guildId) {
-  if (!config.enabled) return;
+async function upsertWeeklyPost(client, guildId, options = {}) {
+  if (!config.enabled) return false;
+
+  const onlyIfChannelId = options.onlyIfChannelId ? String(options.onlyIfChannelId) : null;
 
   const drawUtc = nextDrawUtcMs();
   const drawKey = drawKeyFromDrawUtc(drawUtc);
@@ -491,9 +493,11 @@ async function upsertWeeklyPost(client, guildId) {
   const st = await getState(guildId);
   const ticketsSold = await countTickets(guildId, drawKey);
 
-  const channelId = st.post_channel_id || config.channelId;
+  const channelId = String(st.post_channel_id || config.channelId);
+  if (onlyIfChannelId && channelId !== onlyIfChannelId) return false;
+
   const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel) return;
+  if (!channel) return false;
 
   const embed = buildWeeklyEmbed({
     drawUtc,
@@ -510,9 +514,15 @@ async function upsertWeeklyPost(client, guildId) {
     const msg = await channel.send({ embeds: [embed], components: [row] });
     await setState(guildId, { post_message_id: msg.id, post_channel_id: channelId });
     if (oldMessageId) await channel.messages.delete(oldMessageId).catch(() => {});
+    return true;
   } catch (e) {
     console.error("[LOTTERY] post failed:", e);
+    return false;
   }
+}
+
+async function repostCurrentPost(client, guildId, options = {}) {
+  return upsertWeeklyPost(client, guildId, options);
 }
 
 function msUntilNextRefresh(nowMs = Date.now()) {
@@ -944,5 +954,6 @@ module.exports = {
   countUserTickets,
   listUserTickets,
   listTicketBuyers,
-  runDraw
+  runDraw,
+  repostCurrentPost
 };

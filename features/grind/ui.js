@@ -23,11 +23,7 @@ function safeDesc(s) {
   return t.slice(0, 97) + "...";
 }
 
-function statusLineFromCooldown(cooldownUnix) {
-  return cooldownUnix ? `⏳ Next payout: <t:${cooldownUnix}:R>` : "✅ Ready for payout.";
-}
-
-function progressBar(value, size = 16) {
+function progressBar(value, size = 10) {
   return renderProgressBar(value, 100, { length: size });
 }
 
@@ -35,7 +31,7 @@ function cdLine(label, unixTs) {
   return unixTs ? `⏳ ${label}: <t:${unixTs}:R>` : `✅ ${label}: Ready`;
 }
 
-function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
+function buildGrindEmbed({ fatigueInfo, cooldowns = {} } = {}) {
   const list = grindIndex?.list || [];
   const jobs = grindIndex?.jobs || {};
 
@@ -43,10 +39,13 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
     .map((key) => {
       const cfg = jobs[key];
       if (!cfg) return null;
-      return `• **${cfg.title || key}** - ${cfg.desc || ""}`.trim();
+      return [
+        `• **${cfg.title || key}** - ${cfg.desc || ""}`,
+        cdLine("Available", cooldowns[key]),
+      ].join("\n").trim();
     })
     .filter(Boolean)
-    .join("\n");
+    .join("\n\n");
 
   const fatigueMs = Number(fatigueInfo?.fatigueMs || 0);
   const fb = grindFatigueBar ? grindFatigueBar(fatigueMs) : { pct: 0, bar: "" };
@@ -63,10 +62,8 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
     : [
         `🧠 Fatigue: **${fb.pct}** / 100`,
         `${progressBar(fb.pct)}`,
-        `🧃 Recovering: ${fatigueInfo?.exhausted ? "🥵 Exhausted (rest a bit)" : "Ready"}`,
+        `🧃 Recovering: ${fatigueInfo?.exhausted ? "Exhausted (rest a bit)" : "Ready"}`,
       ].join("\n");
-
-  const cdLines = [cdLine("Grind lockout", lockUnix)].join("\n");
 
   return new EmbedBuilder()
     .setTitle(grindIndex.category?.title || "🕒 Grind")
@@ -74,12 +71,7 @@ function buildGrindEmbed({ cooldownUnix, fatigueInfo } = {}) {
       [
         "Pick a job. Fatigue only affects **Grind** jobs.",
         "",
-        statusLineFromCooldown(cooldownUnix),
-        "",
         fatigueBlock,
-        "",
-        "**Cooldowns:**",
-        cdLines,
       ].join("\n")
     )
     .addFields({ name: "Jobs", value: lines || "No jobs configured." })
@@ -97,7 +89,8 @@ function buildGrindComponents(disabled = false) {
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒", default: true },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );

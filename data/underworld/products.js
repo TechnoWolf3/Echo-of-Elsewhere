@@ -1,0 +1,32 @@
+module.exports = {
+  cocaine: {
+    id: "cocaine",
+    label: "Cocaine",
+    unitLabel: "bricks",
+    producedSellValue: 4200,
+    purchasedCost: 3100,
+    purchasedSellValue: 3900,
+    baseSuspicionPerUnit: 0.14,
+    baseRisk: 1.2,
+  },
+  meth: {
+    id: "meth",
+    label: "Meth",
+    unitLabel: "bags",
+    producedSellValue: 3200,
+    purchasedCost: 2350,
+    purchasedSellValue: 3000,
+    baseSuspicionPerUnit: 0.11,
+    baseRisk: 1.0,
+  },
+  mixed_contraband: {
+    id: "mixed_contraband",
+    label: "Mixed Contraband",
+    unitLabel: "crates",
+    producedSellValue: 2400,
+    purchasedCost: 1850,
+    purchasedSellValue: 2250,
+    baseSuspicionPerUnit: 0.09,
+    baseRisk: 0.85,
+  },
+};

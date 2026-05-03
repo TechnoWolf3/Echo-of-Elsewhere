@@ -3,13 +3,14 @@ module.exports = {
   key: "prostitute",
   title: "🎲 Prostitute",
   rounds: 4,
+  cooldownSeconds: 10 * 60,
 
   risk: {
     start: 0,
-    failAt: 100,
+    payoutVariancePct: 5,
   },
 
-  payout: { min: 1000, max: 5000 },
+  payout: { min: 4000, max: 6000 },
   xp: { success: 18, fail: 6 },
 
   // Each choice affects risk + payout multiplier

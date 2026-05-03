@@ -4,15 +4,16 @@ module.exports = {
   title: "💬 Flirt",
   rounds: 5,
   failOnWrongs: 2,
+  cooldownSeconds: 5 * 60,
 
-  payout: { min: 900, max: 2200 },
+  payout: { min: 2000, max: 3000 },
   xp: { success: 14, fail: 4 },
 
   // payout modifiers applied at end
   modifiers: {
-    goodBonusPct: 8,      // per good pick
+    goodBonusPct: 0,      // per good pick
     neutralBonusPct: 0,
-    wrongPenaltyPct: 12,  // per wrong pick
+    wrongPenaltyPct: 0,  // per wrong pick
   },
 
   // Scenario pool — non-repeating within a single session

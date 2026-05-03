@@ -30,6 +30,8 @@ const { previewMoneyEffect, consumeEffectUse, maybeAwardEffectFromActivity, hand
 const { unlockAchievement } = require("../../utils/achievementEngine");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
+const { recordProgress: recordContractProgress } = require("../../utils/contracts");
+const ui = require("../../utils/ui");
 
 const {
   getUserCasinoSecurity,
@@ -40,6 +42,12 @@ const {
 } = require("../../utils/casinoSecurity");
 
 const MIN_BET = 500;
+
+async function recordCasinoContractProgress(guildId, userId, { played = 0, wins = 0, profit = 0 } = {}) {
+  if (played > 0) await recordContractProgress({ guildId, userId, metric: "casino_games_played", amount: played }).catch(() => {});
+  if (wins > 0) await recordContractProgress({ guildId, userId, metric: "casino_wins", amount: wins }).catch(() => {});
+  if (profit > 0) await recordContractProgress({ guildId, userId, metric: "casino_profit", amount: Math.floor(profit) }).catch(() => {});
+}
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -703,17 +711,33 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
       const paidText = paid > 0 ? ` → Paid **$${paid.toLocaleString()}**` : "";
       const jailText = jailNote ? `
 ↳ ${jailNote}` : "";
-      resultsLines.push(`${p.user}${handTag} — **${pv}** — ${label}${paidText}${jailText}`);
+      await recordCasinoContractProgress(guildId, p.userId, {
+        played: 1,
+        wins: (p.result === "win" || p.result === "blackjack_win") && paid > B ? 1 : 0,
+        profit: Math.max(0, paid - B),
+      });
+      resultsLines.push(ui.entryBlock(`${p.user}${handTag}`, [
+        `Bet: $${B.toLocaleString()}`,
+        `Hand: ${pv}`,
+        `Result: ${label}`,
+        paid > 0 ? `Payout: $${paid.toLocaleString()}` : "Payout: $0",
+        jailText.trim(),
+      ]));
     }
 
     const dealerLine = `${dealerHand.map(cardStr).join(" ")} (**${dealerValue}**)`;
-    const desc =
-      `**Dealer:** ${dealerLine}\n\n` +
-      resultsLines.join("\n") +
-      (payoutNotes.length ? `\n\n${payoutNotes.join("\n")}` : "");
+    const desc = [
+      "The table settles its debts.",
+      "",
+      ui.sectionBlock("Dealer", `Hand: ${dealerLine}`),
+      "",
+      ui.sectionBlock("Results", resultsLines.join("\n\n")),
+      payoutNotes.length ? "" : null,
+      payoutNotes.length ? ui.sectionBlock("Payouts", payoutNotes.join("\n")) : null,
+    ].filter(Boolean).join("\n");
 
     session.resultsMessage = await session.channel.send({
-      embeds: [{ title: "🃏 Blackjack Results", description: desc }],
+      embeds: [new EmbedBuilder().setTitle("🃏 Blackjack Results").setDescription(desc).setColor(ui.colors.casino)],
     });
 
     collector.stop("game_finished");

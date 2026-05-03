@@ -5,7 +5,10 @@ module.exports = {
   footer: "Succeed for full pay. Fail for a tiny payout.",
 
   // Timing
-  timeLimitMs: 12_000,
+  timeLimitMs: 18_000,
+  memoriseMs: 3_500,
+  cooldownSeconds: 5 * 60,
+  patternLength: 3,
 
   // Choices
   emojis: ["🟥", "🟦", "🟩", "🟨"],
@@ -17,7 +20,7 @@ module.exports = {
   },
 
   payout: {
-    success: { min: 650, max: 1600 },
+    success: { min: 2000, max: 4000 },
     fail: { min: 50, max: 220 },
   },
 

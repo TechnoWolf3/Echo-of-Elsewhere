@@ -3,6 +3,7 @@ module.exports = {
   key: "lapDance",
   title: "💃 Lap Dance",
   rounds: 5,
+  cooldownSeconds: 7 * 60,
 
   // recoverable mistakes
   penalties: {
@@ -11,7 +12,7 @@ module.exports = {
     smoothRemoves: 1,   // if smooth chosen, remove 1 token (min 0)
   },
 
-  payout: { min: 1000, max: 3000 },
+  payout: { min: 4000, max: 5000 },
   xp: { success: 16, fail: 5 },
 
   // Each round: choose a move — tags are hidden

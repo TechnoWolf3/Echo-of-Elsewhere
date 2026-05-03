@@ -1,6 +1,7 @@
 const { pool } = require('./db');
 const { ensureUser } = require('./economy');
 const { creditUserWithEffects } = require('./effectSystem');
+const { recordProgress: recordContractProgress } = require('./contracts');
 
 function getSydneyParts(date = new Date(), extra = {}) {
   return new Intl.DateTimeFormat('en-AU', {
@@ -118,6 +119,9 @@ async function claimRitual({ guildId, userId, ritual }) {
     activityEffects: ritual.activityEffects,
     awardSource: ritual.awardSource || ritual.id,
   });
+
+  await recordContractProgress({ guildId, userId, metric: 'rituals_completed', amount: 1 }).catch(() => {});
+  await recordContractProgress({ guildId, userId, metric: 'ritual_earnings', amount: payout.finalAmount || amount }).catch(() => {});
 
   const lines = [ritual.claimText({ amount: payout.finalAmount, baseAmount: amount, nextClaimAt })];
   if (payout?.awardResult?.notice) lines.push('', payout.awardResult.notice);

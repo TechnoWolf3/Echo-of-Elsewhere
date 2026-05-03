@@ -9,24 +9,217 @@ module.exports = {
   commands: [
     {
       id: "jobsHub",
-      name: "/jobs",
-      short: "Open the jobs hub.",
+      name: "/job",
+      short: "Open the job and enterprise hub.",
       detail:
-        "**/jobs**\n" +
-        "Opens the jobs hub where you can pick a category and start a job.\n\n" +
+        "**/job**\n" +
+        "Opens the job hub where you can pick work, crime, grind jobs, Nightwalker jobs, enterprises, farming, and Underworld paths.\n\n" +
         "**Categories:**\n" +
         "🧰 **Work a 9-5** – safe, structured income.\n" +
         "🧠 **Nightwalker** – adult-themed income with higher risk.\n" +
         "🕒 **Grind** – steady, repeatable work, but builds **Fatigue**\n" +
-        "🕶️ **Crime** – bigger payouts, but builds **Heat**.\n\n" +
+        "🕶️ **Crime** – bigger payouts, but builds **Heat**.\n" +
+        "🏢 **Enterprises** – longer-term systems such as Farming.\n" +
+        "🧪 **Underworld** – persistent illegal operations with serious risk.\n\n" +
         "**Quick How-To:**\n" +
-        "- Run **/jobs**\n" +
+        "- Run **/job**\n" +
         "- Select a category\n" +
         "- Pick a job from the list\n" +
         "- Follow the buttons/prompts to complete it\n\n" +
         "Heads up: **Heat only affects Crime jobs.**",
     },
-
+    {
+      id: "farming",
+      name: "Enterprise - Farming",
+      short: "Overview of the farming enterprise.",
+      detail:
+        "**Farming**\n" +
+        "Farming lives under **/job** -> **Enterprises**. It is a slower progression path built around land, crops, machinery, barns, weather, supplies, livestock, and market selling.\n\n" +
+        "**Main areas:**\n" +
+        "- Farming hub: overview, plot status, weather, market, store, and machine shed\n" +
+        "- Fields: cultivate, seed, harvest, fertilise, upgrade, or convert to barns\n" +
+        "- Farm Market: sell harvested farm inventory\n" +
+        "- Farm Store: buy fertiliser and animal husbandry items\n" +
+        "- Machine Shed: buy, rent, and sell machinery\n" +
+        "- Barns: collect produce, restock, slaughter, breed, upgrade, or demolish",
+    },
+    {
+      id: "farmingFieldsCrops",
+      name: "Farming How-To - Fields & Crops",
+      short: "Buy land, cultivate, plant, harvest, and upgrade fields.",
+      detail:
+        "**Fields & Crops**\n" +
+        "Fields are the crop-growing side of farming.\n\n" +
+        "**How to grow crops:**\n" +
+        "- Open **/job** -> **Enterprises** -> **Farming**\n" +
+        "- Buy a field if you need land\n" +
+        "- Open a field and cultivate it if needed\n" +
+        "- Pick a crop from the seasonal crop list\n" +
+        "- Wait for the seeding and growth timers\n" +
+        "- Harvest when the crop is ready\n" +
+        "- Sell produce through the Farm Market\n\n" +
+        "**Important:** Crops are limited by field level and season. Field upgrades are timed tasks, and the new level applies only when the upgrade completes.",
+    },
+    {
+      id: "farmingMachines",
+      name: "Farming How-To - Machine Shed",
+      short: "Use machinery for field tasks.",
+      detail:
+        "**Machine Shed**\n" +
+        "Most field work needs machinery. The Machine Shed is where players manage equipment.\n\n" +
+        "**What you can do:**\n" +
+        "- Buy machines for permanent use\n" +
+        "- Rent machines for short-term access\n" +
+        "- Sell owned machines for partial value\n" +
+        "- Browse machine categories and see supported task types\n\n" +
+        "Active field tasks reserve the machines they use. Busy machines cannot be reused or sold until the task finishes. Better compatible machine sets can shorten field task durations.",
+    },
+    {
+      id: "farmingStoreFertiliser",
+      name: "Farming How-To - Store & Fertiliser",
+      short: "Buy farm supplies and apply fertiliser at the right time.",
+      detail:
+        "**Farm Store & Fertiliser**\n" +
+        "The Farm Store is a category hub for farming supplies.\n\n" +
+        "**Fertiliser:**\n" +
+        "- Open **Store** from the farming hub\n" +
+        "- Choose **Fertiliser**\n" +
+        "- Select a fertiliser and enter a quantity to buy\n" +
+        "- Apply it from a field page during a valid growth window\n\n" +
+        "Fertiliser can only be applied while a crop is growing, either in the first 10% of growth or after 75% growth before ready. Effects can shorten growth, increase yield, or provide a mix of both.",
+    },
+    {
+      id: "farmingBarnsLivestock",
+      name: "Farming How-To - Barns & Livestock",
+      short: "Convert fields into barns and manage animal production.",
+      detail:
+        "**Barns & Livestock**\n" +
+        "Barns turn fields into animal production.\n\n" +
+        "**How barns work:**\n" +
+        "- Open an empty cultivated field\n" +
+        "- Choose a barn type: Chicken Coop, Sheep Barn, or Dairy Barn\n" +
+        "- The new barn starts at level 1\n" +
+        "- Collect produce when production cycles are ready\n" +
+        "- Restock an empty barn, slaughter animals, upgrade the barn, or demolish it back into a field\n\n" +
+        "Converting field to barn resets the barn to level 1. Demolishing barn to field resets the field to level 1. Barn upgrades are timed, and production pauses while an upgrade is active.",
+    },
+    {
+      id: "farmingHusbandry",
+      name: "Farming How-To - Animal Husbandry",
+      short: "Breed animals and manage young livestock.",
+      detail:
+        "**Animal Husbandry**\n" +
+        "Animal Husbandry items let players increase barn animal counts without restocking from empty.\n\n" +
+        "**How to breed animals:**\n" +
+        "- Buy a matching husbandry item from **Farm Store** -> **Animal Husbandry**\n" +
+        "- Open the matching barn\n" +
+        "- Make sure the barn has at least two adult animals\n" +
+        "- Make sure there is free barn capacity\n" +
+        "- Use the breed dropdown on the barn page\n\n" +
+        "Young animals count toward capacity but do not produce until they mature. Higher barn levels increase capacity, which lets players hold more animals and earn more produce once they are adults.",
+    },
+    {
+      id: "farmingWeatherMarket",
+      name: "Farming How-To - Weather, Seasons & Market",
+      short: "Understand seasons, weather effects, and selling produce.",
+      detail:
+        "**Weather, Seasons & Market**\n" +
+        "Farming changes over time through seasons, weather, and market prices.\n\n" +
+        "**Seasons:** Only crops valid for the current season can be planted.\n" +
+        "**Weather:** Clear weather is neutral, rain can help yields, heatwaves and frost can reduce crop output, and storms can damage fields.\n" +
+        "**Market:** Harvested crops and barn outputs become inventory items. Open **Market** from the farming hub to sell farm stock using current market pricing.\n\n" +
+        "Farming also feeds contract progress through planted fields and harvested quantities.",
+    },
+    {
+      id: "underworld",
+      name: "Underworld",
+      short: "Persistent illegal operations with buildings, runs, suspicion, and raids.",
+      detail:
+        "**Underworld**\n" +
+        "Underworld lives under **/job** -> **Underworld**. It is a high-cost, high-risk path built around persistent buildings and illegal operations.\n\n" +
+        "**Live branch:** Operations.\n" +
+        "**Scaffolded for later:** Smuggling and Fronts.\n\n" +
+        "**Main areas:**\n" +
+        "- Buy warehouse buildings\n" +
+        "- Convert buildings into operations\n" +
+        "- Start paid runs\n" +
+        "- Respond to live events\n" +
+        "- Choose distribution risk\n" +
+        "- Manage suspicion, raids, dismantling, and storage goods",
+    },
+    {
+      id: "underworldBuildings",
+      name: "Underworld How-To - Buildings & Conversion",
+      short: "Buy warehouses and install an operation.",
+      detail:
+        "**Buildings & Conversion**\n" +
+        "Buildings are the foundation of Underworld operations.\n\n" +
+        "**How to start:**\n" +
+        "- Open **/job** -> **Underworld** -> **Operations**\n" +
+        "- Buy a warehouse shell: Small, Medium, or Large Warehouse\n" +
+        "- Inspect the building\n" +
+        "- Convert it into an operation: Meth Lab, Cocaine Lab, or Storage House\n" +
+        "- Wait for the conversion timer to complete\n\n" +
+        "Purchases and conversions use bank money and add money to the server bank. Larger buildings cost more, hold more capacity, and carry more risk.",
+    },
+    {
+      id: "underworldRuns",
+      name: "Underworld How-To - Runs & Events",
+      short: "Start operation runs and handle live events.",
+      detail:
+        "**Runs & Events**\n" +
+        "Once a building has an operation installed, it can start paid runs.\n\n" +
+        "**How runs work:**\n" +
+        "- Inspect a converted building\n" +
+        "- Press **Start Operation**\n" +
+        "- Pay the batch cost from bank money\n" +
+        "- Wait while the run progresses\n" +
+        "- Respond to live events before their window closes\n" +
+        "- Finish the run and distribute the result when ready\n\n" +
+        "Live events can change output, suspicion, payout, and raid chance. Ignoring an event can apply automatic penalties.",
+    },
+    {
+      id: "underworldDistribution",
+      name: "Underworld How-To - Distribution & Raids",
+      short: "Pick safe, standard, or aggressive distribution and manage raid risk.",
+      detail:
+        "**Distribution & Raids**\n" +
+        "When a run is ready, distribution decides how hard the operation pushes the result to market.\n\n" +
+        "**Distribution modes:**\n" +
+        "- **Safe:** lower payout, lower suspicion and raid chance\n" +
+        "- **Standard:** balanced payout and risk\n" +
+        "- **Aggressive:** higher payout, higher suspicion and raid chance\n\n" +
+        "Raid outcomes can cut payout, wipe payout, add suspicion, or trigger a full bust. A full bust can remove the building and send the player to jail.",
+    },
+    {
+      id: "underworldStorage",
+      name: "Underworld How-To - Storage Houses",
+      short: "Generate stored goods, cool them off, and sell carefully.",
+      detail:
+        "**Storage Houses**\n" +
+        "Storage Houses create fenced goods instead of an immediate lab-style payout.\n\n" +
+        "**How storage works:**\n" +
+        "- Convert a building into a Storage House\n" +
+        "- Start a paid storage run\n" +
+        "- Generated goods are stored in the building\n" +
+        "- Wait for cool-off timers before safer sale\n" +
+        "- Sell through Safe, Standard, or Aggressive distribution\n\n" +
+        "Selling early can reduce payout, add suspicion, increase raid chance, and may trigger a stolen-goods report. If storage is full, sell goods before starting another storage run.",
+    },
+    {
+      id: "underworldSuspicionDismantle",
+      name: "Underworld How-To - Suspicion & Dismantling",
+      short: "Lower pressure, dismantle operations, or emergency clear a building.",
+      detail:
+        "**Suspicion & Dismantling**\n" +
+        "Suspicion is tracked per building and affects raid pressure and liquidation value.\n\n" +
+        "Suspicion decays slowly over time, but events, aggressive choices, raids, storage reports, and early sales can raise it again.\n\n" +
+        "**Dismantling:**\n" +
+        "- Normal dismantle clears the installed setup and can return part of invested setup money\n" +
+        "- Higher suspicion lowers the refund\n" +
+        "- Emergency dismantle is harsher and pays much less, but can be used as a panic button\n\n" +
+        "Dismantling clears the current operation setup and storage, so it should be treated as a serious reset.",
+    },
     // =========================
     // WORK A 9-5
     // =========================
@@ -39,7 +232,7 @@ module.exports = {
         "These jobs are built for steady progression and consistent income.\n" +
         "Lower risk, cleaner payouts, and a simple loop.\n\n" +
         "**Quick How-To:**\n" +
-        "- Open **/jobs** → **Work a 9-5**\n" +
+        "- Open **/job** → **Work a 9-5**\n" +
         "- Choose a job\n" +
         "- Complete the prompt/action and collect payout",
     },
@@ -96,7 +289,7 @@ module.exports = {
         "A riskier income path with a darker, late-night vibe.\n" +
         "Higher reward potential, but you’re playing closer to the edge.\n\n" +
         "**Quick How-To:**\n" +
-        "- Open **/jobs** → **Nightwalker**\n" +
+        "- Open **/job** → **Nightwalker**\n" +
         "- Pick a job\n" +
         "- Complete the prompt/action and collect payout",
     },
@@ -153,7 +346,7 @@ module.exports = {
         "Repeatable, low-risk work designed for steady income.\n" +
         "These jobs are all about consistency over big swings.\n\n" +
         "**Quick How-To:**\n" +
-        "- Open **/jobs** → **Grind**\n" +
+        "- Open **/job** → **Grind**\n" +
         "- Choose a job\n" +
         "- Complete the prompt/action and collect payout",
     },
@@ -220,7 +413,7 @@ module.exports = {
         "Crime jobs offer bigger payouts, but they build **Heat**.\n" +
         "More heat means higher risk on future crime attempts.\n\n" +
         "**Quick How-To:**\n" +
-        "- Open **/jobs** → **Crime**\n" +
+        "- Open **/job** → **Crime**\n" +
         "- Choose a crime\n" +
         "- Complete the prompt/action\n" +
         "- Watch your Heat — it stacks",
@@ -290,6 +483,21 @@ module.exports = {
         "- Select **Major Heist**\n" +
         "- Complete the prompt/action\n" +
         "- Get paid if you survive the consequences",
+    },
+    {
+      id: "jail",
+      name: "/jail",
+      short: "Open the jail hub while serving a sentence.",
+      detail:
+        "**/jail**\n" +
+        "Opens your jail panel if you are currently jailed.\n\n" +
+        "**What you can do:**\n" +
+        "- Pay fixed wallet-only bail based on the original sentence\n" +
+        "- Work prison details for Prison Money and small sentence reductions\n" +
+        "- Buy contraband with Prison Money only\n" +
+        "- Attempt escape for a high-risk instant release\n" +
+        "- Use the Card Table if you own a Deck of Cards or another player is jailed\n\n" +
+        "**Important:** Prison Money is session-only. Leftover Prison Money converts to wallet cash when you are released. Work and contraband reductions cannot remove the whole sentence.",
     },
   ],
 };

@@ -14,7 +14,22 @@ const { setJail } = require("../../utils/jail");
 const { grantInventoryQty } = require("../../utils/store");
 const lottery = require("../../utils/lottery");
 
-const COST = 30000;
+let recordProgress = async () => {};
+try {
+  ({ recordProgress } = require('../../utils/contracts'));
+} catch (_) {}
+
+async function recordRitualContractProgress(guildId, userId, earnings = 0) {
+  try {
+    await recordProgress({ guildId, userId, metric: 'rituals_completed', amount: 1 });
+    const cash = Math.max(0, Math.floor(Number(earnings || 0)));
+    if (cash > 0) {
+      await recordProgress({ guildId, userId, metric: 'ritual_earnings', amount: cash });
+    }
+  } catch (_) {}
+}
+
+const COST = 10000;
 const BTN_SPIN = "rituals:wheel:spin";
 const BTN_BACK = "rituals:wheel:back";
 const SESSION_TTL_MS = 30 * 60 * 1000;
@@ -22,7 +37,7 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 const sessions = new Map();
 
 const SPINNER_FRAMES = [
-  "💸 +$100", "🎟️ 5 Lottery Tickets", "💥 Wheel Jam", "💰 +$3,000", "🎁 Random Item", "🎰 Jackpot", "🚓 Jail", "🌌 Void Spin",
+  "💸 +$10,000", "🎟️ 5 Lottery Tickets", "💥 Wheel Jam", "💰 +$25,000", "🎁 Random Item", "🎰 Jackpot", "🚓 Jail", "🌌 Void Spin",
   "🎟️ Casino Voucher", "🪄 Lucky Multiplier", "📦 Mystery Crate", "🔁 Spin Again", "🏦 Bank Error", "🌠 Echo's Blessing", "🏛️ Server Bank Blessing", "🃏 Echo's Prank"
 ];
 
@@ -62,17 +77,19 @@ function weightedPick(entries) {
 
 const OUTCOMES = [
   {
-    id: 'cash_100', weight: 24, category: 'small_win', label: '+$100',
+    id: 'cash_10000', weight: 24, category: 'small_win', label: '+$10,000',
     resolve: async ({ guildId, userId }) => {
-      await economy.creditUser(guildId, userId, 100, 'echo_wheel_small_cash', { ritual: 'echo_wheel' });
-      return { title: '💸 +$100', body: `A suspiciously small but very real payout drops into your hands.\n\n**${money(100)}** added to your wallet.` };
+      const amount = 10000;
+      await economy.creditUser(guildId, userId, amount, 'echo_wheel_small_cash', { ritual: 'echo_wheel' });
+      return { title: '💸 +$10,000', body: `A tidy little payout drops into your hands.\n\n**${money(amount)}** added to your wallet.`, contractEarnings: amount };
     },
   },
   {
-    id: 'cash_3000', weight: 18, category: 'small_win', label: '+$3,000',
+    id: 'cash_25000', weight: 18, category: 'small_win', label: '+$25,000',
     resolve: async ({ guildId, userId }) => {
-      await economy.creditUser(guildId, userId, 3000, 'echo_wheel_cash', { ritual: 'echo_wheel' });
-      return { title: '💰 +$3,000', body: `Not a life-changing spin, but definitely not embarrassing.\n\n**${money(3000)}** added to your wallet.` };
+      const amount = 25000;
+      await economy.creditUser(guildId, userId, amount, 'echo_wheel_cash', { ritual: 'echo_wheel' });
+      return { title: '💰 +$25,000', body: `Not a life-changing spin, but definitely not embarrassing.\n\n**${money(amount)}** added to your wallet.`, contractEarnings: amount };
     },
   },
   {
@@ -108,8 +125,9 @@ const OUTCOMES = [
   {
     id: 'wheel_damage', weight: 8, category: 'bad', label: 'Damage the wheel',
     resolve: async ({ guildId, userId }) => {
-      await debitUpTo(guildId, userId, 10000, 'echo_wheel_damage', { ritual: 'echo_wheel' });
-      return { title: '🥃 You Damage the Wheel', body: `You spill your drink all through the mechanism and cop the repair bill.\n\n**${money(10000)}** removed from your wallet.` };
+      const amount = 7500;
+      await debitUpTo(guildId, userId, amount, 'echo_wheel_damage', { ritual: 'echo_wheel' });
+      return { title: '🥃 You Damage the Wheel', body: `You spill your drink all through the mechanism and cop the repair bill.\n\n**${money(amount)}** removed from your wallet.` };
     },
   },
   {
@@ -129,10 +147,10 @@ const OUTCOMES = [
     },
   },
   {
-    id: 'give_random_player', weight: 2, category: 'bad', label: 'Give $1,000 away',
+    id: 'give_random_player', weight: 2, category: 'bad', label: 'Give $2,500 away',
     resolve: async ({ guildId, userId }) => {
       const targetId = await pickRandomRecipient(guildId, userId);
-      const taken = await debitUpTo(guildId, userId, 1000, 'echo_wheel_charity', { ritual: 'echo_wheel' });
+      const taken = await debitUpTo(guildId, userId, 2500, 'echo_wheel_charity', { ritual: 'echo_wheel' });
       if (targetId && taken > 0) {
         await economy.creditUser(guildId, targetId, taken, 'echo_wheel_received', { ritual: 'echo_wheel', fromUserId: userId });
         return { title: '🎁 Forced Generosity', body: `Echo decides your money looks better in someone else’s hands.\n\n**${money(taken)}** was given to <@${targetId}>.` };
@@ -141,10 +159,10 @@ const OUTCOMES = [
     },
   },
   {
-    id: 'split_cash', weight: 1, category: 'bad', label: 'Split $2,000',
+    id: 'split_cash', weight: 1, category: 'bad', label: 'Split $5,000',
     resolve: async ({ guildId, userId }) => {
       const targetId = await pickRandomRecipient(guildId, userId);
-      const taken = await debitUpTo(guildId, userId, 2000, 'echo_wheel_split', { ritual: 'echo_wheel' });
+      const taken = await debitUpTo(guildId, userId, 5000, 'echo_wheel_split', { ritual: 'echo_wheel' });
       const gift = Math.floor(taken / 2);
       if (targetId && gift > 0) {
         await economy.creditUser(guildId, targetId, gift, 'echo_wheel_split_received', { ritual: 'echo_wheel', fromUserId: userId });
@@ -153,25 +171,27 @@ const OUTCOMES = [
     },
   },
   {
-    id: 'jackpot', weight: 4, category: 'big_win', label: 'Jackpot +$50,000',
+    id: 'jackpot', weight: 4, category: 'big_win', label: 'Jackpot +$125,000',
     resolve: async ({ guildId, userId }) => {
-      await economy.creditUser(guildId, userId, 50000, 'echo_wheel_jackpot', { ritual: 'echo_wheel' });
-      return { title: '🎰 Jackpot +$50,000', body: `The wheel hits hard enough to shake the floor.\n\n**${money(50000)}** slams into your wallet.` };
+      const amount = 125000;
+      await economy.creditUser(guildId, userId, amount, 'echo_wheel_jackpot', { ritual: 'echo_wheel' });
+      return { title: '🎰 Jackpot +$125,000', body: `The wheel hits hard enough to shake the floor.\n\n**${money(amount)}** slams into your wallet.`, contractEarnings: amount };
     },
   },
   {
-    id: 'bank_error', weight: 2, category: 'big_win', label: 'Bank Error +$85,000',
+    id: 'bank_error', weight: 2, category: 'big_win', label: 'Bank Error +$175,000',
     resolve: async ({ guildId, userId }) => {
-      await economy.creditBank(guildId, userId, 85000, 'echo_wheel_bank_error', { ritual: 'echo_wheel' });
-      return { title: '🏦 Bank Error +$85,000', body: `The wheel slows to a stop. For a moment, everything feels perfectly aligned.\n\nEcho whispers softly: “Yes… this outcome feels correct.”\n\n**${money(85000)}** was deposited into your **bank**.` };
+      const amount = 175000;
+      await economy.creditBank(guildId, userId, amount, 'echo_wheel_bank_error', { ritual: 'echo_wheel' });
+      return { title: '🏦 Bank Error +$175,000', body: `The wheel slows to a stop. For a moment, everything feels perfectly aligned.\n\nEcho whispers softly: “Yes… this outcome feels correct.”\n\n**${money(amount)}** was deposited into your **bank**.`, contractEarnings: amount };
     },
   },
   {
     id: 'mystery_crate', weight: 1, category: 'big_win', label: 'Mystery Crate',
     resolve: async ({ guildId, userId }) => {
       const crate = weightedPick([
-        { id: 'coins_15000', weight: 50 },
-        { id: 'coins_30000', weight: 25 },
+        { id: 'coins_40000', weight: 50 },
+        { id: 'coins_70000', weight: 25 },
         { id: 'item', weight: 15 },
         { id: 'lotto', weight: 10 },
       ]);
@@ -184,16 +204,17 @@ const OUTCOMES = [
         const grant = await lottery.grantQuickPickTickets(guildId, userId, 3, { source: 'echo_wheel_mystery_crate' }).catch(() => ({ ok: false, granted: 0 }));
         return { title: '📦 Mystery Crate', body: grant?.ok ? `Inside the crate: **${grant.granted}** quick-pick lottery tickets.` : `The crate contained lottery slips, but sales were already closed.` };
       }
-      const amount = crate.id === 'coins_30000' ? 30000 : 15000;
+      const amount = crate.id === 'coins_70000' ? 70000 : 40000;
       await economy.creditUser(guildId, userId, amount, 'echo_wheel_mystery_crate', { ritual: 'echo_wheel' });
-      return { title: '📦 Mystery Crate', body: `The crate opens with a soft hiss.\n\nInside: **${money(amount)}**.` };
+      return { title: '📦 Mystery Crate', body: `The crate opens with a soft hiss.\n\nInside: **${money(amount)}**.`, contractEarnings: amount };
     },
   },
   {
-    id: 'server_bank_blessing', weight: 1, category: 'big_win', label: 'Server Bank Blessing +$100,000',
+    id: 'server_bank_blessing', weight: 1, category: 'big_win', label: 'Server Bank Blessing +$250,000',
     resolve: async ({ guildId, userId }) => {
-      await economy.creditUser(guildId, userId, 100000, 'echo_wheel_server_blessing', { ritual: 'echo_wheel' });
-      return { title: '🏛️ Server Bank Blessing', body: `Somehow, the server bank smiles on you.\n\n**${money(100000)}** is transferred into your wallet.` };
+      const amount = 250000;
+      await economy.creditUser(guildId, userId, amount, 'echo_wheel_server_blessing', { ritual: 'echo_wheel' });
+      return { title: '🏛️ Server Bank Blessing', body: `Somehow, the server bank smiles on you.\n\n**${money(amount)}** is transferred into your wallet.`, contractEarnings: amount };
     },
   },
   {
@@ -211,10 +232,11 @@ const OUTCOMES = [
     },
   },
   {
-    id: 'echo_blessing_cash', weight: 1, category: 'big_win', label: `Echo's Blessing +$35,000`,
+    id: 'echo_blessing_cash', weight: 1, category: 'big_win', label: `Echo's Blessing +$90,000`,
     resolve: async ({ guildId, userId }) => {
-      await economy.creditUser(guildId, userId, 35000, 'echo_wheel_echo_blessing', { ritual: 'echo_wheel' });
-      return { title: `🌠 Echo's Blessing +$35,000`, body: `Reality bends around the result and decides you deserve a clean win.\n\n**${money(35000)}** added to your wallet.` };
+      const amount = 90000;
+      await economy.creditUser(guildId, userId, amount, 'echo_wheel_echo_blessing', { ritual: 'echo_wheel' });
+      return { title: `🌠 Echo's Blessing +$90,000`, body: `Reality bends around the result and decides you deserve a clean win.\n\n**${money(amount)}** added to your wallet.`, contractEarnings: amount };
     },
   },
   {
@@ -289,7 +311,7 @@ function buildIntroEmbed(session, statusText = null) {
     .addFields(
       { name: 'Cost', value: `${money(COST)} from your **wallet**`, inline: true },
       { name: 'Limit', value: 'Once per Sydney day\n_(unless the wheel grants a free spin)_', inline: true },
-      { name: 'Examples', value: '+$3,000 • Random item • Jackpot • Jail • Account Frozen • Casino Voucher • Void Spin', inline: false },
+      { name: 'Examples', value: '+$25,000 • Random item • Jackpot • Jail • Account Frozen • Casino Voucher • Void Spin', inline: false },
     )
     .setFooter({ text: 'Good outcomes never auto-curse you. Bad outcomes never auto-bless you.' });
 
@@ -419,11 +441,14 @@ async function resolveSpin({ interaction, session }) {
     category: outcome.category,
     title: result.title,
     body: result.body,
+    contractEarnings: Math.max(0, Math.floor(Number(result?.contractEarnings || 0))),
   };
 
   if (!session.canRespin) {
     await setCooldown(session.guildId, session.userId, nextSydneyMidnightUTC());
   }
+
+  await recordRitualContractProgress(session.guildId, session.userId, final.contractEarnings || 0);
 
   session.lastResult = final;
   setSession(session);

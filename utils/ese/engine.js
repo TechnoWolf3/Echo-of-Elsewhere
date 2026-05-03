@@ -256,6 +256,18 @@ async function ensureSchema() {
     );
   `);
 
+  await pool.query(`
+    ALTER TABLE IF EXISTS ese_companies
+      ALTER COLUMN price TYPE NUMERIC(18,2),
+      ALTER COLUMN open TYPE NUMERIC(18,2),
+      ALTER COLUMN previous_close TYPE NUMERIC(18,2),
+      ALTER COLUMN high TYPE NUMERIC(18,2),
+      ALTER COLUMN low TYPE NUMERIC(18,2),
+      ALTER COLUMN day_change_percent TYPE NUMERIC(18,2),
+      ALTER COLUMN buy_pressure TYPE NUMERIC(18,2),
+      ALTER COLUMN sell_pressure TYPE NUMERIC(18,2);
+  `);
+
   const countRes = await pool.query(`SELECT COUNT(*)::int AS count FROM ese_companies`);
   const count = Number(countRes.rows?.[0]?.count || 0);
 

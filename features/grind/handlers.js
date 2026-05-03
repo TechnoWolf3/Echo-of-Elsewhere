@@ -14,6 +14,18 @@ const GRIND_JOBS = {
   taxi: startTaxiDriver,
 };
 
+const GRIND_COOLDOWNS = {
+  clerk: { key: "job:grind:storeClerk", label: "Store Clerk" },
+  warehousing: { key: "job:grind:warehousing", label: "Warehousing" },
+  fishing: { key: "job:grind:fishing", label: "Fishing" },
+  quarry: { key: "job:grind:quarry", label: "Quarry" },
+  taxi: { key: "job:grind:taxiDriver", label: "Taxi Driver" },
+};
+
+function cooldownFor(actionKey) {
+  return GRIND_COOLDOWNS[actionKey] || { key: `job:grind:${actionKey}`, label: actionKey };
+}
+
 function isGrindInteraction(actionId) {
   return actionId.startsWith("grind:");
 }
@@ -33,7 +45,8 @@ async function handleGrindInteraction({
   if (!isGrindInteraction(actionId)) return false;
 
   const key = actionId.split(":")[1];
-  if (await checkCooldownOrTell(interaction)) return true;
+  const cooldown = cooldownFor(key);
+  if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
 
   const runJob = GRIND_JOBS[key];
   if (!runJob) {
@@ -63,4 +76,5 @@ async function handleGrindInteraction({
 module.exports = {
   handleGrindInteraction,
   isGrindInteraction,
+  cooldownFor,
 };

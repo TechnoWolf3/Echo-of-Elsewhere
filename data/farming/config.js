@@ -19,6 +19,12 @@ module.exports = {
 
   MAX_FIELDS: 6,
 
+  FIELD_UPGRADE_DURATION_MS: 60 * 60 * 1000,
+
+  BARN_DEMOLITION_BASE_COST: 120000,
+  BARN_DEMOLITION_LEVEL_MULTIPLIER: 35000,
+  BARN_UPGRADE_DURATION_MS: 60 * 60 * 1000,
+
   SEASONS: ["spring", "summer", "autumn", "winter"],
 
   SEASON_LENGTH_MS: 7 * 24 * 60 * 60 * 1000, // 1 week

@@ -11,6 +11,7 @@ const contractCfg = require("../../data/work/categories/nineToFive/transportCont
 const skillCfg = require("../../data/work/categories/nineToFive/skillCheck");
 const shiftCfg = require("../../data/work/categories/nineToFive/shift");
 const truckerCfg = require("../../data/work/categories/nineToFive/trucker");
+const { emailSorterCfg, folderMeta } = require("./emailSorter");
 const { renderProgressBar } = require("../../utils/progressBar");
 const ui = require("../../utils/ui");
 
@@ -53,7 +54,7 @@ function safeDesc(s) {
   return t.slice(0, 97) + "...";
 }
 
-function progressBar(pct, size = 16) {
+function progressBar(pct, size = 10) {
   return renderProgressBar(pct, 100, { length: size });
 }
 
@@ -61,23 +62,36 @@ function statusLineFromCooldown(cooldownUnix) {
   return cooldownUnix ? `⏳ Next payout: <t:${cooldownUnix}:R>` : "✅ Ready for payout.";
 }
 
-function buildNineToFiveEmbed(user, progress, cooldownUnix) {
+function buildNineToFiveEmbed(user, progress, cooldowns = {}) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
   const bonusPct = Math.round((mult - 1) * 100);
 
   const jobLines = nineToFiveIndex.jobs
-    .map((job) => `${job.title} - ${job.desc}`)
-    .join("\n");
+    .map((job) => {
+      const available = cooldowns[job.key] ? `Status: <t:${cooldowns[job.key]}:R>` : "Status: Available now";
+      return ui.entryBlock(job.title, [
+        job.desc,
+        available,
+      ]);
+    })
+    .join("\n\n");
 
   return new EmbedBuilder()
     .setTitle(nineToFiveIndex.category?.title || "📦 Work a 9-5")
-    .setDescription([statusLineFromCooldown(cooldownUnix), "", nineToFiveIndex.category?.description || ""].join("\n").trim())
-    .addFields(
-      { name: "Progress", value: `Level ${progress.level} - XP ${progress.xp}/${need} - Bonus +${bonusPct}%` },
-      { name: "Jobs", value: jobLines || "No jobs configured." }
+    .setDescription(
+      [
+        nineToFiveIndex.category?.description || "Classic work. Steady pay.",
+        "",
+        ui.sectionBlock("Progress", [
+          `Level ${progress.level} • ${progress.xp} / ${need} XP`,
+          `Bonus: +${bonusPct}%`,
+        ]),
+        "",
+        ui.sectionBlock("Jobs", jobLines || "No jobs configured."),
+      ].join("\n")
     )
-    .setFooter({ text: nineToFiveIndex.category?.footer || "Cooldown blocks payouts, not browsing." });
+    .setColor(ui.systems.job.color);
 }
 
 function buildNineToFiveComponents({ disabled = false, legendary = false } = {}) {
@@ -90,7 +104,8 @@ function buildNineToFiveComponents({ disabled = false, legendary = false } = {})
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );
@@ -190,17 +205,23 @@ function buildContractButtons(stepIndex, level, disabled = false) {
   return rows;
 }
 
-function buildSkillEmbed(title, targetEmoji, expiresAtMs) {
+function buildSkillEmbed(title, targetEmoji, expiresAtMs, { revealPattern = Array.isArray(targetEmoji), progress = 0, total = 1 } = {}) {
   const unix = Math.floor(expiresAtMs / 1000);
+  const pattern = Array.isArray(targetEmoji) ? targetEmoji : [targetEmoji];
+  const prompt = revealPattern
+    ? `Memorise this pattern:\n\n${pattern.join(" ")}`
+    : `Repeat the colour pattern from memory.\nProgress: **${progress}/${total || pattern.length}**`;
   return new EmbedBuilder()
     .setTitle(title)
-    .setDescription(`Click **${targetEmoji}** before time runs out!\n⏳ Ends: <t:${unix}:R>`)
+    .setDescription(`${prompt}\n⏳ Ends: <t:${unix}:R>`)
     .setFooter({ text: "Failing doesn't pay, but browsing is still allowed." });
 }
 
 function buildSkillButtons(targetEmoji, disabled = false, prefix = "job_skill") {
-  const decoys = sampleUnique(skillCfg.emojis.filter((emoji) => emoji !== targetEmoji), 4);
-  const options = sampleUnique([targetEmoji, ...decoys], 5);
+  const targets = Array.isArray(targetEmoji) ? targetEmoji : [targetEmoji];
+  const options = skillCfg.emojis.length <= 5
+    ? [...skillCfg.emojis]
+    : sampleUnique([...new Set([...targets, ...sampleUnique(skillCfg.emojis.filter((emoji) => !targets.includes(emoji)), 5)])], 5);
   const row = new ActionRowBuilder();
 
   for (const emoji of options) {
@@ -261,12 +282,10 @@ function formatRoutePlace(place) {
 }
 
 function durationMinutesForRoute(distanceKm) {
-  const tiers = Array.isArray(truckerCfg.durationTiers) ? truckerCfg.durationTiers : [];
   const km = Math.max(1, Math.round(Number(distanceKm) || 1));
-  for (const tier of tiers) {
-    if (km <= Number(tier.maxKm)) return Math.max(1, Math.round(Number(tier.minutes) || 1));
-  }
-  return 5;
+  const minutesPerKm = Number(truckerCfg.duration?.minutesPerKm || 0.01);
+  const minMinutes = Number(truckerCfg.duration?.minMinutes || 3);
+  return Math.max(minMinutes, Math.ceil(km * minutesPerKm));
 }
 
 function generateTruckerManifest() {
@@ -274,7 +293,9 @@ function generateTruckerManifest() {
   const freightEntry = pick(truckerCfg.freightPool || []);
   const freightName = typeof freightEntry === "string" ? freightEntry : (freightEntry?.name || "General Freight");
   const freightCategory = typeof freightEntry === "string" ? "generalPalletised" : (freightEntry?.category || "generalPalletised");
-  const payoutModifier = Math.max(0.5, Number(freightEntry?.payoutModifier ?? 1));
+  const payoutModifier = truckerCfg.payout?.useFreightModifiers === false
+    ? 1
+    : Math.max(0.5, Number(freightEntry?.payoutModifier ?? 1));
   const compatibleTrailers = Array.isArray(truckerCfg.trailerConfigs?.[freightCategory])
     ? truckerCfg.trailerConfigs[freightCategory]
     : [];
@@ -282,12 +303,8 @@ function generateTruckerManifest() {
   const flavorLine = pick(truckerCfg.manifestLines || []) || "";
   const distanceKm = Math.max(1, Math.round(Number(route?.distanceKm) || randInt(120, 1200)));
   const durationMinutes = durationMinutesForRoute(distanceKm);
-  const perKm = (Math.random() * ((truckerCfg.payout?.perKmMax ?? 2.4) - (truckerCfg.payout?.perKmMin ?? 1.7))) + (truckerCfg.payout?.perKmMin ?? 1.7);
-  const longHaulBonus = randInt(
-    truckerCfg.payout?.longHaulBonusMin ?? 0,
-    Math.max(truckerCfg.payout?.longHaulBonusMin ?? 0, Math.min(truckerCfg.payout?.longHaulBonusMax ?? 500, Math.floor(distanceKm / 6)))
-  );
-  const payoutBase = Math.max(100, Math.round((distanceKm * perKm + longHaulBonus) * payoutModifier));
+  const perKm = Number(truckerCfg.payout?.perKm ?? truckerCfg.payout?.perKmMin ?? 12);
+  const payoutBase = Math.max(100, Math.round(distanceKm * perKm * payoutModifier));
 
   return {
     freight: freightName,
@@ -351,6 +368,109 @@ function buildTruckerEmbed(run, { completed = false } = {}) {
     .setFooter({ text: truckerCfg.footer || "Start the run, let the kilometres roll, then collect the cheque." });
 }
 
+
+function buildEmailSorterEmbed(run) {
+  const total = run?.emails?.length || 0;
+  const index = Math.max(0, Number(run?.currentIndex || 0));
+  const email = run?.emails?.[index];
+  if (!email) {
+    return new EmbedBuilder()
+      .setTitle(emailSorterCfg.title || "📧 Email Sorter")
+      .setDescription("No email is currently loaded.")
+      .setFooter({ text: emailSorterCfg.footer || "Read carefully." });
+  }
+
+  return new EmbedBuilder()
+    .setTitle(`${emailSorterCfg.title || "📧 Email Sorter"} — Email ${index + 1}/${total}`)
+    .setDescription(
+      [
+        `📨 **From:** \`${email.from}\``,
+        `📌 **Subject:** ${email.subject}`,
+        `━━━━━━━━━━━━━━━━━━`,
+        ``,
+        email.body,
+      ].join("\n")
+    )
+    .setFooter({ text: emailSorterCfg.footer || "Read carefully. One bad phishing call can wreck the shift." });
+  }
+
+function buildEmailSorterButtons(disabled = false) {
+  const folderIds = ["urgent", "todo", "spam", "scam"];
+  return [
+    new ActionRowBuilder().addComponents(
+      ...folderIds.map((folderId) => {
+        const meta = folderMeta(folderId);
+        return new ButtonBuilder()
+          .setCustomId(`job_email:${folderId}`)
+          .setLabel(meta.label)
+          .setEmoji(meta.emoji)
+          .setStyle(folderId === 'scam' ? ButtonStyle.Danger : ButtonStyle.Primary)
+          .setDisabled(disabled);
+      })
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("job_back:95").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style).setDisabled(disabled),
+      new ButtonBuilder().setCustomId("job_stop").setLabel("🛑 Stop Work").setStyle(ButtonStyle.Danger).setDisabled(disabled)
+    ),
+  ];
+}
+
+function buildEmailSorterSummaryEmbed(run, { paid = null } = {}) {
+  const totalEmails = run?.emails?.length || 0;
+  const totals = run?.totals || {};
+  const lines = [];
+
+  for (let i = 0; i < (run?.results?.length || 0); i += 1) {
+    const result = run.results[i];
+    const chosen = folderMeta(result.chosen);
+    const actual = folderMeta(result.actual);
+    let status = '❌';
+    let extra = '';
+
+    if (result.outcome === 'correct') {
+      status = '✅';
+    } else if (result.outcome === 'scam_to_spam') {
+      status = '⚠️';
+      extra = ` — penalty -$${Number(result.penalty || 0).toLocaleString()}`;
+    } else if (result.outcome === 'mission_fail') {
+      status = '💥';
+      extra = ' — compromised';
+    }
+
+    lines.push(
+      `${status} **${i + 1}. ${result.subject}**`,
+      `Sorted: ${chosen.emoji} ${chosen.label} | Actual: ${actual.emoji} ${actual.label}${extra}`
+    );
+  }
+
+  const summary = [
+    `Processed: **${totalEmails}**`,
+    `Correct: **${Number(totals.correct || 0)}/${totalEmails}**`,
+    run?.failed ? `Failure: **${run.failedReason || 'Yes'}**` : 'Failure: **No**',
+    '',
+    ...lines,
+    '',
+  ];
+
+  if (run?.failed) {
+    summary.push('💥 **Mission failed. No payout awarded.**');
+  } else {
+    summary.push(
+      `Base shift pay: **$${Number(totals.subtotal || 0).toLocaleString()}**`,
+      Number(totals.perfectBonus || 0) > 0 ? `Perfect bonus: **+$${Number(totals.perfectBonus || 0).toLocaleString()}**` : null,
+      Number(totals.penalties || 0) > 0 ? `Penalties: **-$${Number(totals.penalties || 0).toLocaleString()}**` : null,
+      paid ? `Final paid: **$${Number(paid.amount || 0).toLocaleString()}**` : `Total earned: **$${Number(totals.total || 0).toLocaleString()}**`,
+      paid ? `⏳ Next payout: <t:${Math.floor(paid.nextClaim.getTime() / 1000)}:R>` : null,
+      paid?.prog?.leveledUp ? `🎉 Level up! You are now **Level ${paid.prog.level}**` : null
+    );
+  }
+
+  return new EmbedBuilder()
+    .setTitle(run?.failed ? '📧 Email Sorter — Shift Failed' : '📧 Email Sorter — Shift Summary')
+    .setDescription(summary.filter(Boolean).join('\n'))
+    .setColor(run?.failed ? ui.colors.danger : ui.colors.success);
+}
+
 function buildTruckerButtons(run = {}) {
   const started = Boolean(run?.startMs);
   const ready = Boolean(run?.ready);
@@ -392,6 +512,9 @@ module.exports = {
   buildSkillButtons,
   buildShiftEmbed,
   buildShiftButtons,
+  buildEmailSorterEmbed,
+  buildEmailSorterButtons,
+  buildEmailSorterSummaryEmbed,
   formatRoutePlace,
   generateTruckerManifest,
   buildTruckerEmbed,

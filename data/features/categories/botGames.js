@@ -4,37 +4,42 @@ module.exports = {
   order: 7,
   name: "Bot Games",
   emoji: "🤖",
-  blurb: "Echo's random challenges, do you dare contest?.",
+  blurb: "Random Echo challenges for quick reactions, risk, and sudden rewards.",
   description:
     "Bot Games are unpredictable challenges manifested directly by Echo.\n" +
-    "They appear at random, offering moments of high risk and sudden opportunity.\n" +
-    "Some grant fortune. Others demand sacrifice.",
+    "They appear at random in the configured event channel, offering moments of high risk and sudden opportunity.",
 
-  // Bot Games features
   items: [
     {
-      id: "echo_rift",
-      name: "🕳 Echo Rift",
-      short: "A reality tear offering risk, reward… or ruin.",
+      id: "botgames_schedule",
+      name: "Random Echo Events",
+      short: "Timed challenges that can appear during the day.",
       detail:
-        "The Echo Rift appears unpredictably, opening for a single challenger.\n" +
-        "Step inside and face layered choices where every decision shapes your fate.\n" +
-        "Blessings can bring fortune, while curses may demand tribute or time.\n" +
-        "Rarely, Echo may mark someone as **Chosen**, but such favor comes sparingly.",
+        "Bot Games are random events posted into the configured event channel.\n" +
+        "Most days have no event, some days have one, and weekends have slightly better odds of activity.\n" +
+        "An unclaimed event can sit for a limited time, while claimed events must be finished quickly so they do not get stuck.",
+    },
+    {
+      id: "quickdraw",
+      name: "Quickdraw",
+      short: "A pure speed event with no entry cost.",
+      detail:
+        "Quickdraw is the simplest Bot Game.\n" +
+        "The first player to click **Play** wins the listed prize.\n" +
+        "There is no stake, no extra decision, and no second step. It rewards fast reactions.",
     },
     {
       id: "double_or_nothing",
-      name: "🎲 Double or Nothing",
-      short: "Push your winnings or lose it all.",
+      name: "Double or Nothing",
+      short: "Risk a listed stake for a 50/50 double.",
       detail:
-        "Double or Nothing is a high-risk continuation event.\n" +
-        "After a successful day at the casino, you may choose to gamble your reward for a chance to double it.\n" +
-        "Win and your prize grows. Fail, and everything is forfeited.\n" +
-        "Designed for bold players who trust momentum over caution.",
+        "Double or Nothing asks the first claimant to risk the listed stake.\n" +
+        "Win the roll and the stake doubles. Lose the roll and the stake is gone.\n" +
+        "It is quick, sharp, and built for players who like a clean 50/50 gamble.",
     },
     {
       id: "risk_ladder",
-      name: "🪜 Risk Ladder",
+      name: "Risk Ladder",
       short: "Climb higher for greater rewards, but one misstep ends it.",
       detail:
         "Risk Ladder challenges players to advance through escalating tiers of reward.\n" +
@@ -44,13 +49,12 @@ module.exports = {
     },
     {
       id: "mystery_box",
-      name: "🎁 Mystery Box",
-      short: "A sealed reward… or an expensive mistake.",
+      name: "Mystery Box",
+      short: "A sealed reward or an expensive mistake.",
       detail:
-        "The Mystery Box offers unpredictable outcomes ranging from modest gains to costly setbacks.\n" +
-        "Open it and accept whatever Echo has prepared, whether fortune or misfortune.\n" +
-        "There are no previews, no guarantees, and no second chances.\n" +
-        "Curiosity often comes with a price.",
+        "The Mystery Box offers unpredictable outcomes ranging from nothing to a rare jackpot.\n" +
+        "The first claimant pays the listed cost, opens the box, and accepts the result.\n" +
+        "There are no previews, no guarantees, and no second chances.",
     },
   ],
 };

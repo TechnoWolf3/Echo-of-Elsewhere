@@ -12,16 +12,31 @@ const { pool } = require('../../utils/db');
 const { nextSydneyMidnightUTC, getRitualStatus, getSydneyParts } = require('../../utils/rituals');
 const { creditUserWithEffects } = require('../../utils/effectSystem');
 
+let recordProgress = async () => {};
+try {
+  ({ recordProgress } = require('../../utils/contracts'));
+} catch (_) {}
+
+async function recordRitualContractProgress(guildId, userId, earnings = 0) {
+  try {
+    await recordProgress({ guildId, userId, metric: 'rituals_completed', amount: 1 });
+    const cash = Math.max(0, Math.floor(Number(earnings || 0)));
+    if (cash > 0) {
+      await recordProgress({ guildId, userId, metric: 'ritual_earnings', amount: cash });
+    }
+  } catch (_) {}
+}
+
 const BTN_PREFIX = 'rituals:veil_sequence:slot:';
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const CLEANUP_AFTER_COMPLETE_MS = 60 * 1000;
 const SLOT_COUNT = 5;
 
 const REWARD_BY_SCORE = {
-  5: 30000,
-  3: 16000,
-  2: 8000,
-  1: 3500,
+  5: 85000,
+  3: 55000,
+  2: 30000,
+  1: 12000,
   0: 0,
 };
 
@@ -312,6 +327,8 @@ async function finishSession(interaction, session) {
       awardSource: 'veil_sequence',
     });
   }
+
+  await recordRitualContractProgress(session.guildId, session.userId, payout?.finalAmount || 0);
 
   session.finished = true;
   const resultLine = pickFrom(FLAVOR.result[correct] || FLAVOR.result[0], session, `result:${correct}`);

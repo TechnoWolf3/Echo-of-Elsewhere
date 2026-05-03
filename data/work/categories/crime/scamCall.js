@@ -349,7 +349,7 @@ async function finalize(interaction, state, reason, context = {}) {
         outcome = "busted_hard";
         identified = true;
         finalHeat = clamp((state.heatStart || 0) + randInt(45, 65) + Number(state.heatBonus || 0), 0, 100);
-        const jailMinutes = randInt(4, 8);
+        const jailMinutes = randInt(20, 35);
         if (Math.random() < 0.5) {
           jailedUntil = await setJail(guildId, userId, jailMinutes);
         }

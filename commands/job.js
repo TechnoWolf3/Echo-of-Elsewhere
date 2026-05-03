@@ -16,6 +16,7 @@ const { creditUserWithEffects } = require("../utils/effectSystem");
 const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); // jail blocks ALL jobs while active
 const { unlockAchievement } = require("../utils/achievementEngine");
 const ui = require("../utils/ui");
+const { recordProgress: recordContractProgress } = require("../utils/contracts");
 
 // ✅ UPDATED: add getCrimeHeatInfo for bar + timer UI
 const { getCrimeHeatInfo } = require("../utils/crimeHeat");
@@ -25,6 +26,7 @@ const { canGrind: canGrindFatigue } = require("../utils/grindFatigue");
 
 // ✅ Config imports
 const shiftCfg = require("../data/work/categories/nineToFive/shift");
+const underworldBranches = require("../data/underworld/branches");
 
 
 // ✅ Crime
@@ -40,21 +42,30 @@ const { handleFarmingInteraction } = require("../features/farming/handlers");
 const manufacturing = require("../utils/manufacturing/engine");
 const manufacturingUi = require("../features/manufacturing/ui");
 const { handleManufacturingInteraction } = require("../features/manufacturing/handlers");
+const underworld = require("../utils/underworld/engine");
+const underworldUi = require("../features/underworld/ui");
+const underworldSuspicion = require("../utils/underworld/suspicion");
+const smugglingEngine = require("../utils/underworld/smugglingEngine");
+const { handleUnderworldInteraction } = require("../features/underworld/handlers");
 const crimeUi = require("../features/crime/ui");
 const { handleCrimeInteraction } = require("../features/crime/handlers");
 const { CRIME_GLOBAL_KEY, CRIME_KEYS } = require("../features/crime/constants");
 const grindUi = require("../features/grind/ui");
-const { handleGrindInteraction } = require("../features/grind/handlers");
+const { handleGrindInteraction, cooldownFor: grindCooldownFor } = require("../features/grind/handlers");
 const nineToFiveUi = require("../features/nineToFive/ui");
-const { handleNineToFiveInteraction } = require("../features/nineToFive/handlers");
+const { handleNineToFiveInteraction, cooldownFor: nineToFiveCooldownFor } = require("../features/nineToFive/handlers");
 const nightWalkerUi = require("../features/nightWalker/ui");
-const { handleNightWalkerInteraction } = require("../features/nightWalker/handlers");
+const { handleNightWalkerInteraction, cooldownFor: nightWalkerCooldownFor } = require("../features/nightWalker/handlers");
+const nineToFiveIndex = require("../data/work/categories/nineToFive/index");
+const nightWalkerIndex = require("../data/work/categories/nightwalker/index");
+const grindIndex = require("../data/work/categories/grind/index");
 /* ============================================================
    CORE TUNING (keep here; configs handle job-specific values)
    ============================================================ */
 
 const JOB_COOLDOWN_SECONDS = 45;
 const BOARD_INACTIVITY_MS = 25 * 60_000;
+const PAYOUT_SCREEN_MIN_HOLD_MS = 15_000;
 
 // Legendary (kept in command for now)
 const LEGENDARY_CHANCE = 0.012;
@@ -224,10 +235,6 @@ async function handleJobMilestones({ channel, guildId, userId, totalJobs }) {
    UI: Hub + Category Boards
    ============================================================ */
 
-function statusLineFromCooldown(cooldownUnix) {
-  return cooldownUnix ? `⏳ **Next payout** <t:${cooldownUnix}:R>` : `✅ **Ready** — you can work now.`;
-}
-
 function buildHubEmbed(user, progress, cooldownUnix) {
   const need = xpToNext(progress.level);
   const mult = levelMultiplier(progress.level);
@@ -237,31 +244,28 @@ function buildHubEmbed(user, progress, cooldownUnix) {
     .setTitle("🧰 Job Board")
     .setDescription(
       [
-        `Pick what kind of work you want to do, **${user.username}**.`,
+        `What kind of work are you looking for today, **${user.username}**?`,
         "",
-        statusLineFromCooldown(cooldownUnix),
+        ui.sectionBlock("Progress", [
+          `Level ${progress.level} • ${progress.xp} / ${need} XP`,
+          `Bonus: +${bonusPct}% earnings`,
+        ]),
+        "",
+        ui.sectionBlock("Paths", [
+          ui.entryBlock("📦 Work a 9–5", ["Classic shifts. Steady pay."]),
+          "",
+          ui.entryBlock("🧠 Night Walker", ["Charm, nerve, and the late crowd."]),
+          "",
+          ui.entryBlock("🕒 Grind", ["Longer work for patient hands."]),
+          "",
+          ui.entryBlock("🕶️ Crime", ["Risky moves under rising heat."]),
+          "",
+          ui.entryBlock("🏭 Enterprises", ["Build systems that earn over time."]),
+          "",
+          ui.entryBlock("🕶️ The Underworld", ["Quiet networks. Loud consequences."]),
+        ]),
       ].join("\n")
-    )
-    .addFields(
-      {
-        name: "Progress",
-        value: `Level ${progress.level} • XP ${progress.xp}/${need} • Bonus +${bonusPct}%`,
-      },
-      {
-        name: "Job Type",
-        value: [
-          "📦 **Work a 9–5** — Classic shift work",
-          "🧠 **Night Walker** — Work to please the night",
-          "🕒 **Grind** — Jobs that take time",
-          "🕶️ **Crime** — High risk, heat & jail",
-          "🏭 **Enterprises** — Long-term business systems"
-        ].join("\n"),
-      },
-      {
-        name: "Rules",
-        value: `Cooldown between payouts: **${JOB_COOLDOWN_SECONDS}s**\nAuto-clears after **3m** inactivity (or **Stop Work**)`,
-      }
-    ), "job", "Leveling up increases payout bonus.");
+    ), "job", false);
 }
 
 function buildHubComponents(disabled = false) {
@@ -274,7 +278,8 @@ function buildHubComponents(disabled = false) {
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" }
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );
@@ -291,13 +296,11 @@ function buildHubComponents(disabled = false) {
   return [catRow, navRow];
 }
 
-function buildEnterprisesEmbed({ cooldownUnix } = {}) {
+function buildEnterprisesEmbed() {
   return ui.applySystemStyle(new EmbedBuilder()
     .setTitle("🏭 Enterprises")
     .setDescription(
       [
-        statusLineFromCooldown(cooldownUnix),
-        "",
         "Build long-term operations that grow over time.",
         "",
         "🌾 **Farming** — Fields, machinery, contracts, and produce markets.",
@@ -317,7 +320,8 @@ function buildEnterprisesComponents(disabled = false) {
         { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
-        { label: "🏭 Enterprises", value: "job_cat:enterprises", emoji: "🏭", default: true }
+        { label: "🏭 Enterprises", value: "job_cat:enterprises", emoji: "🏭", default: true },
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
       )
       .setDisabled(disabled)
   );
@@ -342,6 +346,56 @@ function buildEnterprisesComponents(disabled = false) {
   );
 
   return [catRow, enterpriseRow];
+}
+
+function buildUnderworldEmbed() {
+  const branchLines = underworldBranches.map((branch) =>
+    `${branch.emoji} **${branch.label}** — ${branch.description}`
+  );
+
+  return ui.applySystemStyle(new EmbedBuilder()
+    .setTitle("🕶️ The Underworld")
+    .setDescription(
+      [
+        "Build illegal networks that make big money and attract the wrong kind of attention.",
+        "",
+        ...branchLines,
+      ].join("\n")
+    ), "job");
+}
+
+function buildUnderworldComponents(disabled = false) {
+  const catRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:category")
+      .setPlaceholder("Choose a category...")
+      .addOptions(
+        { label: "Work a 9–5", value: "job_cat:95", emoji: "📦" },
+        { label: "Night Walker", value: "job_cat:nw", emoji: "🧠" },
+        { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
+        { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
+        { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
+        { label: "🕶️ The Underworld", value: "job_cat:underworld", emoji: "🕶️", default: true }
+      )
+      .setDisabled(disabled)
+  );
+
+  const underworldRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("job_select:job")
+      .setPlaceholder("Choose an underworld branch...")
+      .addOptions(
+        underworldBranches.map((branch) => ({
+          label: branch.label,
+          value: branch.value,
+          emoji: branch.emoji,
+          description: branch.description.slice(0, 100),
+        }))
+      )
+      .setDisabled(disabled)
+  );
+
+  return [catRow, underworldRow];
 }
 
 /* ============================================================
@@ -425,6 +479,7 @@ function cancelAutoReturn() {
 function scheduleReturnToCategory(delayMs = 5000) {
   cancelAutoReturn();
 
+  const holdMs = Math.max(Number(delayMs) || 0, PAYOUT_SCREEN_MIN_HOLD_MS);
   session.returnTimer = setTimeout(async () => {
     try {
       if (collector.ended) return;
@@ -434,7 +489,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       session.view = target;
       await redraw();
     } catch {}
-  }, delayMs);
+  }, holdMs);
 }
 
     async function stopWork(reason = "stop") {
@@ -454,20 +509,70 @@ function scheduleReturnToCategory(delayMs = 5000) {
       setTimeout(() => msg.delete().catch(() => {}), 1000);
     }
 
-    async function checkCooldownOrTell(btn) {
-      const next = await getCooldown(guildId, userId, "job");
+    async function checkCooldownOrTell(btn, key = "job", label = "payout") {
+      const next = await getCooldown(guildId, userId, key);
       const now = new Date();
       if (next && now < next) {
         const unix = Math.floor(next.getTime() / 1000);
         await btn
           .followUp({
-            content: `⏳ You’re on cooldown. Next payout <t:${unix}:R>.`,
+            content: `⏳ Your **${label}** cooldown ends <t:${unix}:R>.`,
             flags: MessageFlags.Ephemeral,
           })
           .catch(() => {});
         return true;
       }
       return false;
+    }
+
+    async function startCooldown(key = "job", cooldownSeconds = JOB_COOLDOWN_SECONDS) {
+      const nextClaim = new Date(Date.now() + Math.max(0, Number(cooldownSeconds) || 0) * 1000);
+      await setCooldown(guildId, userId, key, nextClaim);
+      return nextClaim;
+    }
+
+    async function getCooldownMap(entries) {
+      const out = {};
+      for (const entry of entries) {
+        const unix = await getCooldownUnixIfActive(guildId, userId, entry.cooldownKey);
+        if (unix) out[entry.id] = unix;
+      }
+      return out;
+    }
+
+    async function getNineToFiveCooldowns() {
+      const modeByJobKey = {
+        transportContract: "contract",
+        skillCheck: "skill",
+        shift: "shift",
+        emailSorter: "emailSorter",
+        trucker: "trucker",
+      };
+      return getCooldownMap((nineToFiveIndex.jobs || []).map((job) => ({
+        id: job.key,
+        cooldownKey: nineToFiveCooldownFor(modeByJobKey[job.key] || job.key).key,
+      })));
+    }
+
+    async function getNightWalkerCooldowns() {
+      return getCooldownMap((nightWalkerIndex.list || []).map((jobKey) => ({
+        id: jobKey,
+        cooldownKey: nightWalkerCooldownFor(jobKey, nightWalkerIndex.jobs?.[jobKey]).key,
+      })));
+    }
+
+    async function getGrindCooldowns() {
+      const actionByJobKey = {
+        storeClerk: "clerk",
+        warehousing: "warehousing",
+        fishing: "fishing",
+        quarry: "quarry",
+        taxiDriver: "taxi",
+      };
+      return getCooldownMap((grindIndex.list || []).map((jobKey) => ({
+        id: jobKey,
+        cooldownKey: grindCooldownFor(actionByJobKey[jobKey] || jobKey).key,
+      })));
     }
 
     async function maybeSpawnLegendary() {
@@ -478,7 +583,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
     }
 
-    async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true, activityEffects = null } = {}) {
+    async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true, activityEffects = null, cooldownKey = "job", cooldownSeconds = JOB_COOLDOWN_SECONDS } = {}) {
       const mult = levelMultiplier(session.level);
       let amount = Math.floor(amountBase * mult);
 
@@ -488,8 +593,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         meta.globalBonus = bonus;
       }
 
-      const nextClaim = new Date(Date.now() + JOB_COOLDOWN_SECONDS * 1000);
-      await setCooldown(guildId, userId, "job", nextClaim);
+      const nextClaim = await startCooldown(cooldownKey, cooldownSeconds);
 
       await creditUserWithEffects({
         guildId,
@@ -500,6 +604,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
         activityEffects,
         awardSource: reason,
       });
+
+      await recordContractProgress({ guildId, userId, metric: "job_earnings", amount }).catch(() => {});
+      if (countJob) {
+        await recordContractProgress({ guildId, userId, metric: "jobs_completed", amount: 1 }).catch(() => {});
+      }
 
       const progUpdate = await addXpAndMaybeLevel(guildId, userId, xpGain, countJob);
 
@@ -539,18 +648,20 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "95") {
+        const cooldowns = await getNineToFiveCooldowns();
         return msg
           .edit({
-            embeds: [nineToFiveUi.buildNineToFiveEmbed(interaction.user, p, cd)],
+            embeds: [nineToFiveUi.buildNineToFiveEmbed(interaction.user, p, cooldowns)],
             components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
           })
           .catch(() => {});
       }
 
       if (session.view === "nw") {
+        const cooldowns = await getNightWalkerCooldowns();
         return msg
           .edit({
-            embeds: [nightWalkerUi.buildNightWalkerEmbed(interaction.user, p, cd)],
+            embeds: [nightWalkerUi.buildNightWalkerEmbed(interaction.user, p, cooldowns)],
             components: nightWalkerUi.buildNightWalkerComponents(false),
           })
           .catch(() => {});
@@ -567,10 +678,11 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "grind") {
         const fatigueInfo = await canGrindFatigue(pool, guildId, userId);
+        const cooldowns = await getGrindCooldowns();
 
         return msg
           .edit({
-            embeds: [grindUi.buildGrindEmbed({ cooldownUnix: cd, fatigueInfo })],
+            embeds: [grindUi.buildGrindEmbed({ fatigueInfo, cooldowns })],
             components: grindUi.buildGrindComponents(false),
           })
           .catch(() => {});
@@ -589,7 +701,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           const weatherChannel = farmWeather.buildWeatherChannel(weatherState);
 
           return await msg.edit({
-            embeds: [farmingUi.buildFarmingEmbed(farm, weatherChannel)],
+            embeds: [farmingUi.buildFarmingEmbed(farm, weatherChannel, guildId)],
             components
           });
         } catch (err) {
@@ -613,8 +725,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
         await farming.applyFieldTaskRollovers(guildId, userId, farm);
 
         return msg.edit({
-          embeds: [farmingUi.buildFieldEmbed(farm, session.fieldIndex)],
-          components: farmingUi.buildFieldComponents(farm, session.fieldIndex),
+          embeds: [farmingUi.buildFieldEmbed(farm, session.fieldIndex, guildId)],
+          components: farmingUi.buildFieldComponents(farm, session.fieldIndex, guildId),
         }).catch(() => {});
       }
 
@@ -624,6 +736,25 @@ function scheduleReturnToCategory(delayMs = 5000) {
         return msg.edit({
           embeds: [farmingUi.buildFarmMarketEmbed(items)],
           components: farmingUi.buildFarmMarketComponents(items),
+        }).catch(() => {});
+      }
+
+      if (session.view === "farm_store") {
+        const farm = await farming.ensureFarm(guildId, userId);
+        const storePage = session.farmStorePage || "home";
+        const storeEmbed = storePage === "fertiliser"
+          ? farmingUi.buildFarmStoreFertiliserEmbed(farm)
+          : storePage === "husbandry"
+            ? farmingUi.buildFarmStoreHusbandryEmbed(farm)
+            : farmingUi.buildFarmStoreHomeEmbed(farm);
+        const storeComponents = storePage === "fertiliser"
+          ? farmingUi.buildFarmStoreFertiliserComponents(farm)
+          : storePage === "husbandry"
+            ? farmingUi.buildFarmStoreHusbandryComponents(farm)
+            : farmingUi.buildFarmStoreHomeComponents(farm);
+        return msg.edit({
+          embeds: [storeEmbed],
+          components: storeComponents,
         }).catch(() => {});
       }
 
@@ -738,9 +869,104 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }).catch(() => {});
       }
 
+      if (session.view === "underworld") {
+        return msg.edit({
+          embeds: [buildUnderworldEmbed()],
+          components: buildUnderworldComponents(false),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_operations") {
+        const state = await underworld.ensureState(guildId, userId);
+        await underworld.applyRuntime(guildId, userId, state);
+
+        return msg.edit({
+          embeds: [underworldUi.buildOperationsEmbed(state)],
+          components: underworldUi.buildOperationsComponents(state),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_building") {
+        const state = await underworld.ensureState(guildId, userId);
+        await underworld.applyRuntime(guildId, userId, state);
+
+        const buildingCount = state.buildings?.length || 0;
+        if (!buildingCount) {
+          session.view = "underworld_operations";
+          session.underworldBuildingId = null;
+          return msg.edit({
+            embeds: [underworldUi.buildOperationsEmbed(state)],
+            components: underworldUi.buildOperationsComponents(state),
+          }).catch(() => {});
+        }
+
+        const currentBuilding = underworld.resolveBuilding(state, session.underworldBuildingId);
+        if (!currentBuilding.building) {
+          session.underworldBuildingId = state.buildings[0]?.id || null;
+        }
+
+        return msg.edit({
+          embeds: [underworldUi.buildBuildingEmbed(state, session.underworldBuildingId)],
+          components: underworldUi.buildBuildingComponents(state, session.underworldBuildingId),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling") {
+        const state = await underworld.ensureState(guildId, userId);
+        await underworld.applyRuntime(guildId, userId, state);
+        await smugglingEngine.openDueEvent(guildId, userId, state);
+        await underworld.saveState(guildId, userId, state);
+        const suspicionInfo = await underworldSuspicion.getUnderworldSuspicion(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildSmugglingHomeEmbed(state, suspicionInfo)],
+          components: underworldUi.buildSmugglingHomeComponents(state),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_garage") {
+        const state = await underworld.ensureState(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildVehicleGarageEmbed(state)],
+          components: underworldUi.buildVehicleGarageComponents(state),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_shop") {
+        if (session.underworldSmugglingShopClass) {
+          return msg.edit({
+            embeds: [underworldUi.buildVehicleShopCategoryEmbed(session.underworldSmugglingShopClass)],
+            components: underworldUi.buildVehicleShopCategoryComponents(session.underworldSmugglingShopClass),
+          }).catch(() => {});
+        }
+        return msg.edit({
+          embeds: [underworldUi.buildVehicleShopEmbed()],
+          components: underworldUi.buildVehicleShopComponents(),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_start") {
+        const state = await underworld.ensureState(guildId, userId);
+        const suspicionInfo = await underworldSuspicion.getUnderworldSuspicion(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildStartRunEmbed(state, session.underworldSmugglingFlow || {}, suspicionInfo)],
+          components: underworldUi.buildStartRunComponents(state, session.underworldSmugglingFlow || {}),
+        }).catch(() => {});
+      }
+
+      if (session.view === "underworld_smuggling_active") {
+        const state = await underworld.ensureState(guildId, userId);
+        await smugglingEngine.openDueEvent(guildId, userId, state);
+        await underworld.saveState(guildId, userId, state);
+        const suspicionInfo = await underworldSuspicion.getUnderworldSuspicion(guildId, userId);
+        return msg.edit({
+          embeds: [underworldUi.buildActiveRunEmbed(state, suspicionInfo)],
+          components: underworldUi.buildActiveRunComponents(state),
+        }).catch(() => {});
+      }
+
       if (session.view === "enterprises") {
         return msg.edit({
-          embeds: [buildEnterprisesEmbed({ cooldownUnix: cd })],
+          embeds: [buildEnterprisesEmbed()],
           components: buildEnterprisesComponents(false),
         }).catch(() => {});
       }
@@ -752,9 +978,13 @@ function scheduleReturnToCategory(delayMs = 5000) {
         const cooldowns = {
           crimeGlobal: await getCooldownUnixIfActive(guildId, userId, CRIME_GLOBAL_KEY),
           store: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.store),
+          chase: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.chase),
+          drugs: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.drugs),
           scam: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.scam),
           heist: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.heist),
           major: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.major),
+          bribe: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.bribe),
+          layLow: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.layLow),
         };
 
         return msg
@@ -793,11 +1023,25 @@ function scheduleReturnToCategory(delayMs = 5000) {
         // ⚠️ BUT: Grind job runtime buttons use modals, so we must NOT deferUpdate for grind_clerk:* actions.
         const isClerkRuntime = actionId.startsWith("grind_clerk:");
         const isTaxiRuntime = actionId.startsWith("grind_taxi:");
-        if (isClerkRuntime || isTaxiRuntime) {
+        const isFarmingModalRuntime =
+          actionId.startsWith("farm_store_fertiliser_buy:") ||
+          actionId.startsWith("farm_store_husbandry_buy:");
+        if (isClerkRuntime || isTaxiRuntime || isFarmingModalRuntime) {
           resetInactivity();
           cancelAutoReturn();
-          // keep the /job board alive while the grind module runs
-          return;            // modal safety: the grind module will handle/ack as needed
+          if (isFarmingModalRuntime) {
+            await handleFarmingInteraction({
+              actionId,
+              interaction: btn,
+              session,
+              msg,
+              pool,
+              guildId,
+              userId,
+              redraw,
+            });
+          }
+          return;            // modal safety: the feature module will handle/ack as needed
         }
 
         await ensureAck(btn);
@@ -874,6 +1118,21 @@ function scheduleReturnToCategory(delayMs = 5000) {
           await redraw();
           return;
         }
+        if (actionId === "job_cat:underworld") {
+          session.view = "underworld";
+          session.lastCategory = "underworld";
+          await redraw();
+          return;
+        }
+        if (await handleUnderworldInteraction({
+          actionId,
+          interaction: btn,
+          session,
+          guildId,
+          userId,
+          redraw,
+        })) return;
+
         if (await handleFarmingInteraction({
           actionId,
           interaction: btn,
@@ -928,6 +1187,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           userId,
           payUser,
           checkCooldownOrTell,
+          startCooldown,
           scheduleReturnToCategory,
           legendary: {
             skillTimeMs: LEGENDARY_SKILL_TIME_MS,
@@ -943,6 +1203,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           msg,
           payUser,
           checkCooldownOrTell,
+          startCooldown,
           scheduleReturnToCategory,
         })) return;
 
@@ -973,7 +1234,8 @@ function scheduleReturnToCategory(delayMs = 5000) {
     // refresh only updates navigation views
     const refresh = setInterval(async () => {
       if (collector.ended) return clearInterval(refresh);
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "manufacturing", "manu_plot", "manu_plot_type", "manu_plot_import", "manu_plot_materials", "manu_market", "manu_contracts"].includes(session.view)) {
+      if (session.returnTimer) return;
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "manufacturing", "manu_plot", "manu_plot_type", "manu_plot_import", "manu_plot_materials", "manu_market", "manu_contracts", "underworld", "underworld_operations", "underworld_building", "underworld_smuggling", "underworld_smuggling_garage", "underworld_smuggling_shop", "underworld_smuggling_start", "underworld_smuggling_active"].includes(session.view)) {
         await redraw();
       }
     }, 10_000);

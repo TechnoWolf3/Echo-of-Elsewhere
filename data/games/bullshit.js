@@ -27,6 +27,7 @@ const { tryDebitUser, creditUser, addServerBank, bankToUserIfEnough } = require(
 const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
+const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -44,6 +45,12 @@ const {
 const MIN_BUYIN = 500;
 const MIN_PLAYERS = 3;
 const MAX_PLAYERS = 10;
+
+async function recordCasinoContractProgress(guildId, userId, { played = 0, wins = 0, profit = 0 } = {}) {
+  if (played > 0) await recordContractProgress({ guildId, userId, metric: "casino_games_played", amount: played }).catch(() => {});
+  if (wins > 0) await recordContractProgress({ guildId, userId, metric: "casino_wins", amount: wins }).catch(() => {});
+  if (profit > 0) await recordContractProgress({ guildId, userId, metric: "casino_profit", amount: Math.floor(profit) }).catch(() => {});
+}
 
 const REVEAL_STAGE_DELAY_MS = 2200;
 const REVOLVER_STAGE_DELAY_MS = 2800;
@@ -506,6 +513,15 @@ async function endGame(table, winId) {
     } catch (e) {
       console.error("[Bullshit] payout failed:", e);
     }
+  }
+
+  for (const p of table.players.values()) {
+    if (!p.paid || isBotId(p.userId)) continue;
+    await recordCasinoContractProgress(table.guildId, p.userId, {
+      played: 1,
+      wins: p.userId === winId && payout > 0 ? 1 : 0,
+      profit: p.userId === winId ? Math.max(0, payout - Number(p.buyIn || 0)) : 0,
+    });
   }
 
   for (const [playerId] of table.players.entries()) {

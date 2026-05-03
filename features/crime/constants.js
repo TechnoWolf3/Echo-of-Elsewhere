@@ -7,6 +7,8 @@ const CRIME_KEYS = {
   heist: "crime_heist",
   major: "crime_heist_major",
   scam: "crime_scam",
+  bribe: "crime_bribe_officer",
+  layLow: "crime_lay_low",
 };
 
 function heatTTLMinutesForHeistOutcome(outcome, { mode = "heist" } = {}) {

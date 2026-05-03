@@ -5,7 +5,7 @@ module.exports = {
   id: "drinking",
   name: "Drinking Games",
   emoji: "🍻",
-  description: "Party games and questionable decisions.",
+  description: "Raise a glass. Lower your standards.",
   order: 2,
 
   games: [
@@ -13,7 +13,7 @@ module.exports = {
       id: "votendrink",
       name: "Vote & Drink",
       emoji: "🗳️",
-      description: "Vote-based party game. Loser drinks.",
+      description: "Vote fast. Someone drinks.",
       run: async (interaction, ctx = {}) => {
         const game = require("../votendrink");
         return game.startFromHub(interaction, ctx);

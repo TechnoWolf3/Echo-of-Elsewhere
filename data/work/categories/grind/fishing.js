@@ -48,25 +48,25 @@ function clamp(n, a, b) {
 // weight = roll chance, value = base payout.
 const DEFAULT_TABLE = {
   junk: [
-    { name: "Old Boot", weight: 22, value: 40 },
-    { name: "Rusty Can", weight: 18, value: 35 },
-    { name: "Tangled Line", weight: 12, value: 25 },
-    { name: "Seaweed Clump", weight: 16, value: 30 },
+    { name: "Old Boot", weight: 22, value: 360 },
+    { name: "Rusty Can", weight: 18, value: 315 },
+    { name: "Tangled Line", weight: 12, value: 225 },
+    { name: "Seaweed Clump", weight: 16, value: 270 },
   ],
   common: [
-    { name: "Bream", weight: 26, value: 120 },
-    { name: "Whiting", weight: 24, value: 110 },
-    { name: "Flathead", weight: 20, value: 135 },
-    { name: "Mackerel", weight: 14, value: 150 },
+    { name: "Bream", weight: 26, value: 1080 },
+    { name: "Whiting", weight: 24, value: 990 },
+    { name: "Flathead", weight: 20, value: 1215 },
+    { name: "Mackerel", weight: 14, value: 1350 },
   ],
   rare: [
-    { name: "Golden Snapper", weight: 9, value: 520 },
-    { name: "Tiger Trout", weight: 7, value: 600 },
-    { name: "Moon Koi", weight: 5, value: 750 },
+    { name: "Golden Snapper", weight: 9, value: 4680 },
+    { name: "Tiger Trout", weight: 7, value: 5400 },
+    { name: "Moon Koi", weight: 5, value: 6750 },
   ],
   legendary: [
-    { name: "Mythic Marlin", weight: 2, value: 2400 },
-    { name: "Abyss Pike", weight: 2, value: 2600 },
+    { name: "Mythic Marlin", weight: 2, value: 21600 },
+    { name: "Abyss Pike", weight: 2, value: 23400 },
   ],
 };
 
@@ -225,7 +225,7 @@ module.exports = function startFishing(btn, { pool, boardMsg, guildId, userId } 
           ultras,
           overtime,
         }, { activityEffects: ACTIVITY_EFFECTS, awardSource: "grind_fishing" });
-        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS);
+        await setJobCooldownSeconds(db, guildId, userId, JOB_COOLDOWN_SECONDS, "job:grind:fishing");
       }
 
       let lockTs = null;
