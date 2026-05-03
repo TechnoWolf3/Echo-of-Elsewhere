@@ -6,7 +6,7 @@ module.exports = {
   emoji: "🏢",
   blurb: "Move beyond wages and start building something bigger.",
   description:
-    "Enterprises are long-term progression systems for players who want ownership, reinvestment, and slower strategic earning paths. Farming is the current enterprise, with land, crops, machinery, barns, weather, and market selling all feeding into one operation.",
+    "Enterprises are long-term progression systems for players who want ownership, reinvestment, and slower strategic earning paths. Current enterprise paths include Farming and Manufacturing, with land, crops, machinery, barns, factory plots, recipes, contracts, and market selling all feeding into broader economy loops.",
 
   items: [
     {
@@ -90,6 +90,33 @@ module.exports = {
         "Harvested crops and barn outputs are stored as inventory items. The Farm Market lists sellable farm items with seasonal market pricing and lets players sell their stock.\n\n" +
         "Farming also contributes to contract progress. Planting can count as field work, while harvested crop quantities and barn output quantities feed the farming harvest metric.\n\n" +
         "This ties the long-term farm loop back into the wider economy and contract systems.",
+    },
+    {
+      id: "manufacturing_overview",
+      name: "Manufacturing Overview",
+      short: "A factory-based enterprise for recipes, contracts, and finished goods.",
+      detail:
+        "Manufacturing lives under **/job** -> **Enterprises** -> **Manufacturing** and mirrors Farming's plot-based structure with factory plots, upgrades, storage, production, and markets.\n\n" +
+        "Players buy factory plots, assign each plot a factory type, import farm goods or buy dedicated materials, then run recipes through timed production slots to create finished goods.\n\n" +
+        "Manufacturing is designed to connect back into the wider economy through markets, contracts, bank costs, and cross-enterprise resource planning.",
+    },
+    {
+      id: "manufacturing_factories_recipes",
+      name: "Manufacturing - Factory Plots & Recipes",
+      short: "Assign factory types, manage storage, and turn inputs into finished products.",
+      detail:
+        "Factory plots are the production equivalent of farming fields. Each plot can be bought, upgraded, and assigned a permanent factory type until the player changes it.\n\n" +
+        "Current types are Food Processing, Textiles, Electronics, and Construction. Each type has its own level-gated recipes and event flavour.\n\n" +
+        "Recipe production uses the plot's input and output storage. Inputs can come from imported farm goods or manufacturing-only materials. Higher plot levels unlock more recipe access, more storage, and more production slots.",
+    },
+    {
+      id: "manufacturing_supply_market_contracts",
+      name: "Manufacturing - Supply, Market & Contracts",
+      short: "Import inputs, buy materials, sell outputs, and fulfill contracts.",
+      detail:
+        "Manufacturing has two supply paths. Players can import farm goods with a transport timer or buy manufacturing-only material bundles instantly for higher cost.\n\n" +
+        "Purchased manufacturing materials cannot be sold. They exist only to support factory production.\n\n" +
+        "Finished goods can be sold through the Manufacturing Market for instant cash or turned in through Manufacturing Contracts for better payouts. This makes manufacturing a strong sink-and-convert enterprise that rewards good planning across systems.",
     },
   ],
 };

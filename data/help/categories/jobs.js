@@ -19,7 +19,7 @@ module.exports = {
         "🧠 **Nightwalker** – adult-themed income with higher risk.\n" +
         "🕒 **Grind** – steady, repeatable work, but builds **Fatigue**\n" +
         "🕶️ **Crime** – bigger payouts, but builds **Heat**.\n" +
-        "🏢 **Enterprises** – longer-term systems such as Farming.\n" +
+        "🏢 **Enterprises** – longer-term systems such as Farming and Manufacturing.\n" +
         "🧪 **Underworld** – persistent illegal operations with serious risk.\n\n" +
         "**Quick How-To:**\n" +
         "- Run **/job**\n" +
@@ -129,6 +129,48 @@ module.exports = {
         "**Weather:** Clear weather is neutral, rain can help yields, heatwaves and frost can reduce crop output, and storms can damage fields.\n" +
         "**Market:** Harvested crops and barn outputs become inventory items. Open **Market** from the farming hub to sell farm stock using current market pricing.\n\n" +
         "Farming also feeds contract progress through planted fields and harvested quantities.",
+    },
+    {
+      id: "manufacturing",
+      name: "Enterprise - Manufacturing",
+      short: "Overview of the manufacturing enterprise.",
+      detail:
+        "**Manufacturing**\n" +
+        "Manufacturing lives under **/job** -> **Enterprises** -> **Manufacturing**. It is a slower enterprise path built around factory plots, recipe production, contracts, and finished-goods markets.\n\n" +
+        "**Main areas:**\n" +
+        "- Manufacturing hub: plot overview, market, contracts, and supply access\n" +
+        "- Factory Plots: assign a factory type, upgrade, import inputs, buy materials, and run recipes\n" +
+        "- Manufacturing Market: sell finished goods instantly\n" +
+        "- Manufacturing Contracts: turn in finished goods for better payout\n" +
+        "- Supply flow: import Farming goods or buy manufacturing-only materials",
+    },
+    {
+      id: "manufacturingHowTo",
+      name: "Manufacturing How-To - Plots, Recipes & Supply",
+      short: "Buy a plot, assign a factory type, stock it, and start production.",
+      detail:
+        "**Factory Plots & Recipes**\n" +
+        "Manufacturing mirrors Farming's plot flow, but replaces fields and crops with factory plots and recipes.\n\n" +
+        "**How to start:**\n" +
+        "- Open **/job** -> **Enterprises** -> **Manufacturing**\n" +
+        "- Buy a factory plot\n" +
+        "- Open the plot and assign a factory type\n" +
+        "- Import Farming goods or buy materials into the plot's input storage\n" +
+        "- Review the unlocked recipe list on the plot page\n" +
+        "- Start a recipe from the production dropdown\n\n" +
+        "Each plot has limited input and output storage. Higher plot levels increase storage and unlock more production slots and recipes.",
+    },
+    {
+      id: "manufacturingMarketContracts",
+      name: "Manufacturing How-To - Market, Contracts & Events",
+      short: "Sell finished goods, fulfill contracts, and handle bonus events.",
+      detail:
+        "**Market, Contracts & Events**\n" +
+        "Manufacturing turns raw inputs into finished goods that can be monetised in two ways.\n\n" +
+        "**Market:** Instant sales with fluctuating prices.\n" +
+        "**Contracts:** Better payout, but requires the right goods on hand.\n" +
+        "**Factory Events:** Optional mid-run events can appear during production. Ignoring them causes no penalty. Handling them grants a bonus outcome only.\n\n" +
+        "Bought manufacturing materials cannot be sold back. They exist only to support production inside Manufacturing.",
     },
     {
       id: "underworld",

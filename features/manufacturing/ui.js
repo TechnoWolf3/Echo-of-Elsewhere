@@ -26,6 +26,26 @@ function summarizeStorage(storage = {}) {
     .join("\n");
 }
 
+function getRecipeAvailableQty(plot, itemId) {
+  const inputQty = Number(plot?.inputStorage?.[itemId] || 0);
+  const outputQty = Number(plot?.outputStorage?.[itemId] || 0);
+  return inputQty + outputQty;
+}
+
+function formatRecipeInputs(recipe, plot) {
+  return (recipe.inputs || [])
+    .map((input) => {
+      const owned = getRecipeAvailableQty(plot, input.itemId);
+      return `${engine.getOutputItemName(input.itemId)} ${owned}/${input.amount}`;
+    })
+    .join(", ");
+}
+
+function buildRecipeSummary(recipe, plot) {
+  const inputText = formatRecipeInputs(recipe, plot);
+  return `**${recipe.name}**\nNeeds: ${inputText}\nMakes: ${engine.getOutputItemName(recipe.output.itemId)} x${recipe.output.amount} in ${recipe.baseTimeSeconds}s`;
+}
+
 function buildManufacturingEmbed(state) {
   const plots = state.plots || [];
   const nextCost = plots.length < config.MAX_PLOTS ? engine.getNextPlotCost(plots.length) : null;
@@ -170,6 +190,9 @@ function buildPlotEmbed(state, plotIndex) {
           : "";
       return `Slot ${index + 1}: ${recipe?.name || slot.recipeId} until <t:${Math.floor(Number(slot.endsAt || 0) / 1000)}:R>${eventLine}`;
     });
+  const availableRecipes = plot.factoryType
+    ? engine.getRecipesForFactory(plot.factoryType, plot.level).slice(0, 4)
+    : [];
 
   return ui.applySystemStyle(
     new EmbedBuilder()
@@ -201,6 +224,13 @@ function buildPlotEmbed(state, plotIndex) {
         {
           name: "Production Slots",
           value: activeSlots.length ? activeSlots.join("\n").slice(0, 1024) : "All slots idle.",
+          inline: false,
+        },
+        {
+          name: "Unlocked Recipes",
+          value: availableRecipes.length
+            ? availableRecipes.map((recipe) => buildRecipeSummary(recipe, plot)).join("\n\n").slice(0, 1024)
+            : "Assign a factory type to see recipes for this plot.",
           inline: false,
         }
       ),
@@ -277,7 +307,7 @@ function buildPlotComponents(state, plotIndex) {
             recipes.slice(0, 25).map((recipe) => ({
               label: recipe.name,
               value: `manu_start:${plotIndex}:${recipe.id}`,
-              description: `Lv ${recipe.unlockLevel} - ${recipe.baseTimeSeconds}s - ${recipe.output.amount} output`,
+              description: `${formatRecipeInputs(recipe, plot).slice(0, 90)} -> ${recipe.output.amount} out`,
             }))
           )
       )
