@@ -7,6 +7,42 @@ module.exports = {
   blurb: "Move beyond wages and start building something bigger.",
   description:
     "Enterprises are long-term progression systems for players who want ownership, reinvestment, and slower strategic earning paths. Current enterprise paths include Farming and Manufacturing, with land, crops, machinery, barns, factory plots, recipes, contracts, and market selling all feeding into broader economy loops.",
+  sections: [
+    {
+      id: "enterprise_basics",
+      name: "Enterprise Basics",
+      short: "How the enterprise layer fits into the wider economy.",
+      description: "Start here for the high-level picture before diving into specific enterprise systems.",
+      itemIds: ["enterprise_overview"],
+    },
+    {
+      id: "farming",
+      name: "Farming",
+      short: "Fields, weather, stores, barns, machinery, and market flow.",
+      description: "Everything tied to the farming enterprise, grouped into one cleaner section.",
+      itemIds: [
+        "farm_overview",
+        "farm_fields_crops",
+        "farm_weather_seasons",
+        "farm_store_fertiliser",
+        "farm_machine_shed",
+        "farm_barns_livestock",
+        "farm_husbandry_breeding",
+        "farm_market_contracts",
+      ],
+    },
+    {
+      id: "manufacturing",
+      name: "Manufacturing",
+      short: "Factory plots, recipes, supply lines, market selling, and contracts.",
+      description: "Everything tied to the manufacturing enterprise, from plot setup to finished-goods monetisation.",
+      itemIds: [
+        "manufacturing_overview",
+        "manufacturing_factories_recipes",
+        "manufacturing_supply_market_contracts",
+      ],
+    },
+  ],
 
   items: [
     {

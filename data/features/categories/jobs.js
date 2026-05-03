@@ -7,6 +7,68 @@ module.exports = {
   blurb: "Clock on, hustle hard, or risk everything for bigger money.",
   description:
     "Jobs are one of the main ways fresh money enters the economy. From easy legal shifts to grind jobs, crime, and nightlife work, every category offers a different style of earning with its own pressure and payout.",
+  sections: [
+    {
+      id: "nine_to_five",
+      name: "Work a 9-5",
+      short: "Structured legal work with stable income paths.",
+      description: "The legal work side of /job, built around steady income and lower risk.",
+      itemIds: [
+        "nine_to_five_transport",
+        "nine_to_five_trucker",
+        "nine_to_five_skill_check",
+        "nine_to_five_shift",
+      ],
+    },
+    {
+      id: "nightwalker",
+      name: "Nightwalker",
+      short: "Late-night social jobs with higher pressure and higher upside.",
+      description: "Nightwalker jobs focus on social reads, momentum, and riskier nightlife earnings.",
+      itemIds: [
+        "nightwalker_flirt",
+        "nightwalker_lap_dance",
+        "nightwalker_prostitute",
+      ],
+    },
+    {
+      id: "grind",
+      name: "Grind",
+      short: "Repeatable work loops that build fatigue over time.",
+      description: "Grind jobs are the steady, repeatable earning side of the job board.",
+      itemIds: [
+        "grind_store_clerk",
+        "grind_warehousing",
+        "grind_fishing",
+        "grind_quarry",
+      ],
+    },
+    {
+      id: "crime",
+      name: "Crime & Jail",
+      short: "Fast cash, heat, heists, and the jail consequences that follow.",
+      description: "Crime pushes payout ceilings higher, but it comes with heat, jail, and long-term pressure.",
+      itemIds: [
+        "crime_store_robbery",
+        "crime_heist",
+        "crime_major_heist",
+        "jail_system",
+      ],
+    },
+    {
+      id: "underworld",
+      name: "Underworld",
+      short: "Persistent illegal operations with runs, suspicion, raids, and storage.",
+      description: "Underworld is big enough to stand as its own grouped section instead of a few items buried in the jobs list.",
+      itemIds: [
+        "underworld_overview",
+        "underworld_buildings_operations",
+        "underworld_runs_events",
+        "underworld_suspicion_raids",
+        "underworld_storage",
+      ],
+    },
+  ],
 
   items: [
     {

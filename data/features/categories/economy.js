@@ -7,6 +7,44 @@ module.exports = {
   blurb: "A living economy powered by wallets, banks, loans, contracts, and the shared vault.",
   description:
     "Echo's economy is built to move, not sit still. Your wallet, your bank account, the server vault, loans, jobs, gambling, contracts, investments, and long-term progression all connect into one shared financial system.",
+  sections: [
+    {
+      id: "economy_core",
+      name: "Core Money Systems",
+      short: "The shared vault, your wallet, banking, inventory, and circulation.",
+      description: "Start here for the foundations of how money exists, moves, and is stored across Echo.",
+      itemIds: [
+        "server_bank",
+        "wallet_and_echo_reserve",
+        "shop_and_inventory",
+        "dynamic_circulation",
+      ],
+    },
+    {
+      id: "economy_progression",
+      name: "Progression & Growth",
+      short: "Loans, contracts, stock trading, lotteries, and income paths.",
+      description: "These are the systems that turn the economy into long-term progression instead of a single balance number.",
+      itemIds: [
+        "loan_system",
+        "income_systems",
+        "echo_stock_exchange",
+        "contracts",
+        "echo_powerball",
+      ],
+    },
+    {
+      id: "economy_pressure",
+      name: "Pressure, Loss & Events",
+      short: "Safeguards, risk, losses, and surprise events that keep money meaningful.",
+      description: "These systems add stakes, prevent spam, and keep the economy feeling alive instead of inflated.",
+      itemIds: [
+        "risk_and_loss_mechanics",
+        "cooldowns_and_regulations",
+        "random_events",
+      ],
+    },
+  ],
 
   items: [
     {
