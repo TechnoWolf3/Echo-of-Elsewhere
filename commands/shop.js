@@ -100,7 +100,7 @@ module.exports = {
     // LOADERS
     // -------------------------
     async function loadBuyItems() {
-      const items = await listStoreItems(guildId, { enabledOnly: true });
+      const items = await listStoreItems(guildId, { enabledOnly: true, buyableOnly: true });
       // decorate with category label
       return items.map((it) => ({
         ...it,

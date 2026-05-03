@@ -11,7 +11,7 @@ function clampQty(qty) {
 // Postgres expression: start of current UTC day
 const SQL_UTC_DAY_START = `(date_trunc('day', NOW() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')`;
 
-async function listStoreItems(guildId, { enabledOnly = true } = {}) {
+async function listStoreItems(guildId, { enabledOnly = true, buyableOnly = false } = {}) {
   const res = await pool.query(
     `
     SELECT item_id, name, description, price, kind, stackable, enabled, meta, sort_order,
@@ -20,9 +20,10 @@ async function listStoreItems(guildId, { enabledOnly = true } = {}) {
     FROM store_items
     WHERE guild_id = $1
       AND ($2::bool = false OR enabled = true)
+      AND ($3::bool = false OR COALESCE(price, 0) > 0)
     ORDER BY sort_order ASC, price ASC, name ASC
     `,
-    [guildId, enabledOnly]
+    [guildId, enabledOnly, buyableOnly]
   );
   return res.rows;
 }
