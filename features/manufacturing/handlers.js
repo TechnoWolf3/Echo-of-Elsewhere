@@ -188,16 +188,16 @@ async function handleManufacturingInteraction({
   if (actionId.startsWith("manu_material:")) {
     const [, plotIndexRaw, materialId] = actionId.split(":");
     const plotIndex = Number(plotIndexRaw);
-    const material = engine.getMaterial(materialId);
-    if (!material) {
-      await followUp(interaction, "❌ That material bundle no longer exists.");
-      return true;
-    }
-
     const state = await engine.ensureState(guildId, userId);
     const plot = state.plots?.[plotIndex];
     if (!plot) {
       await followUp(interaction, "❌ That factory plot does not exist.");
+      return true;
+    }
+
+    const material = engine.getShopItemsForPlot(plot).find((item) => item.id === materialId) || null;
+    if (!material) {
+      await followUp(interaction, "❌ That material bundle is not available for this plot right now.");
       return true;
     }
 

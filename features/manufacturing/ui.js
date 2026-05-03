@@ -9,7 +9,6 @@ const {
 const ui = require("../../utils/ui");
 const engine = require("../../utils/manufacturing/engine");
 const market = require("../../utils/manufacturing/market");
-const materials = require("../../data/manufacturing/materials");
 const config = require("../../data/manufacturing/config");
 
 function labelFactoryType(factoryType) {
@@ -421,25 +420,25 @@ function buildImportComponents(plotIndex, items) {
 }
 
 function buildMaterialsEmbed(plot, plotIndex) {
-  const items = Object.values(materials)
-    .filter((item) => !plot.factoryType || item.factoryTypes.includes(plot.factoryType));
+  const items = engine.getShopItemsForPlot(plot);
 
   return ui.applySystemStyle(
     new EmbedBuilder()
       .setTitle(`🛒 Plot ${plotIndex + 1} Supply Shop`)
       .setDescription(
         items.slice(0, 10).map((item) => {
-          return `**${item.name}**\n${ui.money(item.price)} for ${item.bundleAmount} ${item.unitName}${item.bundleAmount === 1 ? "" : "s"}`;
+          const relevant = !plot.factoryType || item.factoryTypes.includes(plot.factoryType);
+          const sourceLine = item.derived ? `\nRecipe item: ${item.sourceRecipeName}` : "";
+          return `${relevant ? "⭐ " : ""}**${item.name}**\n${ui.money(item.price)} for ${item.bundleAmount} ${item.unitName}${item.bundleAmount === 1 ? "" : "s"}${sourceLine}`;
         }).join("\n\n") || "No shop bundles are available for this plot yet."
       ),
     "job",
-    "Purchased materials are instant, more expensive, and cannot be sold."
+    "Purchased materials are instant, more expensive, and cannot be sold. Starred bundles match your unlocked production chain for this plot."
   );
 }
 
 function buildMaterialsComponents(plot, plotIndex) {
-  const items = Object.values(materials)
-    .filter((item) => !plot.factoryType || item.factoryTypes.includes(plot.factoryType));
+  const items = engine.getShopItemsForPlot(plot);
   const rows = [];
 
   if (items.length) {
@@ -452,7 +451,15 @@ function buildMaterialsComponents(plot, plotIndex) {
             items.slice(0, 25).map((item) => ({
               label: item.name,
               value: `manu_material:${plotIndex}:${item.id}`,
-              description: `${ui.money(item.price)} for ${item.bundleAmount}`,
+              description: `${
+                !plot.factoryType
+                  ? "General stock"
+                  : item.derived
+                    ? "Unlocked recipe item"
+                    : item.factoryTypes.includes(plot.factoryType)
+                      ? "Best match"
+                      : "Other type"
+              } - ${ui.money(item.price)} for ${item.bundleAmount}`.slice(0, 100),
             }))
           )
       )

@@ -26,6 +26,70 @@ function getMaterial(materialId) {
   return materials[materialId] || null;
 }
 
+function isFarmCropItem(itemId) {
+  return Boolean(crops[itemId]);
+}
+
+function getRecipeByOutputItem(itemId) {
+  return recipes.find((entry) => entry.output?.itemId === itemId) || null;
+}
+
+function roundShopPrice(value) {
+  return Math.max(25, Math.ceil(Number(value || 0) / 5) * 5);
+}
+
+function buildDerivedShopBundle(recipe) {
+  const outputAmount = Math.max(1, Number(recipe.output?.amount || 1));
+  const unitPrice = roundShopPrice((Number(recipe.baseValue || 0) / outputAmount) * 1.35);
+  const unitName = recipe.name.toLowerCase();
+  return {
+    id: recipe.output.itemId,
+    name: `${recipe.name} Supply Pack`,
+    unitName,
+    bundleAmount: outputAmount,
+    price: unitPrice * outputAmount,
+    description: `Purchased shortcut bundle for ${recipe.name}.`,
+    factoryTypes: [recipe.factoryType],
+    derived: true,
+    sourceRecipeId: recipe.id,
+    sourceRecipeName: recipe.name,
+  };
+}
+
+function getShopItemsForPlot(plot = null) {
+  const catalog = new Map();
+  for (const item of Object.values(materials)) {
+    catalog.set(item.id, { ...item, derived: false });
+  }
+
+  if (!plot?.factoryType) {
+    return Array.from(catalog.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  const unlockedRecipes = getRecipesForFactory(plot.factoryType, plot.level);
+  const unlockedRecipeOutputs = new Set(unlockedRecipes.map((recipe) => recipe.output?.itemId).filter(Boolean));
+
+  for (const recipe of unlockedRecipes) {
+    for (const input of recipe.inputs || []) {
+      if (catalog.has(input.itemId)) continue;
+      if (isFarmCropItem(input.itemId)) continue;
+      if (!unlockedRecipeOutputs.has(input.itemId)) continue;
+
+      const sourceRecipe = getRecipeByOutputItem(input.itemId);
+      if (!sourceRecipe || sourceRecipe.unlockLevel > Number(plot.level || 1)) continue;
+      catalog.set(input.itemId, buildDerivedShopBundle(sourceRecipe));
+    }
+  }
+
+  return Array.from(catalog.values()).sort((a, b) => {
+    const aRelevant = a.factoryTypes?.includes(plot.factoryType) ? 1 : 0;
+    const bRelevant = b.factoryTypes?.includes(plot.factoryType) ? 1 : 0;
+    const aDerived = a.derived ? 1 : 0;
+    const bDerived = b.derived ? 1 : 0;
+    return bRelevant - aRelevant || bDerived - aDerived || a.name.localeCompare(b.name);
+  });
+}
+
 function newPlot() {
   return {
     level: 1,
@@ -456,7 +520,7 @@ async function startProduction(guildId, userId, state, plotIndex, recipeId) {
 }
 
 function getOutputItemName(itemId) {
-  const recipe = recipes.find((entry) => entry.output?.itemId === itemId);
+  const recipe = getRecipeByOutputItem(itemId);
   if (recipe) return recipe.name;
   if (materials[itemId]) return materials[itemId].name;
   if (crops[itemId]) return crops[itemId].name;
@@ -620,6 +684,7 @@ module.exports = {
   getRecipe,
   getRecipesForFactory,
   getMaterial,
+  getShopItemsForPlot,
   getNextPlotCost,
   getUpgradeCost,
   getProductionSlotCount,
