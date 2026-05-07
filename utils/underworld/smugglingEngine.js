@@ -9,6 +9,9 @@ const { setJail } = require("../jail");
 const timers = require("../timers");
 
 const cfg = config.SMUGGLING || {};
+const PRODUCED_ROUTE_PAYOUT_MULT = 1.2;
+const PRODUCED_ROUTE_RISK_BONUS = 0.08;
+const PRODUCED_ROUTE_SUSPICION_MULT = 1.25;
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, Number(value || 0)));
@@ -68,14 +71,19 @@ function deliveryCountForAmount(amount) {
   return clamp(Math.ceil(Number(amount || 0) / parcelSize), 1, Number(cfg.maxDeliveriesPerRun || 6));
 }
 
+function sourcePayoutMultiplier(sourceType) {
+  return sourceType === "produced" ? PRODUCED_ROUTE_PAYOUT_MULT : 1;
+}
+
 function calculateRunEstimate({ productId, sourceType, cargoAmount, vehicle, suspicionScore = 0 }) {
   const product = products[productId];
   const def = getVehicleDefinition(vehicle?.vehicleType || vehicle?.id || vehicle?.typeId);
   const amount = Math.max(1, Math.floor(Number(cargoAmount || 0)));
   const deliveries = deliveryCountForAmount(amount);
   const sellValue = sourceType === "purchased" ? product.purchasedSellValue : product.producedSellValue;
+  const payoutMultiplier = sourcePayoutMultiplier(sourceType);
   const upfrontCost = sourceType === "purchased" ? amount * Number(product.purchasedCost || 0) : 0;
-  const estimatedPayout = amount * Number(sellValue || 0);
+  const estimatedPayout = Math.round(amount * Number(sellValue || 0) * payoutMultiplier);
   const durability = Number(vehicle?.durabilityCurrent ?? def?.durability ?? 100);
   const speedMultiplier = 1 / Math.max(0.25, Number(def?.speed || 1));
   const durabilityPenalty = durability < 25 ? 1.45 : durability < 50 ? 1.25 : 1;
@@ -86,7 +94,8 @@ function calculateRunEstimate({ productId, sourceType, cargoAmount, vehicle, sus
     30
   );
   const baseSuspicion = amount * Number(product.baseSuspicionPerUnit || 0.1) * Number(def?.heatProfile || 1);
-  const suspicionGain = clamp(Math.ceil(baseSuspicion), 2, 30);
+  const sourceSuspicionMult = sourceType === "produced" ? PRODUCED_ROUTE_SUSPICION_MULT : 1;
+  const suspicionGain = clamp(Math.ceil(baseSuspicion * sourceSuspicionMult), 2, 36);
   const durabilityRisk = durability < 25 ? 0.22 : durability < 50 ? 0.12 : 0;
   const risk = clamp(
     0.06 +
@@ -96,7 +105,8 @@ function calculateRunEstimate({ productId, sourceType, cargoAmount, vehicle, sus
       Number(product.baseRisk || 1) * 0.04 +
       Number(def?.heatProfile || 1) * 0.04 -
       Number(def?.stealth || 1) * 0.035 +
-      durabilityRisk,
+      durabilityRisk +
+      (sourceType === "produced" ? PRODUCED_ROUTE_RISK_BONUS : 0),
     0.03,
     0.82
   );
@@ -108,6 +118,7 @@ function calculateRunEstimate({ productId, sourceType, cargoAmount, vehicle, sus
     deliveries,
     upfrontCost,
     estimatedPayout,
+    payoutMultiplier,
     estimatedProfit: estimatedPayout - upfrontCost,
     durationMinutes,
     suspicionGain,
@@ -315,7 +326,7 @@ async function finalizeRun(guildId, userId, state, runId, { payoutFn } = {}) {
   let damage = randInt(2, 5) + Number(run.risk?.damageDelta || 0);
   let suspicionGain = Number(run.risk?.suspicionGain || 0);
   let jailedMinutes = 0;
-  const sellValue = run.sourceType === "purchased" ? product.purchasedSellValue : product.producedSellValue;
+  const sellValue = (run.sourceType === "purchased" ? product.purchasedSellValue : product.producedSellValue) * sourcePayoutMultiplier(run.sourceType);
 
   if (outcome === "clean_success") {
     payout = Math.round(Number(run.cargoRemaining || 0) * sellValue * Number(run.risk?.payoutMultiplier || 1));

@@ -128,12 +128,12 @@ function buildSmugglingHomeEmbed(state, suspicionInfo = { suspicion: 0, band: { 
           inline: true,
         },
         {
-          name: "Product Storage",
-          value: inventoryLines || "No produced product stored yet. Purchased cargo is always available at worse margins.",
+          name: "Operations Stock",
+          value: inventoryLines || "No operation product stored yet. Purchased cargo is always available at worse margins.",
         }
       ),
     "underworld",
-    "Smuggling uses shared Underworld suspicion."
+    "Operation stock gets a route premium, but carries extra heat."
   );
 }
 
@@ -343,9 +343,14 @@ function buildStartRunEmbed(state, flow = {}, suspicionInfo = { suspicion: 0 }) 
     : null;
   const product = flow.productId ? products[flow.productId] : null;
   const vehicleDef = vehicle ? smuggling.getVehicleDefinition(vehicle.vehicleType) : null;
+  const sourceLabel = flow.sourceType === "produced"
+    ? "Operation stock"
+    : flow.sourceType === "purchased"
+      ? "Purchased cargo"
+      : "Choose source";
   const lines = [
     `Product: **${product?.label || "Choose product"}**`,
-    `Source: **${flow.sourceType || "Choose source"}**`,
+    `Source: **${sourceLabel}**`,
     `Vehicle: **${vehicleDef?.label || "Choose vehicle"}**`,
     `Cargo: **${flow.cargoAmount || "Choose amount"}**`,
   ];
@@ -354,6 +359,9 @@ function buildStartRunEmbed(state, flow = {}, suspicionInfo = { suspicion: 0 }) 
     lines.push(`Estimated payout: **${ui.money(estimate.estimatedPayout)}**`);
     lines.push(`Upfront cost: **${ui.money(estimate.upfrontCost)}**`);
     lines.push(`Estimated profit: **${ui.money(estimate.estimatedProfit)}**`);
+    if (flow.sourceType === "produced") {
+      lines.push(`Operation route premium: **x${Number(estimate.payoutMultiplier || 1).toFixed(2)} payout**`);
+    }
     lines.push(`Duration: **${estimate.durationMinutes} min** | Deliveries: **${estimate.deliveries}**`);
     lines.push(`Suspicion: **+${estimate.suspicionGain}** | Risk: **${estimate.riskBand}**`);
     lines.push("Busts can seize cargo, damage vehicles, and cause jail.");
@@ -367,20 +375,21 @@ function buildStartRunEmbed(state, flow = {}, suspicionInfo = { suspicion: 0 }) 
 
 function buildStartRunComponents(state, flow = {}) {
   const rows = [];
+  const smugglingState = smuggling.ensureSmugglingState(state);
   if (!flow.productId) {
     rows.push(new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder().setCustomId("uw_smuggle_product_select").setPlaceholder("Choose cargo...").addOptions(
         Object.values(products).map((product) => ({
           label: product.label,
           value: `uw_smuggle_product:${product.id}`,
-          description: `${product.unitLabel} | produced $${product.producedSellValue}/unit | purchased $${product.purchasedSellValue}/unit`.slice(0, 100),
+          description: `${Number(smugglingState.inventory[product.id] || 0)} in Operations stock | route premium on produced cargo`.slice(0, 100),
         }))
       )
     ));
   } else if (!flow.sourceType) {
-    const qty = Number(smuggling.ensureSmugglingState(state).inventory[flow.productId] || 0);
+    const qty = Number(smugglingState.inventory[flow.productId] || 0);
     rows.push(new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("uw_smuggle_source:produced").setLabel(`Produced (${qty})`).setStyle(ButtonStyle.Success).setDisabled(qty <= 0),
+      new ButtonBuilder().setCustomId("uw_smuggle_source:produced").setLabel(`Operations Stock (${qty})`).setStyle(ButtonStyle.Success).setDisabled(qty <= 0),
       new ButtonBuilder().setCustomId("uw_smuggle_source:purchased").setLabel("Purchased").setStyle(ButtonStyle.Danger)
     ));
   } else if (!flow.vehicleId) {
@@ -399,7 +408,10 @@ function buildStartRunComponents(state, flow = {}) {
   } else if (!flow.cargoAmount) {
     const vehicle = smuggling.getOwnedVehicle(state, flow.vehicleId);
     const def = smuggling.getVehicleDefinition(vehicle?.vehicleType);
-    const max = Number(def?.capacity || 1);
+    const stockLimit = flow.sourceType === "produced"
+      ? Number(smugglingState.inventory[flow.productId] || 0)
+      : Infinity;
+    const max = Math.max(1, Math.min(Number(def?.capacity || 1), stockLimit));
     const amounts = [...new Set([Math.min(5, max), Math.floor(max * 0.25), Math.floor(max * 0.5), Math.floor(max * 0.75), max].filter((n) => n > 0))];
     rows.push(new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder().setCustomId("uw_smuggle_amount_select").setPlaceholder("Choose cargo amount...").addOptions(
