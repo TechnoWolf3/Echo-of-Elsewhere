@@ -1,5 +1,5 @@
 const { pool } = require("../db");
-const { tryDebitBank } = require("../economy");
+const { tryDebitBank, addServerBank } = require("../economy");
 const machines = require("../../data/farming/machines");
 const TASK_REQUIREMENTS = {
   cultivate: ["tractor", "cultivator"],
@@ -140,6 +140,12 @@ async function buyMachine(guildId, userId, machineId) {
 
   state.owned[machineId] = getOwnedCount(state, machineId) + 1;
   await saveMachineState(guildId, userId, state);
+  await addServerBank(guildId, machine.buyPrice, "farm_machine_buy_bank", {
+    enterprise: "farming",
+    action: "buy_machine",
+    machineId,
+    userId,
+  }).catch((e) => console.warn("[FARM][MACHINES] server bank buy deposit failed:", e?.message || e));
 
   return { ok: true, machine };
 }
@@ -187,6 +193,12 @@ async function rentMachine(guildId, userId, machineId) {
   await saveMachineState(guildId, userId, state);
 
   await logMachineTransaction(guildId, userId, -machine.rentPrice, "farm_machine_rent", { machineId });
+  await addServerBank(guildId, machine.rentPrice, "farm_machine_rent_bank", {
+    enterprise: "farming",
+    action: "rent_machine",
+    machineId,
+    userId,
+  }).catch((e) => console.warn("[FARM][MACHINES] server bank rent deposit failed:", e?.message || e));
 
   return { ok: true, machine, expiresAt: now + RENTAL_DURATION_MS };
 }

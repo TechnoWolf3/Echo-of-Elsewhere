@@ -27,6 +27,7 @@ const contracts = require('./contracts');
 const farming = require('./farming/engine');
 const seasonControl = require('./farming/seasonControl');
 const channelPurger = require('./channelPurger');
+const { pool } = require('./db');
 
 function hasBotMaster(member) {
   return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
@@ -56,6 +57,7 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'economy:addbalance', label: 'Add Balance', style: ButtonStyle.Primary, modal: true },
     { id: 'economy:addserverbal', label: 'Add Server Bank', style: ButtonStyle.Primary, modal: true },
     { id: 'economy:serverbal', label: 'View Server Bank', style: ButtonStyle.Secondary, modal: false },
+    { id: 'economy:txlog', label: 'Tx Log', style: ButtonStyle.Secondary, modal: true },
     { id: 'economy:powerballbuyers', label: 'Powerball Buyers', style: ButtonStyle.Secondary, modal: false },
   ],
   effects: [
@@ -282,6 +284,162 @@ async function fetchRoleSafe(guild, roleId) {
   return guild.roles.fetch(id).catch(() => null);
 }
 
+function money(n) {
+  const value = Number(n || 0);
+  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}$${Math.abs(value).toLocaleString()}`;
+}
+
+function txTypePatterns(search) {
+  const raw = String(search || '').trim().toLowerCase();
+  if (!raw || ['all', '*'].includes(raw)) return { label: 'All', patterns: [], serverOnly: false };
+  if (raw === 'server') return { label: raw, patterns: [], serverOnly: true };
+
+  const aliases = {
+    casino: ['blackjack%', 'roulette%', 'higherlower%', 'bullshit%', 'keno%', 'scratchcard%'],
+    games: ['blackjack%', 'roulette%', 'higherlower%', 'bullshit%', 'keno%', 'scratchcard%'],
+    blackjack: ['blackjack%'],
+    roulette: ['roulette%'],
+    higherlower: ['higherlower%'],
+    'higher/lower': ['higherlower%'],
+    bullshit: ['bullshit%'],
+    keno: ['keno%'],
+    scratchcards: ['scratchcard%'],
+    scratchcard: ['scratchcard%'],
+    enterprises: ['farming%', 'farm_machine%', 'manufacturing%', 'underworld%'],
+    enterprise: ['farming%', 'farm_machine%', 'manufacturing%', 'underworld%'],
+    farming: ['farming%', 'farm_machine%'],
+    farm: ['farming%', 'farm_machine%'],
+    manufacturing: ['manufacturing%'],
+    underworld: ['underworld%'],
+    smuggling: ['underworld_smuggling%'],
+    grind: ['grind%', 'job_grind%'],
+    job: ['job%'],
+    jobs: ['job%'],
+    bank: ['%bank%'],
+    'server bank': ['%bank%'],
+  };
+
+  if (aliases[raw]) {
+    return {
+      label: raw,
+      patterns: aliases[raw],
+      serverOnly: raw === 'server' || raw === 'server bank',
+    };
+  }
+
+  return {
+    label: raw,
+    patterns: [raw.includes('%') ? raw : `%${raw}%`],
+    serverOnly: false,
+  };
+}
+
+function buildTxWhere({ guildId, userId, search, hours }) {
+  const params = [guildId, hours];
+  const where = ['guild_id = $1', "created_at >= NOW() - ($2::int * INTERVAL '1 hour')"];
+  if (userId) {
+    params.push(userId);
+    where.push(`user_id = $${params.length}`);
+  }
+
+  const filter = txTypePatterns(search);
+  if (filter.serverOnly && !userId) {
+    where.push('user_id IS NULL');
+  }
+  if (filter.patterns.length) {
+    params.push(filter.patterns);
+    where.push(`type ILIKE ANY($${params.length}::text[])`);
+  }
+
+  return { whereSql: where.join(' AND '), params, filter };
+}
+
+function shortMeta(meta) {
+  if (!meta || typeof meta !== 'object') return '';
+  const keys = ['game', 'source', 'reason', 'balance_type', 'cardName', 'kind', 'outcome', 'enterprise', 'action'];
+  const parts = [];
+  for (const key of keys) {
+    if (meta[key] !== undefined && meta[key] !== null && String(meta[key]).trim()) {
+      parts.push(`${key}=${String(meta[key]).slice(0, 28)}`);
+    }
+  }
+  return parts.length ? ` (${parts.slice(0, 3).join(', ')})` : '';
+}
+
+async function buildTransactionLogEmbed({ guild, client, fields }) {
+  if (!pool) {
+    return new EmbedBuilder()
+      .setColor(0xe74c3c)
+      .setTitle('Transaction Log')
+      .setDescription('Database is not available in this environment.');
+  }
+
+  const userId = cleanId(fields.user_id || '');
+  const targetUser = userId ? await fetchUserSafe(client, userId) : null;
+  const hours = Math.floor(parseOptionalNumber(fields.hours || '24', 'hours', { min: 1, max: 720 }) ?? 24);
+  const limit = Math.floor(parseOptionalNumber(fields.limit || '10', 'limit', { min: 1, max: 25 }) ?? 10);
+  const search = String(fields.search || '').trim();
+  const { whereSql, params, filter } = buildTxWhere({ guildId: guild.id, userId, search, hours });
+
+  const summary = await pool.query(
+    `SELECT type,
+            COUNT(*)::int AS count,
+            COALESCE(SUM(amount), 0)::bigint AS net,
+            COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0)::bigint AS credits,
+            COALESCE(SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END), 0)::bigint AS debits
+     FROM transactions
+     WHERE ${whereSql}
+     GROUP BY type
+     ORDER BY ABS(COALESCE(SUM(amount), 0)) DESC, COUNT(*) DESC
+     LIMIT 12`,
+    params
+  );
+
+  const recentParams = [...params, limit];
+  const recent = await pool.query(
+    `SELECT id, user_id, amount, type, meta, created_at
+     FROM transactions
+     WHERE ${whereSql}
+     ORDER BY created_at DESC, id DESC
+     LIMIT $${recentParams.length}`,
+    recentParams
+  );
+
+  const scopeLines = [
+    `Hours: **${hours}**`,
+    `Search: **${filter.label}**`,
+    `Player: ${userId ? (targetUser ? `<@${userId}>` : `\`${userId}\``) : '**All / server**'}`,
+  ];
+
+  const summaryLines = (summary.rows || []).map((row) =>
+    `\`${row.type}\` • ${row.count} tx • net **${money(row.net)}** • in ${money(row.credits)} • out ${money(row.debits)}`
+  );
+
+  const recentLines = (recent.rows || []).map((row) => {
+    const who = row.user_id ? `<@${row.user_id}>` : '**Server**';
+    const ts = Math.floor(new Date(row.created_at).getTime() / 1000);
+    return `<t:${ts}:R> ${who} ${money(row.amount)} \`${row.type}\`${shortMeta(row.meta)}`;
+  });
+
+  return new EmbedBuilder()
+    .setColor(0x0875AF)
+    .setTitle('Transaction Log')
+    .setDescription(scopeLines.join('\n'))
+    .addFields(
+      {
+        name: 'Summary By Type',
+        value: summaryLines.length ? summaryLines.join('\n').slice(0, 1024) : 'No matching transactions.',
+      },
+      {
+        name: `Recent ${limit}`,
+        value: recentLines.length ? recentLines.join('\n').slice(0, 1024) : 'No matching transactions.',
+      }
+    )
+    .setFooter({ text: 'Read-only admin view' })
+    .setTimestamp();
+}
+
 function makePseudoOptions({ subcommand = null, values = {} } = {}) {
   return {
     getSubcommand: () => subcommand,
@@ -418,6 +576,17 @@ function buildModal(actionId) {
   if (actionId === 'economy:addserverbal') {
     setTitle('Add Server Bank');
     modal.addComponents(addInput('amount', 'Amount', TextInputStyle.Short, true, '5000'));
+    return modal;
+  }
+
+  if (actionId === 'economy:txlog') {
+    setTitle('Transaction Log');
+    modal.addComponents(
+      addInput('user_id', 'User ID or mention (optional)', TextInputStyle.Short, false, '@player or 123...'),
+      addInput('search', 'Search/category/type', TextInputStyle.Short, false, 'casino | blackjack | server | farming'),
+      addInput('hours', 'Hours back', TextInputStyle.Short, false, '24'),
+      addInput('limit', 'Recent rows limit', TextInputStyle.Short, false, '10')
+    );
     return modal;
   }
 
@@ -1142,6 +1311,15 @@ async function runActionFromId({ interaction, actionId, fields }) {
       commandFile: getLegacy('addbalance'),
       values: { user: target, amount: Number(fields.amount), target: (fields.target || 'wallet').trim().toLowerCase() },
     });
+  }
+
+  if (actionId === 'economy:txlog') {
+    const embed = await buildTransactionLogEmbed({
+      guild,
+      client: interaction.client,
+      fields,
+    });
+    return interaction.editReply({ embeds: [embed], flags: MessageFlags.Ephemeral });
   }
 
   if (actionId === 'economy:powerballbuyers') {

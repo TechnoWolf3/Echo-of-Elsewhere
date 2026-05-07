@@ -3,7 +3,7 @@ const { MessageFlags } = require("discord.js");
 const engine = require("../../utils/manufacturing/engine");
 const market = require("../../utils/manufacturing/market");
 const contracts = require("../../utils/manufacturing/contracts");
-const { tryDebitBank, creditUser, ensureUser } = require("../../utils/economy");
+const { tryDebitBank, creditUser, ensureUser, creditBank, addServerBank } = require("../../utils/economy");
 
 function isManufacturingInteraction(actionId) {
   return (
@@ -102,10 +102,20 @@ async function handleManufacturingInteraction({
 
     const result = await engine.buyPlot(guildId, userId, state);
     if (!result.ok) {
+      await creditBank(guildId, userId, cost, "manufacturing_plot_purchase_refund", {
+        enterprise: "manufacturing",
+        action: "buy_plot_refund",
+        reason: result.reasonText || "purchase_failed",
+      }).catch(() => {});
       await followUp(interaction, result.reasonText);
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "manufacturing_plot_purchase_bank", {
+      enterprise: "manufacturing",
+      action: "buy_plot",
+      plotCountBefore: (state.plots || []).length - 1,
+    });
     await redraw();
     return true;
   }
@@ -245,6 +255,13 @@ async function handleManufacturingInteraction({
 
     plot.inputStorage[material.id] = Number(plot.inputStorage[material.id] || 0) + totalUnits;
     await engine.saveState(guildId, userId, state);
+    await recordEnterprisePurchase(guildId, userId, totalPrice, "manufacturing_material_purchase_bank", {
+      enterprise: "manufacturing",
+      plotIndex,
+      materialId,
+      bundleCount,
+      qty: totalUnits,
+    });
     session.view = "manu_plot_materials";
     session.manuMaterialId = null;
     await followUp(interaction, `Bought ${bundleCount} bundle${bundleCount === 1 ? "" : "s"} of ${material.name} for Plot ${plotIndex + 1}.`);
@@ -291,10 +308,21 @@ async function handleManufacturingInteraction({
 
     const result = await engine.upgradePlot(guildId, userId, state, plotIndex);
     if (!result.ok) {
+      await creditBank(guildId, userId, cost, "manufacturing_plot_upgrade_refund", {
+        enterprise: "manufacturing",
+        plotIndex,
+        reason: result.reasonText || "upgrade_failed",
+      }).catch(() => {});
       await followUp(interaction, result.reasonText);
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "manufacturing_plot_upgrade_bank", {
+      enterprise: "manufacturing",
+      plotIndex,
+      fromLevel: plot?.level || 1,
+      toLevel: (plot?.level || 1) + 1,
+    });
     await followUp(interaction, `Plot ${plotIndex + 1} upgraded to level ${result.plot.level}.`);
     await redraw();
     return true;
@@ -361,6 +389,13 @@ async function handleManufacturingInteraction({
   }
 
   return true;
+}
+
+async function recordEnterprisePurchase(guildId, userId, amount, type, meta = {}) {
+  if (Number(amount || 0) <= 0) return;
+  await addServerBank(guildId, Number(amount), type, { ...meta, userId }).catch((e) => {
+    console.warn("[MANUFACTURING] server bank purchase deposit failed:", e?.message || e);
+  });
 }
 
 module.exports = {

@@ -13,11 +13,13 @@ async function ensureTable() {
       ready_at TIMESTAMPTZ NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
       paid_at TIMESTAMPTZ,
+      notified_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (guild_id, user_id)
     )
   `);
+  await pool.query(`ALTER TABLE job_trucker_runs ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ`);
   ready = true;
 }
 
@@ -103,6 +105,22 @@ async function completePaidRun(guildId, userId) {
   );
 }
 
+async function markCompletionNotified(guildId, userId) {
+  await ensureTable();
+  const res = await pool.query(
+    `UPDATE job_trucker_runs
+     SET notified_at=NOW(), updated_at=NOW()
+     WHERE guild_id=$1
+       AND user_id=$2
+       AND status='active'
+       AND ready_at <= NOW()
+       AND notified_at IS NULL
+     RETURNING guild_id, user_id`,
+    [String(guildId), String(userId)]
+  );
+  return res.rowCount > 0;
+}
+
 async function releaseClaim(guildId, userId) {
   await ensureTable();
   await pool.query(
@@ -119,5 +137,6 @@ module.exports = {
   startRun,
   claimReadyRun,
   completePaidRun,
+  markCompletionNotified,
   releaseClaim,
 };

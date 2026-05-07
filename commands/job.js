@@ -683,11 +683,12 @@ function scheduleReturnToCategory(delayMs = 5000) {
       if (session.view === "grind") {
         const fatigueInfo = await canGrindFatigue(pool, guildId, userId);
         const cooldowns = await getGrindCooldowns();
+        const grindLocked = Boolean(fatigueInfo?.lockedUntil);
 
         return msg
           .edit({
             embeds: [grindUi.buildGrindEmbed({ fatigueInfo, cooldowns })],
-            components: grindUi.buildGrindComponents(false),
+            components: grindUi.buildGrindComponents(false, { locked: grindLocked }),
           })
           .catch(() => {});
       }

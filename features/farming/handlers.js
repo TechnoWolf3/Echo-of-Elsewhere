@@ -12,7 +12,7 @@ const market = require("../../utils/farming/market");
 const machineEngine = require("../../utils/farming/machineEngine");
 const weather = require("../../utils/farming/weather");
 const farmingUi = require("./ui");
-const { tryDebitBank, creditBank } = require("../../utils/economy");
+const { tryDebitBank, creditBank, addServerBank } = require("../../utils/economy");
 
 function isFarmingInteraction(actionId) {
   return (
@@ -199,6 +199,11 @@ async function handleFarmingInteraction({
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "farming_field_purchase_bank", {
+      enterprise: "farming",
+      action: "buy_field",
+      fieldCountBefore: farm.fields.length,
+    });
     await redraw();
     return true;
   }
@@ -344,6 +349,12 @@ async function handleFarmingInteraction({
       await submitted.editReply(result.reasonText).catch(() => {});
       return true;
     }
+    await recordEnterprisePurchase(guildId, userId, totalCost, "farming_fertiliser_purchase_bank", {
+      enterprise: "farming",
+      action: "buy_fertiliser",
+      fertiliserId,
+      qty,
+    });
     await submitted.editReply(`Bought ${qty}x ${result.fertiliser.name} for $${totalCost.toLocaleString()}.`).catch(() => {});
     await redraw();
     return true;
@@ -412,6 +423,12 @@ async function handleFarmingInteraction({
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, totalCost, "farming_husbandry_purchase_bank", {
+      enterprise: "farming",
+      action: "buy_husbandry",
+      itemId,
+      qty,
+    });
     await submitted.editReply(`Bought ${qty}x ${result.item.name} for $${totalCost.toLocaleString()}.`).catch(() => {});
     await redraw();
     return true;
@@ -537,6 +554,13 @@ async function handleFarmingInteraction({
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "farming_field_upgrade_bank", {
+      enterprise: "farming",
+      action: "upgrade_field",
+      fieldIndex,
+      fromLevel: currentLevel,
+      toLevel: currentLevel + 1,
+    });
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await interaction.followUp({
       content: `Field upgrade started. It will complete <t:${Math.floor(Number(result.task.endsAt) / 1000)}:R>.`,
@@ -587,6 +611,12 @@ async function handleFarmingInteraction({
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "farming_barn_conversion_bank", {
+      enterprise: "farming",
+      action: "convert_barn",
+      fieldIndex,
+      livestockType,
+    });
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await interaction.followUp({
       content: `✅ Converted Field ${fieldIndex + 1} into a ${result.type.name}.`,
@@ -677,6 +707,12 @@ async function handleFarmingInteraction({
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "farming_barn_restock_bank", {
+      enterprise: "farming",
+      action: "restock_barn",
+      fieldIndex,
+      livestockType: barn?.livestockType,
+    });
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await interaction.followUp({
       content: `✅ Restocked ${result.type.name} with ${result.capacity} animals.`,
@@ -747,6 +783,13 @@ async function handleFarmingInteraction({
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "farming_barn_upgrade_bank", {
+      enterprise: "farming",
+      action: "upgrade_barn",
+      fieldIndex,
+      fromLevel: currentLevel,
+      toLevel: currentLevel + 1,
+    });
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await interaction.followUp({
       content: `Barn upgrade started. Production is halted until it completes <t:${Math.floor(Number(result.task.endsAt) / 1000)}:R>.`,
@@ -792,6 +835,12 @@ async function handleFarmingInteraction({
       return true;
     }
 
+    await recordEnterprisePurchase(guildId, userId, cost, "farming_barn_demolition_bank", {
+      enterprise: "farming",
+      action: "demolish_barn",
+      fieldIndex,
+      livestockType: barn?.livestockType,
+    });
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await interaction.followUp({
       content: `✅ Barn demolished. The plot is back to a field, but it needs cultivation before planting.`,
@@ -883,6 +932,13 @@ async function startMachineBackedFieldTask({
   await msg.edit({
     embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
     components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+  });
+}
+
+async function recordEnterprisePurchase(guildId, userId, amount, type, meta = {}) {
+  if (Number(amount || 0) <= 0) return;
+  await addServerBank(guildId, Number(amount), type, { ...meta, userId }).catch((e) => {
+    console.warn("[FARM] server bank purchase deposit failed:", e?.message || e);
   });
 }
 

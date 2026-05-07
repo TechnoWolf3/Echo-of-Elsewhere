@@ -16,7 +16,7 @@ const {
 
 const { activeGames } = require("../../utils/gameManager");
 const { setActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
-const { tryDebitUser, bankToUserIfEnough } = require("../../utils/economy");
+const { tryDebitUser, bankToUserIfEnough, addServerBank } = require("../../utils/economy");
 const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 
 const { unlockAchievement } = require("../../utils/achievementEngine");
@@ -136,6 +136,15 @@ async function chargeWithCasinoFee({ guildId, userId, amountStake, type, meta, t
       totalCharge: feeCalc.totalCharge,
     },
   });
+  if (debit.ok) {
+    await addServerBank(guildId, feeCalc.totalCharge, `${type}_bank`, {
+      ...meta,
+      userId,
+      stake: feeCalc.betAmount,
+      feeAmount: feeCalc.feeAmount,
+      totalCharge: feeCalc.totalCharge,
+    }).catch((e) => console.warn("[higherlower] server bank bet deposit failed:", e?.message || e));
+  }
 
   return {
     ok: debit.ok,

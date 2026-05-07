@@ -974,7 +974,32 @@ async function storeRunForSmuggling(guildId, userId, state, buildingRef) {
   const { building } = resolveBuilding(state, buildingRef);
   const run = building?.activeRun;
   const operation = getOperationDefinition(building?.operationType);
-  if (!building || !run || run.status !== "awaiting_distribution" || !operation) {
+  const hasStoredGoods = operation?.storageEnabled && Number(building?.storage?.stock || 0) > 0 && Number(building?.storage?.totalValue || 0) > 0;
+  if (!building || !operation) {
+    return { ok: false, reasonText: "This operation does not have a finished batch ready to store." };
+  }
+  if (hasStoredGoods) {
+    const productId = "mixed_contraband";
+    const productValue = Number(require("../../data/underworld/products")[productId]?.producedSellValue || 2400);
+    const producedUnits = Math.max(1, Math.floor(Number(building.storage.totalValue || 0) / Math.max(1, productValue)));
+    underworldInventory.addProduct(state, productId, producedUnits);
+
+    building.lastRunAt = Date.now();
+    building.lastOutcome = {
+      completedAt: Date.now(),
+      distributionMode: "stored_for_smuggling",
+      payout: 0,
+      productId,
+      producedUnits,
+      storageGoods: building.storage,
+    };
+    building.storage = { stock: 0, sellLockedUntil: null, goods: [], totalValue: 0 };
+
+    await saveState(guildId, userId, state);
+    await sharedSuspicion.addUnderworldSuspicion(guildId, userId, 2, "underworld_store_for_smuggling").catch(() => {});
+    return { ok: true, productId, producedUnits, operation };
+  }
+  if (!run || run.status !== "awaiting_distribution") {
     return { ok: false, reasonText: "This operation does not have a finished batch ready to store." };
   }
   if (!["meth_lab", "cocaine_lab"].includes(operation.id)) {

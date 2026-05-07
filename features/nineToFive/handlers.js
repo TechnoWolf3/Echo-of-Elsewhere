@@ -336,7 +336,10 @@ function armTruckerTimer({ session, msg }) {
       clearInterval(session.trucker.interval);
       session.trucker.interval = null;
 
-      await msg.channel.send({
+      const shouldNotify = await truckerRuns
+        .markCompletionNotified(msg.guildId, session.userId)
+        .catch(() => false);
+      if (shouldNotify) await msg.channel.send({
         content: `<@${session.userId}> your delivery is complete — collect your pay.`,
         allowedMentions: { users: [session.userId] },
       }).catch(() => {});

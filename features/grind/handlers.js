@@ -5,6 +5,7 @@ const startWarehousing = require("../../data/work/categories/grind/warehousing")
 const startFishing = require("../../data/work/categories/grind/fishing");
 const startQuarry = require("../../data/work/categories/grind/quarry");
 const startTaxiDriver = require("../../data/work/categories/grind/taxiDriver");
+const { canGrind } = require("../../utils/grindFatigue");
 
 const GRIND_JOBS = {
   clerk: startStoreClerk,
@@ -45,6 +46,18 @@ async function handleGrindInteraction({
   if (!isGrindInteraction(actionId)) return false;
 
   const key = actionId.split(":")[1];
+  const fatigueInfo = await canGrind(pool, guildId, userId);
+  if (!fatigueInfo.ok) {
+    const unlockText = fatigueInfo.lockedUntil
+      ? `<t:${Math.floor(new Date(fatigueInfo.lockedUntil).getTime() / 1000)}:R>`
+      : "after you rest a bit";
+    await interaction
+      .followUp({ content: `â³ Grind is locked out. Try again ${unlockText}.`, flags: MessageFlags.Ephemeral })
+      .catch(() => {});
+    await redraw();
+    return true;
+  }
+
   const cooldown = cooldownFor(key);
   if (await checkCooldownOrTell(interaction, cooldown.key, cooldown.label)) return true;
 

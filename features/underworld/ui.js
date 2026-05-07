@@ -729,6 +729,16 @@ function buildBuildingComponents(state, buildingId) {
         )
       );
     }
+    if (!run && hasStoredGoods) {
+      rows.push(
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`uw_store_smuggling:${building.id}`)
+            .setLabel("Move To Smuggling")
+            .setStyle(ButtonStyle.Secondary)
+        )
+      );
+    }
     if (!run && op?.storageEnabled) {
       rows.push(
         new ActionRowBuilder().addComponents(

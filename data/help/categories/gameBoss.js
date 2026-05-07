@@ -23,7 +23,7 @@ module.exports = {
       short: "Balance, server bank, and lottery tools.",
       detail:
         "**Economy Controls**\n" +
-        "The admin panel can add player balance, add server bank funds, view the server bank, and list Powerball buyers for the active draw.",
+        "The admin panel can add player balance, add server bank funds, view the server bank, search transaction logs, and list Powerball buyers for the active draw.",
     },
     {
       id: "moderationAdmin",

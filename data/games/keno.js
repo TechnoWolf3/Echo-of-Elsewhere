@@ -29,7 +29,7 @@ const { setActiveGame, clearActiveGame } = require("../../utils/gamesHubState");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { guardNotJailedComponent } = require("../../utils/jail");
 const economy = require("../../utils/economy");
-const { creditUserWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
+const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 
 const ACTIVITY_EFFECTS = {
@@ -470,7 +470,7 @@ async function processResults(session) {
         const mult = bet.choice === "draw" ? 4 : 2;
         const payout = Math.floor(bet.amount * mult);
         const profit = payout - bet.amount;
-        await creditUserWithEffects({
+        await bankPayoutWithEffects({
           guildId: session.guildId,
           userId,
           amount: payout,
@@ -505,7 +505,7 @@ async function processResults(session) {
       if (mult > 0) {
         const payout = Math.floor(bet.amount * mult);
         const profit = payout - bet.amount;
-        await creditUserWithEffects({
+        await bankPayoutWithEffects({
           guildId: session.guildId,
           userId,
           amount: payout,
@@ -695,7 +695,7 @@ async function startFromHub(interaction) {
         return i.reply({ content: isBetting ? "You don’t have a bet to cancel this round." : "You don’t have a queued bet to cancel.", flags: MessageFlags.Ephemeral }).catch(() => {});
       }
       // Refund bet amount
-      await economy.creditUser(session.guildId, i.user.id, existing.amount, "keno_refund", {
+      await economy.bankToUserIfEnough(session.guildId, i.user.id, existing.amount, "keno_refund", {
         game: "keno",
         round: existing.round ?? (isBetting ? session.round : session.round + 1),
       }).catch(() => {});
@@ -812,12 +812,20 @@ async function handleInteraction(interaction) {
     await interaction.reply({ content: "❌ You don’t have enough cash for that bet.", flags: MessageFlags.Ephemeral }).catch(() => {});
     return true;
   }
+  await economy.addServerBank(session.guildId, amt, "keno_bet_bank", {
+    game: "keno",
+    round: targetRound,
+    kind: type,
+    choice: choice || null,
+    queued: isDrawing ? true : false,
+    userId: interaction.user.id,
+  }).catch(() => {});
 
   if (type === "htd") {
     const c = String(choice || "").toLowerCase();
     if (!["heads", "tails", "draw"].includes(c)) {
       // Refund if something went wrong
-      await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
+      await economy.bankToUserIfEnough(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
       await interaction.reply({ content: "❌ Invalid choice.", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
@@ -861,7 +869,7 @@ async function handleInteraction(interaction) {
     const numbers = parseNumbersInput(numsRaw).slice(0, 10);
 
     if (numbers.length < 1 || numbers.length > 10) {
-      await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
+      await economy.bankToUserIfEnough(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
       await interaction.reply({ content: "❌ You must pick **1–10** valid numbers (1–80).", flags: MessageFlags.Ephemeral }).catch(() => {});
       return true;
     }
@@ -880,7 +888,7 @@ async function handleInteraction(interaction) {
   }
 
   // Unknown modal type -> refund to be safe
-  await economy.creditUser(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
+  await economy.bankToUserIfEnough(session.guildId, interaction.user.id, amt, "keno_refund", { game: "keno", round: targetRound }).catch(() => {});
   await interaction.reply({ content: "❌ Unknown bet type.", flags: MessageFlags.Ephemeral }).catch(() => {});
   return true;
 }

@@ -34,8 +34,18 @@ function cdLine(label, unixTs) {
 function buildGrindEmbed({ fatigueInfo, cooldowns = {} } = {}) {
   const list = grindIndex?.list || [];
   const jobs = grindIndex?.jobs || {};
+  const lockUnix = fatigueInfo?.lockedUntil
+    ? Math.floor(new Date(fatigueInfo.lockedUntil).getTime() / 1000)
+    : null;
 
-  const lines = list
+  const lines = lockUnix
+    ? [
+        "Grind is locked out while fatigue burns down.",
+        "",
+        `Unlocks: **<t:${lockUnix}:R>**`,
+        `At: <t:${lockUnix}:F>`,
+      ].join("\n")
+    : list
     .map((key) => {
       const cfg = jobs[key];
       if (!cfg) return null;
@@ -49,9 +59,6 @@ function buildGrindEmbed({ fatigueInfo, cooldowns = {} } = {}) {
 
   const fatigueMs = Number(fatigueInfo?.fatigueMs || 0);
   const fb = grindFatigueBar ? grindFatigueBar(fatigueMs) : { pct: 0, bar: "" };
-  const lockUnix = fatigueInfo?.lockedUntil
-    ? Math.floor(new Date(fatigueInfo.lockedUntil).getTime() / 1000)
-    : null;
 
   const fatigueBlock = lockUnix
     ? [
@@ -74,12 +81,12 @@ function buildGrindEmbed({ fatigueInfo, cooldowns = {} } = {}) {
         fatigueBlock,
       ].join("\n")
     )
-    .addFields({ name: "Jobs", value: lines || "No jobs configured." })
+    .addFields({ name: lockUnix ? "Locked Out" : "Jobs", value: lines || "No jobs configured." })
     .setColor(ui.systems.job.color)
     .setFooter({ text: grindIndex.category?.footer || "Fatigue is shared across all Grind jobs." });
 }
 
-function buildGrindComponents(disabled = false) {
+function buildGrindComponents(disabled = false, { locked = false } = {}) {
   const catRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId("job_select:category")
@@ -97,8 +104,8 @@ function buildGrindComponents(disabled = false) {
 
   const jobMenu = new StringSelectMenuBuilder()
     .setCustomId("job_select:job")
-    .setPlaceholder("Choose a job...")
-    .setDisabled(disabled);
+    .setPlaceholder(locked ? "Grind locked out..." : "Choose a job...")
+    .setDisabled(disabled || locked);
 
   const list = grindIndex?.list || [];
   const jobs = grindIndex?.jobs || {};

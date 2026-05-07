@@ -12,7 +12,7 @@ const {
   setActiveGame,
   clearActiveGame,
 } = require('../../utils/gamesHubState');
-const { tryDebitUser } = require('../../utils/economy');
+const { tryDebitUser, addServerBank } = require('../../utils/economy');
 const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require('../../utils/effectSystem');
 const { guardNotJailedComponent } = require('../../utils/jail');
 const { guardGamesComponent } = require('../../utils/echoRift/curseGuard');
@@ -649,6 +649,13 @@ async function startScratchRound(interaction, session) {
     await sendEphemeral(interaction, `❌ You need **${money(card.cost)}** in your wallet to buy **${card.name}**.`);
     return;
   }
+
+  await addServerBank(session.guildId, card.cost, 'scratchcard_buy_bank', {
+    channelId: session.channelId,
+    cardId: card.id,
+    cardName: card.name,
+    userId: interaction.user.id,
+  }).catch(() => {});
 
   session.currentRound = createRound(card);
   session.lastMode = 'scratching';
