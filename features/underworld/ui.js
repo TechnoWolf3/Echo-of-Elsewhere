@@ -628,6 +628,10 @@ function buildBuildingEmbed(state, buildingId) {
       lines.push("");
       lines.push(`Fence cooldown: **<t:${Math.floor(lockedUntil / 1000)}:R>**`);
     }
+    if (storageStock > 0) {
+      lines.push("");
+      lines.push("Move this stock into Smuggling to run it for a higher-risk route premium.");
+    }
   }
 
   const embed = ui.applySystemStyle(
@@ -746,7 +750,7 @@ function buildBuildingComponents(state, buildingId) {
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId(`uw_store_smuggling:${building.id}`)
-            .setLabel("Move To Smuggling")
+            .setLabel("Move Stock To Smuggling")
             .setStyle(ButtonStyle.Secondary)
         )
       );

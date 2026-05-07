@@ -441,12 +441,24 @@ async function handleUnderworldInteraction({
       return true;
     }
 
+    const product = smuggling.products[result.productId];
+    const productLabel = product?.label || result.productId || "cargo";
+    const smugglingState = smuggling.ensureSmugglingState(state);
+    const hasVehicle = smugglingState.vehicles.length > 0;
     await tell(
       interaction,
-      `✅ Stored ${Number(result.producedUnits || 0).toLocaleString()} units for Smuggling instead of taking an immediate payout.`
+      `✅ Moved ${Number(result.producedUnits || 0).toLocaleString()} units of ${productLabel} into Smuggling stock.${hasVehicle ? " Choose a vehicle and cargo amount to run it for a higher-risk route premium." : " Buy a smuggling vehicle next, then run it for a higher-risk route premium."}`
     );
-    session.view = "underworld_building";
-    session.underworldBuildingId = buildingId;
+    session.underworldBuildingId = hasVehicle ? null : buildingId;
+    session.underworldSmugglingFlow = hasVehicle
+      ? {
+          productId: result.productId,
+          sourceType: "produced",
+          vehicleId: null,
+          cargoAmount: null,
+        }
+      : null;
+    session.view = hasVehicle ? "underworld_smuggling_start" : "underworld_smuggling_garage";
     await redraw();
     return true;
   }
