@@ -12,6 +12,7 @@ const {
 const { pool } = require("../db");
 const economy = require("../economy");
 const jail = require("../jail");
+const guildConfig = require("../guildConfig");
 const { buildScenario } = require("./riftScenarios");
 const T = require("./riftTextPools");
 
@@ -20,7 +21,6 @@ const T = require("./riftTextPools");
 // ----------------------------
 
 const CONFIG = {
-  channelId: "1449217901306581074",
   chosenRoleId: "1476440178687082567",
 
   // Rift window: once/day at a random time in Sydney.
@@ -572,9 +572,15 @@ async function spawnRift(client) {
   // If active already exists, don't double-spawn.
   if (active && active.expiresAt > Date.now()) return;
 
-  const channel = await client.channels.fetch(CONFIG.channelId).catch(() => null);
-  if (!channel) {
-    console.warn("[ECHO-RIFT] channel not found:", CONFIG.channelId);
+  const channelId = await guildConfig.getConfigValue(guild.id, "bot_channel_id");
+  if (!channelId) {
+    console.warn("[ECHO-RIFT] bot channel is not configured; skipping spawn.");
+    return;
+  }
+
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) {
+    console.warn("[ECHO-RIFT] configured bot channel not found or not text-based:", channelId);
     return;
   }
 

@@ -13,9 +13,7 @@ const {
 // NOTE: file moved from /commands -> /data/games
 // voteQuestions_spicy lives in /data, so relative path is ../voteQuestions_spicy
 const QUESTIONS = require("../voteQuestions_spicy");
-
-// Keep your channel lock if you still want it:
-const ALLOWED_CHANNEL = "1449217901306581074";
+const guildConfig = require("../../utils/guildConfig");
 
 let session = null;
 
@@ -233,9 +231,13 @@ async function endGame(panelMsg) {
  * This is what your category file will call.
  */
 async function startFromHub(interaction) {
-  // Channel lock (keep/remove as you like)
-  if (interaction.channelId !== ALLOWED_CHANNEL) {
-    return replyEphemeral(interaction, "❌ This game can only be played in the designated channel.");
+  const botChannelId = await guildConfig.getConfigValue(interaction.guildId, "bot_channel_id");
+  if (!botChannelId) {
+    await guildConfig.requireConfigured(interaction, ["bot_channel_id"]);
+    return;
+  }
+  if (interaction.channelId !== botChannelId) {
+    return replyEphemeral(interaction, `This game can only be played in <#${botChannelId}>.`);
   }
 
   if (session) {

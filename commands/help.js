@@ -11,21 +11,13 @@ const {
 
 const { loadCategories, getCategory, getCommand } = require("../data/help");
 const helpConfig = require("../data/help/config");
+const guildConfig = require("../utils/guildConfig");
 
 const CAT_SELECT_ID = "help:cat";
 const CMD_SELECT_ID = "help:cmd";
 const BTN_HOME_ID = "help:home";
 const BTN_BACK_ID = "help:back";
 const BTN_CLOSE_ID = "help:close";
-
-function hasRole(member, roleId) {
-  // Works for guild interactions; if member missing, fail closed
-  try {
-    return Boolean(member?.roles?.cache?.has(roleId));
-  } catch {
-    return false;
-  }
-}
 
 function buildHubEmbed(categories) {
   const embed = new EmbedBuilder()
@@ -190,7 +182,7 @@ module.exports = {
 
           // Permission gate for Game Boss category
           if (cat.id === "gameboss") {
-            const allowed = hasRole(i.member, helpConfig.GAME_BOSS_ROLE_ID);
+            const allowed = await guildConfig.isBotMaster(i.member);
             if (!allowed) {
               view = "noaccess";
               currentCategoryId = cat.id;
@@ -217,7 +209,7 @@ module.exports = {
           if (!cat) return i.deferUpdate();
 
           // Extra safety: if this is gameboss and user doesn't have role, block
-          if (cat.id === "gameboss" && !hasRole(i.member, helpConfig.GAME_BOSS_ROLE_ID)) {
+          if (cat.id === "gameboss" && !(await guildConfig.isBotMaster(i.member))) {
             view = "noaccess";
             return i.update({
               embeds: [buildNoAccessEmbed()],

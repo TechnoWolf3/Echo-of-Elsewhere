@@ -15,11 +15,10 @@ const economy = require('./economy');
 const jail = require('./jail');
 const echoCurses = require('./echoCurses');
 const { recordProgress: recordContractProgress } = require('./contracts');
+const guildConfig = require('./guildConfig');
 
 // ====== CONFIG ======
-// NOTE: channel/role IDs are hard-coded here for now.
-// If you ever want them in .env, I can refactor in 2 minutes.
-const RIFT_CHANNEL_ID = '1449217901306581074';
+// Channel comes from guild configuration.
 const CHOSEN_ROLE_ID = '1476440178687082567';
 
 const CONFIG = {
@@ -471,16 +470,18 @@ async function spawnIfDue(client) {
   }
 }
 
-async function spawnRift(client, guildId, { channelId = RIFT_CHANNEL_ID } = {}) {
+async function spawnRift(client, guildId, { channelId = null } = {}) {
   const existing = await getActiveRift(guildId);
   if (existing) return { ok: false, reason: 'already_active' };
 
-  const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel) return { ok: false, reason: 'channel_not_found' };
+  const targetChannelId = channelId || await guildConfig.getConfigValue(guildId, "bot_channel_id");
+  if (!targetChannelId) return { ok: false, reason: 'channel_not_configured' };
+  const channel = await client.channels.fetch(targetChannelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return { ok: false, reason: 'channel_not_found' };
 
   const expiresAt = Date.now() + CONFIG.openMs;
   const msg = await channel.send({ embeds: [buildSpawnEmbed(expiresAt)], components: [buildEnterRow(false)] });
-  await insertRift(guildId, msg.id, channelId, expiresAt);
+  await insertRift(guildId, msg.id, targetChannelId, expiresAt);
   return { ok: true, messageId: msg.id, expiresAt };
 }
 
@@ -766,7 +767,6 @@ module.exports = {
   debugStatus,
   debugClearActive,
   CONFIG,
-  RIFT_CHANNEL_ID,
   CHOSEN_ROLE_ID,
   setSchedule,
   getSchedule,

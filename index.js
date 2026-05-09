@@ -10,6 +10,7 @@ const lottery = require("./utils/lottery");
 const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
+const guildConfig = require("./utils/guildConfig");
 const bankCommand = require("./commands/bank");
 const timersCommand = require("./commands/timers");
 const bankRecurringDeposits = require("./utils/bankRecurringDeposits");
@@ -685,11 +686,15 @@ client.once(Events.ClientReady, async () => {
         const lastDeployment = res.rows?.[0]?.value ?? null;
 
         if (lastDeployment !== currentDeployment) {
-          const channel = await client.channels
-            .fetch("1449217901306581074")
-            .catch(() => null);
+          const guild = client.guilds.cache.first();
+          const deployChannelId = guild?.id
+            ? await guildConfig.getConfigValue(guild.id, "bot_channel_id")
+            : null;
+          const channel = deployChannelId
+            ? await client.channels.fetch(deployChannelId).catch(() => null)
+            : null;
 
-          if (channel) {
+          if (channel?.isTextBased?.()) {
             const now = Math.floor(Date.now() / 1000);
 
             const embed = new EmbedBuilder()
@@ -719,7 +724,9 @@ client.once(Events.ClientReady, async () => {
 
   // 📌 Ensure the persistent Bot Features hub message exists + is refreshed
   try {
-    await featuresHub.ensure(client);
+    for (const guild of client.guilds.cache.values()) {
+      await featuresHub.ensure(client, { guildId: guild.id });
+    }
   } catch (e) {
     console.error('[featuresHub] ensure failed:', e);
   }
@@ -728,6 +735,7 @@ client.once(Events.ClientReady, async () => {
     try {
       await ensureAchievementTables(client.db);
       await ensureEconomyTables(client.db);
+      await guildConfig.ensureSchema();
       await jailSystem.ensureJailSchema();
       await underworldSuspicion.ensureUnderworldUserSchema();
       await ensureEseSchema();
@@ -775,14 +783,20 @@ client.once(Events.ClientReady, async () => {
       // ===========================
       setInterval(async () => {
         try {
-          const activity = await getEseActivitySnapshot();
-          const result = await tickMarket(activity);
+          const guild = client.guilds.cache.first();
+          const eseChannelId = guild?.id
+            ? await guildConfig.getConfigValue(guild.id, "ese_news_channel_id")
+            : null;
+          if (!eseChannelId) return;
 
           const channel = await client.channels
-  .fetch(eseConfig.newsChannel)
+  .fetch(eseChannelId)
   .catch(() => null);
 
-if (!channel) return;
+if (!channel?.isTextBased?.()) return;
+
+          const activity = await getEseActivitySnapshot();
+          const result = await tickMarket(activity);
 
 const strongMoves = result.moves.filter(
   (m) => Math.abs(Number(m.percent || 0)) >= Number(eseConfig.breakingNewsThreshold || 5)

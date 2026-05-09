@@ -1,8 +1,5 @@
 // data/help/config.js
 module.exports = {
-  // Only these roles can view Game Boss category details
-  GAME_BOSS_ROLE_ID: "741251069002121236",
-
   // Shown when someone without the role selects Game Boss
   noAccess: {
     title: "👑 Game Boss",

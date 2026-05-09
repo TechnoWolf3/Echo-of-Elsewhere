@@ -12,6 +12,7 @@ const { loadEvents } = require("../data/botgames");
 const economy = require("./economy");
 const { creditUserWithEffects } = require("./effectSystem");
 const echoCurses = require("./echoCurses");
+const guildConfig = require("./guildConfig");
 
 // ⏳ How long an event can sit unclaimed before it expires (from data/botgames/config.js)
 const UNCLAIMED_EXPIRE_MS = (Number(config.expireMinutes ?? 180) || 180) * 60_000;
@@ -237,7 +238,8 @@ async function debugSpawn(client, guild, opts = {}) {
     await debugExpire(client, active.claimedBy ? "claimed" : "unclaimed");
   }
 
-  const channel = await guild.channels.fetch(channelId || config.channelId).catch(() => null);
+  const configuredChannelId = channelId || await guildConfig.getConfigValue(guild.id, "bot_channel_id");
+  const channel = await guild.channels.fetch(configuredChannelId).catch(() => null);
   if (!channel || !channel.isTextBased()) {
     return { ok: false, reason: "bad_channel" };
   }
@@ -341,9 +343,11 @@ async function spawnEvent(client, guild) {
   if (!config.enabled) return;
   if (active) return; // only one active at a time
 
-  const channel = await guild.channels.fetch(config.channelId).catch(() => null);
+  const configuredChannelId = await guildConfig.getConfigValue(guild.id, "bot_channel_id");
+  if (!configuredChannelId) return;
+  const channel = await guild.channels.fetch(configuredChannelId).catch(() => null);
   if (!channel || !channel.isTextBased()) {
-    console.warn(`[BOTGAMES] Channel ${config.channelId} not found or not text-based in guild ${guild.id}`);
+    console.warn(`[BOTGAMES] Channel ${configuredChannelId} not found or not text-based in guild ${guild.id}`);
     return;
   }
 

@@ -5,9 +5,6 @@ module.exports = {
   enabled: true,
 
   // Posting / ping
-  channelId: "1449217901306581074",
-  pingRoleId: "1474683699344838809", // ping ONLY on draw result
-
   // Schedule (AEST / Australia/Brisbane)
   timezone: "Australia/Brisbane",
   drawWeekday: 4,          // 0=Sun ... 4=Thu

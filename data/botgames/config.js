@@ -2,8 +2,6 @@ module.exports = {
   enabled: true,
 
   // 📍 Channel to post in
-  channelId: "1449217901306581074",
-
   // ⏳ Expiry for unclaimed events
   expireMinutes: 180,
 

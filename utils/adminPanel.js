@@ -11,7 +11,7 @@ const {
   PermissionFlagsBits,
 } = require('discord.js');
 
-const BOT_MASTER_ROLE_ID = '741251069002121236';
+const guildConfig = require('./guildConfig');
 const botGames = require('./botGames');
 const lottery = require('./lottery');
 const effectSystem = require('./effectSystem');
@@ -29,8 +29,8 @@ const seasonControl = require('./farming/seasonControl');
 const channelPurger = require('./channelPurger');
 const { pool } = require('./db');
 
-function hasBotMaster(member) {
-  return member?.roles?.cache?.has?.(BOT_MASTER_ROLE_ID) === true;
+async function hasBotMaster(member) {
+  return guildConfig.isBotMaster(member);
 }
 
 function nowUnix() {
@@ -39,6 +39,7 @@ function nowUnix() {
 
 const CATEGORIES = [
   { value: 'economy', label: 'Economy' },
+  { value: 'configure', label: 'Configure' },
   { value: 'moderation', label: 'Moderation' },
   { value: 'boards', label: 'Boards' },
   { value: 'effects', label: 'Effects' },
@@ -53,6 +54,9 @@ const CATEGORIES = [
 ];
 
 const ACTIONS_BY_CATEGORY = {
+  configure: [
+    { id: 'configure:overview', label: 'Overview', style: ButtonStyle.Secondary, modal: false },
+  ],
   economy: [
     { id: 'economy:addbalance', label: 'Add Balance', style: ButtonStyle.Primary, modal: true },
     { id: 'economy:addserverbal', label: 'Add Server Bank', style: ButtonStyle.Primary, modal: true },
@@ -485,10 +489,10 @@ function makePseudoOptions({ subcommand = null, values = {} } = {}) {
   };
 }
 
-function elevatePermsForBotMaster(interaction) {
+async function elevatePermsForBotMaster(interaction) {
   // Some legacy commands check Administrator/ManageGuild.
   // If you're Bot Master, we treat you as having those for the purpose of the action.
-  if (!hasBotMaster(interaction.member)) return interaction.memberPermissions;
+  if (!(await hasBotMaster(interaction.member))) return interaction.memberPermissions;
 
   const fake = {
     has: (perm) => {
@@ -507,7 +511,7 @@ async function runLegacyCommand({ interaction, commandFile, subcommand = null, v
   interaction.options = makePseudoOptions({ subcommand, values });
 
   // For role/permission checks
-  interaction.memberPermissions = elevatePermsForBotMaster(interaction);
+  interaction.memberPermissions = await elevatePermsForBotMaster(interaction);
 
   if (!interaction.__adminPanelReplyShimApplied) {
     interaction.__adminPanelReplyShimApplied = true;
@@ -824,7 +828,7 @@ function buildModal(actionId) {
         addInput('auto_enabled', 'Auto contracts', TextInputStyle.Short, true, 'true / false'),
         addInput('auto_rotate', 'Auto rotate', TextInputStyle.Short, true, 'true / false'),
         addInput('community_mode', 'Community mode', TextInputStyle.Short, true, 'random / co_op / competitive'),
-        addInput('daily', 'Daily post settings', TextInputStyle.Paragraph, false, 'enabled=true\nchannel_id=1449217901306581074'),
+        addInput('daily', 'Daily post settings', TextInputStyle.Paragraph, false, 'enabled=true\nchannel_id='),
         addInput('personal', 'Personal contract settings', TextInputStyle.Paragraph, true, 'enabled=true\nslots=3')
       );
       return modal;
@@ -878,8 +882,16 @@ async function execute(interaction) {
     return;
   }
 
-  const isBotMaster = hasBotMaster(interaction.member);
+  const isBotMaster = await hasBotMaster(interaction.member);
   if (!isBotMaster) {
+    const configuredRole = await guildConfig.getConfiguredBotMasterRoleId(interaction.guildId);
+    if (!configuredRole) {
+      await interaction.reply({
+        content: "Echo needs a Bot Master role before advanced admin tools are available here. Ask an Administrator to run `/configure bot-master set`.",
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return;
+    }
     await interaction.reply({
       content: "😇 Nope. Bot Master toys are off-limits — don’t be naughty.",
       flags: MessageFlags.Ephemeral,
@@ -906,7 +918,7 @@ async function handleInteraction(interaction) {
     return true;
   }
 
-  const isBotMaster = hasBotMaster(interaction.member);
+  const isBotMaster = await hasBotMaster(interaction.member);
   if (!isBotMaster) {
     await interaction.reply({ content: '😇 Nope. Bot Master toys are off-limits — don’t be naughty.', flags: MessageFlags.Ephemeral }).catch(() => {});
     return true;
@@ -997,6 +1009,23 @@ async function runActionFromId({ interaction, actionId, fields }) {
       } catch (_) {}
     }
   };
+
+  if (actionId.startsWith('configure:')) {
+    const cfg = await guildConfig.getGuildConfig(guild.id);
+    const roleId = cfg?.bot_master_role_id || null;
+    return safeReply([
+      'Configure Overview',
+      '',
+      '`/configure` is for basic server setup: bot channel, Feature Hub, Powerball, ESE news, and Bot Master bootstrap.',
+      '`/adminpanel > Configure` is reserved for powerful tuning controls that can affect money, XP, progression, cooldowns, rewards, and risk.',
+      '',
+      `Bot channel: ${cfg?.bot_channel_id ? `<#${cfg.bot_channel_id}>` : 'Not set'}`,
+      `Feature Hub: ${cfg?.feature_hub_channel_id ? `<#${cfg.feature_hub_channel_id}>` : 'Not set'}`,
+      `Powerball: ${cfg?.powerball_channel_id ? `<#${cfg.powerball_channel_id}>` : 'Not set'}`,
+      `ESE News: ${cfg?.ese_news_channel_id ? `<#${cfg.ese_news_channel_id}>` : 'Not set'}`,
+      `Bot Master: ${roleId ? `<@&${roleId}>` : 'Not set'}`,
+    ].join('\n'));
+  }
 
   // CONTRACTS
   if (actionId.startsWith('contracts:')) {

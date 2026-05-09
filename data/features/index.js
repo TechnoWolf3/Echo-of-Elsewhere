@@ -10,6 +10,7 @@ const {
 } = require("discord.js");
 const cfg = require("./config");
 const store = require("./store");
+const guildConfig = require("../../utils/guildConfig");
 
 function loadCategories() {
   const dir = path.join(__dirname, "categories");
@@ -308,20 +309,20 @@ function buildEntryPanel(userId, category, entry, source = {}) {
 }
 
 async function ensure(client, opts = {}) {
-  const channelId = opts.channelId || cfg.FEATURES_CHANNEL_ID;
-  if (!channelId) {
-    console.warn("[FEATURES] No channelId provided for persistent features hub - skipping.");
-    return false;
-  }
-
-  await store.ensureTable(client.db);
-
   const guildId =
     opts.guildId || cfg.FEATURES_GUILD_ID || (client.guilds.cache.first()?.id ?? "");
   if (!guildId) {
     console.warn("[FEATURES] No guild available - skipping.");
     return false;
   }
+
+  const channelId = opts.channelId || await guildConfig.getConfigValue(guildId, "feature_hub_channel_id");
+  if (!channelId) {
+    console.warn("[FEATURES] Feature Hub channel is not configured - skipping.");
+    return false;
+  }
+
+  await store.ensureTable(client.db);
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel || !channel.isTextBased?.()) {

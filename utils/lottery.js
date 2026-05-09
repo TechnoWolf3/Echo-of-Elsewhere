@@ -16,6 +16,7 @@ const { pool } = require("./db");
 const economy = require("./economy");
 const { creditUserWithEffects } = require("./effectSystem");
 const config = require("../data/lottery/config");
+const guildConfig = require("./guildConfig");
 
 function tzParts(dateMs = Date.now(), timeZone = config.timezone) {
   const d = new Date(dateMs);
@@ -153,7 +154,7 @@ async function getState(guildId) {
   await pool.query(
     `INSERT INTO lottery_state (guild_id, post_channel_id) VALUES ($1, $2)
      ON CONFLICT (guild_id) DO NOTHING`,
-    [guildId, config.channelId]
+    [guildId, null]
   );
   const res = await pool.query(`SELECT * FROM lottery_state WHERE guild_id=$1`, [guildId]);
   return res.rows[0];
@@ -509,11 +510,13 @@ async function upsertWeeklyPost(client, guildId, options = {}) {
   const st = await getState(guildId);
   const ticketsSold = await countTickets(guildId, drawKey);
 
-  const channelId = String(st.post_channel_id || config.channelId);
+  const configuredChannelId = await guildConfig.getConfigValue(guildId, "powerball_channel_id");
+  const channelId = configuredChannelId;
+  if (!channelId) return false;
   if (onlyIfChannelId && channelId !== onlyIfChannelId) return false;
 
   const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel) return false;
+  if (!channel?.isTextBased?.()) return false;
 
   const embed = buildWeeklyEmbed({
     drawUtc,
@@ -563,7 +566,9 @@ let _drawTimer = null;
 
 async function scheduleLoop(client) {
   for (const gid of client.guilds.cache.map(g => g.id)) {
-    await upsertWeeklyPost(client, gid);
+    if (await guildConfig.getConfigValue(gid, "powerball_channel_id")) {
+      await upsertWeeklyPost(client, gid);
+    }
   }
 
   const refreshTick = async () => {
@@ -571,7 +576,9 @@ async function scheduleLoop(client) {
     _refreshTimer = setTimeout(async () => {
       try {
         for (const gid of client.guilds.cache.map(g => g.id)) {
-          await upsertWeeklyPost(client, gid);
+          if (await guildConfig.getConfigValue(gid, "powerball_channel_id")) {
+            await upsertWeeklyPost(client, gid);
+          }
         }
       } finally {
         refreshTick();
@@ -588,7 +595,9 @@ async function scheduleLoop(client) {
     _drawTimer = setTimeout(async () => {
       try {
         for (const gid of client.guilds.cache.map(g => g.id)) {
-          await runDraw(client, gid);
+          if (await guildConfig.getConfigValue(gid, "powerball_channel_id")) {
+            await runDraw(client, gid);
+          }
         }
       } finally {
         drawTick();
@@ -828,9 +837,10 @@ async function runDraw(client, guildId) {
     ]
   );
 
-  const channelId = (await getState(guildId)).post_channel_id || config.channelId;
+  const channelId = await guildConfig.getConfigValue(guildId, "powerball_channel_id");
+  if (!channelId) return;
   const channel = await client.channels.fetch(channelId).catch(() => null);
-  if (!channel) return;
+  if (!channel?.isTextBased?.()) return;
 
   const drawUnix = Math.floor(drawUtc / 1000);
 
@@ -853,8 +863,7 @@ async function runDraw(client, guildId) {
     .setTitle("🎟 Powerball Results")
     .setDescription(desc.join("\n"));
 
-  const ping = config.pingRoleId ? `<@&${config.pingRoleId}>` : "";
-  await channel.send({ content: ping || undefined, embeds: [e] });
+  await channel.send({ embeds: [e] });
 
   await upsertWeeklyPost(client, guildId);
 }
@@ -863,6 +872,12 @@ async function handleInteraction(interaction) {
   if (typeof interaction.customId !== "string") return false;
   if (!interaction.customId.startsWith("lotto:")) return false;
   if (!interaction.inGuild?.() || !interaction.guildId) return false;
+
+  const powerballChannelId = await guildConfig.getConfigValue(interaction.guildId, "powerball_channel_id");
+  if (!powerballChannelId) {
+    await guildConfig.requireConfigured(interaction, ["powerball_channel_id"]);
+    return true;
+  }
 
   const parts = interaction.customId.split(":");
   const action = parts[1];

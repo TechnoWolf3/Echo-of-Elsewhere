@@ -4,7 +4,7 @@ const DEFAULTS = {
   autoRotate: true,
   communityMode: 'random', // random | co_op | competitive
   dailyPostEnabled: true,
-  dailyPostChannelId: '1449217901306581074',
+  dailyPostChannelId: null,
   personalEnabled: true,
   personalSlots: 3,
   defaultCommunityDurationHours: 48,

@@ -35,6 +35,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `/bal` and `/balance` - wallet/bank/total balance aliases.
 - `/bank` - banking hub with deposit, withdraw, account transfer, and history.
 - `/contracts` - community/personal contracts dashboard routed through `utils/contracts.js`.
+- `/configure` - basic server setup for Echo channels and Bot Master bootstrap.
 - `/ese` - Echo Stock Exchange hub.
 - `/games` - Games Hub panel.
 - `/help` - help panel with local collectors.
@@ -86,6 +87,7 @@ Main schema setup in `index.js`:
   - `job_progress`
 - Economy and admin:
   - `guilds`
+  - `guild_settings`
   - `system_state`
   - `user_balances`
   - `transactions`
@@ -124,6 +126,18 @@ Money movement should go through `utils/economy.js` where possible:
 - `addServerBank`, `bankToUserIfEnough`
 
 ## Feature Map
+
+### Server Configuration
+
+- Basic setup command: `commands/configure.js`.
+- Shared helper: `utils/guildConfig.js`.
+- Table: `guild_settings` with `guild_id`, `bot_channel_id`, `feature_hub_channel_id`, `powerball_channel_id`, `ese_news_channel_id`, `bot_master_role_id`, `cleared_settings`, `created_at`, and `updated_at`.
+- `/configure` is for safe server setup only: Bot Channel, Feature Hub Channel, Powerball Channel, ESE News Channel, and Bot Master Role. It must stay separate from `/adminpanel`.
+- `/adminpanel > Configure` is reserved for future powerful tuning controls that affect money, XP, progression, cooldowns, rewards, risks, or feature enablement. Do not move economy/progression controls into `/configure`.
+- Bot Master bootstrap rule: if the guild has no configured Bot Master role, a Discord Administrator may set the first one with `/configure bot-master set`. Once configured, only members with that Bot Master role may change it.
+- There is no hardcoded Bot Master fallback. Until `bot_master_role_id` is set, `/adminpanel` is completely locked and `/help` Game Boss details are inaccessible.
+- Channel behaviour: Feature Hub, Powerball, ESE News, Bot Games, deploy announcements, Echo Rift, and channel-locked games read channel IDs from `guild_settings`. They do not fall back to hardcoded channel IDs.
+- Startup systems read guild config safely. Missing Feature Hub, Powerball, ESE News, or Bot Channel values should skip posting instead of crashing.
 
 ## Visual Identity
 
@@ -326,10 +340,10 @@ Underworld specifics:
 
 ### Scheduled Systems
 
-- Bot Games: `utils/botGames.js`, planned in Brisbane time. Scheduled posts no longer ping the Bot Games role. Current events live in `data/botgames/events/*`; balance is intentionally boosted above old novelty values but kept below ritual scale. Quickdraw pays `$8,000`, Risk Ladder starts at `$4,500`, Mystery Box costs `$2,000` with a rare `$28,000` jackpot, Static Sweep tops out at `$24,000`, and Echo Cups pays `$12,000` for the marked cup.
-- Lottery: `utils/lottery.js`, weekly Powerball using configured timezone.
-- Echo Rift: `utils/echoRift.js`, scheduled random rift event.
-- Echo Stock Exchange: `utils/ese/engine.js`, ticked by `index.js` interval.
+- Bot Games: `utils/botGames.js`, planned in Brisbane time. Scheduled posts no longer ping the Bot Games role. Current events live in `data/botgames/events/*`; balance is intentionally boosted above old novelty values but kept below ritual scale. Quickdraw pays `$8,000`, Risk Ladder starts at `$4,500`, Mystery Box costs `$2,000` with a rare `$28,000` jackpot, Static Sweep tops out at `$24,000`, and Echo Cups pays `$12,000` for the marked cup. Bot Games require the guild Bot Channel setting.
+- Lottery: `utils/lottery.js`, weekly Powerball using configured timezone. Posting uses the guild Powerball Channel setting; if unset, it skips posting/running posts safely.
+- Echo Rift: `utils/echoRift.js`, scheduled random rift event. Rift spawning requires the guild Bot Channel setting.
+- Echo Stock Exchange: `utils/ese/engine.js`, ticked by `index.js` interval. News posting uses the guild ESE News Channel setting; if unset, the news post step is skipped safely.
 - Timers: `utils/userTimers.js`, 15-second poller for persisted countdowns and alarms.
 
 ### Contracts
@@ -348,7 +362,7 @@ Underworld specifics:
 
 - Slash entry: `commands/adminpanel.js`
 - Implementation: `utils/adminPanel.js`
-- Gate: hard-coded Bot Master role ID `741251069002121236`
+- Gate: configurable Bot Master role via `utils/guildConfig.js`. If no Bot Master role is configured, `/adminpanel` is locked.
 - Some actions run legacy command files from `commands/_retired/admin`; `admin/legacy_commands` is a duplicate legacy folder and is not the active admin panel target.
 
 ## Known Risk Areas
@@ -377,7 +391,7 @@ Do not run `npm start` casually if the real Discord token is present; it logs th
 
 - Scheduler and purge logic live in `utils/channelPurger.js`.
 - Admin Panel controls are under **Moderation** in `utils/adminPanel.js`.
-- This version intentionally keeps the same channel ID.
+- Purge jobs run against the channel selected when the purge schedule is created.
 - Purges run inside the existing channel by fetching history, bulk-deleting recent messages, and individually deleting older messages that Discord will not bulk-delete.
 - Because Discord only bulk-deletes recent history, very large or very old channels may take longer to fully clear.
 - Schedule alignment is based on Australia/Brisbane local time boundaries from midnight. Example: `24` hours means the next midnight, then every midnight after that.
