@@ -465,9 +465,13 @@ module.exports = {
 
       // Manufacturing state
       manuMaterialId: null,
+
+      // Invalidates older background redraws after a user action changes the board.
+      uiVersion: 0,
     };
 
     const collector = msg.createMessageComponentCollector({ time: BOARD_INACTIVITY_MS });
+    let refresh = null;
 
     function resetInactivity() {
       collector.resetTimer({ time: BOARD_INACTIVITY_MS });
@@ -490,6 +494,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       const target = session.lastCategory;
       if (!["95", "nw", "grind", "crime"].includes(target)) return;
 
+      session.uiVersion += 1;
       session.view = target;
       await redraw();
     } catch {}
@@ -497,6 +502,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 }
 
     async function stopWork(reason = "stop") {
+      session.uiVersion += 1;
       cancelAutoReturn();
       if (session.shiftInterval) {
         clearInterval(session.shiftInterval);
@@ -633,7 +639,19 @@ function scheduleReturnToCategory(delayMs = 5000) {
     }
 
     async function redraw() {
+      const renderVersion = session.uiVersion;
+      const editBoard = (payload) => {
+        if (collector.ended || renderVersion !== session.uiVersion) return Promise.resolve(null);
+        return msg.edit(payload).catch((err) => {
+          if (err?.code !== 10008) throw err;
+          return null;
+        });
+      };
+      const redrawMsg = Object.create(msg);
+      redrawMsg.edit = editBoard;
+
       const p = await getJobProgress(guildId, userId);
+      if (collector.ended || renderVersion !== session.uiVersion) return null;
       session.level = p.level;
 
       if (session.legendaryAvailable && Date.now() > session.legendaryExpiresAt) {
@@ -643,8 +661,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       const cd = await getCooldownUnixIfActive(guildId, userId, "job");
 
       if (session.view === "hub") {
-        return msg
-          .edit({
+        return editBoard({
             embeds: [buildHubEmbed(interaction.user, p, cd)],
             components: buildHubComponents(false),
           })
@@ -653,8 +670,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "95") {
         const cooldowns = await getNineToFiveCooldowns();
-        return msg
-          .edit({
+        return editBoard({
             embeds: [nineToFiveUi.buildNineToFiveEmbed(interaction.user, p, cooldowns)],
             components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
           })
@@ -663,8 +679,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "nw") {
         const cooldowns = await getNightWalkerCooldowns();
-        return msg
-          .edit({
+        return editBoard({
             embeds: [nightWalkerUi.buildNightWalkerEmbed(interaction.user, p, cooldowns)],
             components: nightWalkerUi.buildNightWalkerComponents(false),
           })
@@ -672,8 +687,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "trucker" && session.trucker) {
-        return msg
-          .edit({
+        return editBoard({
             embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
             components: nineToFiveUi.buildTruckerButtons(session.trucker),
           })
@@ -685,8 +699,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         const cooldowns = await getGrindCooldowns();
         const grindLocked = Boolean(fatigueInfo?.lockedUntil);
 
-        return msg
-          .edit({
+        return editBoard({
             embeds: [grindUi.buildGrindEmbed({ fatigueInfo, cooldowns })],
             components: grindUi.buildGrindComponents(false, { locked: grindLocked }),
           })
@@ -695,7 +708,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (await renderEnterpriseView({
         session,
-        msg,
+        msg: redrawMsg,
         guildId,
         userId,
         buildUnderworldEmbed,
@@ -993,7 +1006,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       if (session.view === "enterprises") {
-        return msg.edit({
+        return editBoard({
           embeds: [buildEnterprisesEmbed()],
           components: buildEnterprisesComponents(false),
         }).catch(() => {});
@@ -1015,8 +1028,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
           layLow: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.layLow),
         };
 
-        return msg
-          .edit({
+        return editBoard({
             embeds: [crimeUi.buildCrimeEmbed({ heatInfo, cooldowns })],
             components: crimeUi.buildCrimeComponents(false),
           })
@@ -1057,6 +1069,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         if (isClerkRuntime || isTaxiRuntime || isFarmingModalRuntime) {
           resetInactivity();
           cancelAutoReturn();
+          session.uiVersion += 1;
           if (isFarmingModalRuntime) {
             await handleFarmingInteraction({
               actionId,
@@ -1075,6 +1088,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
         await ensureAck(btn);
         resetInactivity();
         cancelAutoReturn();
+        session.uiVersion += 1;
 
         
         // 🚔 Jail gate for buttons (true = BLOCK)
@@ -1244,6 +1258,10 @@ function scheduleReturnToCategory(delayMs = 5000) {
     });
 
     collector.on("end", async () => {
+      if (refresh) {
+        clearInterval(refresh);
+        refresh = null;
+      }
       cancelAutoReturn();
       if (session.shiftInterval) {
         clearInterval(session.shiftInterval);
@@ -1260,11 +1278,22 @@ function scheduleReturnToCategory(delayMs = 5000) {
     });
 
     // refresh only updates navigation views
-    const refresh = setInterval(async () => {
-      if (collector.ended) return clearInterval(refresh);
+    let refreshInFlight = false;
+    refresh = setInterval(async () => {
+      if (collector.ended) {
+        clearInterval(refresh);
+        refresh = null;
+        return;
+      }
       if (session.returnTimer) return;
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "farming", "farm_field", "farm_market", "farm_machines", "manufacturing", "manu_plot", "manu_plot_type", "manu_plot_import", "manu_plot_materials", "manu_material_qty", "manu_market", "manu_contracts", "underworld", "underworld_operations", "underworld_building", "underworld_smuggling", "underworld_smuggling_garage", "underworld_smuggling_shop", "underworld_smuggling_start", "underworld_smuggling_active"].includes(session.view)) {
-        await redraw();
+      if (refreshInFlight) return;
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "underworld"].includes(session.view)) {
+        refreshInFlight = true;
+        try {
+          await redraw();
+        } finally {
+          refreshInFlight = false;
+        }
       }
     }, 10_000);
   },

@@ -598,6 +598,27 @@ function renderBarnVisual(barn) {
   return "🐄🐄🐄\n🟫🟫🟫";
 }
 
+function stableFieldRoll(field, row, col) {
+  const seed = [
+    field?.level || 1,
+    field?.cropId || "none",
+    field?.state || "empty",
+    field?.cultivated ? "clean" : "debris",
+    field?.plantedAt || 0,
+    field?.readyAt || 0,
+    field?.fieldCondition?.type || "",
+    field?.fieldCondition?.appliedAt || 0,
+    row,
+    col,
+  ].join(":");
+  let hash = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967296;
+}
+
 function renderFieldVisual(field) {
   if (!field) return "";
 
@@ -637,7 +658,7 @@ function renderFieldVisual(field) {
     for (let r = 0; r < size; r++) {
       let line = "";
       for (let c = 0; c < size; c++) {
-        const roll = Math.random();
+        const roll = stableFieldRoll(field, r, c);
         if (roll < 0.14) line += "⬜";
         else if (roll < 0.24) line += "⬛";
         else line += "🟫";
@@ -652,7 +673,7 @@ function renderFieldVisual(field) {
     for (let r = 0; r < size; r++) {
       let line = "";
       for (let c = 0; c < size; c++) {
-        const roll = Math.random();
+        const roll = stableFieldRoll(field, r, c);
         if (roll < 0.35) line += "⬛";
         else line += "🟫";
       }

@@ -293,6 +293,20 @@ function getSellValue(machine) {
   return Math.floor(Number(machine?.buyPrice || 0) * SELL_VALUE_RATE);
 }
 
+function reconcileActiveTasksWithFarm(state, farm) {
+  if (!state || !Array.isArray(state.activeTasks)) return false;
+  const before = state.activeTasks.length;
+  state.activeTasks = state.activeTasks.filter((task) => {
+    const field = farm?.fields?.[Number(task.fieldIndex)];
+    return Boolean(
+      field?.task?.key &&
+      field.task.key === task.taskKey &&
+      Number(field.task.endsAt || 0) > Date.now()
+    );
+  });
+  return state.activeTasks.length !== before;
+}
+
 async function logMachineTransaction(guildId, userId, amount, type, meta = {}) {
   try {
     await pool.query(
@@ -431,6 +445,16 @@ async function reserveMachinesForTask(guildId, userId, fieldIndex, taskKey, dura
   const cleaned = tasksChanged || rentalsChanged;
   if (cleaned) await saveMachineState(guildId, userId, state);
 
+  const existingFieldTask = (state.activeTasks || []).find(
+    (task) => Number(task.fieldIndex) === Number(fieldIndex)
+  );
+  if (existingFieldTask) {
+    return {
+      ok: false,
+      reasonText: "That field already has machinery assigned to an active task.",
+    };
+  }
+
   const requiredTypes = TASK_REQUIREMENTS[taskKey] || [];
   const compatibleSet = findCompatibleMachineSet(state, taskKey);
 
@@ -479,6 +503,21 @@ async function reserveMachinesForTask(guildId, userId, fieldIndex, taskKey, dura
   };
 }
 
+async function releaseMachinesForTask(guildId, userId, fieldIndex, taskKey = null) {
+  const state = await ensureMachineState(guildId, userId);
+  const before = (state.activeTasks || []).length;
+  state.activeTasks = (state.activeTasks || []).filter((task) => {
+    if (Number(task.fieldIndex) !== Number(fieldIndex)) return true;
+    if (taskKey && task.taskKey !== taskKey) return true;
+    return false;
+  });
+  if (state.activeTasks.length !== before) {
+    await saveMachineState(guildId, userId, state);
+    return true;
+  }
+  return false;
+}
+
 module.exports = {
   ensureMachineState,
   saveMachineState,
@@ -497,9 +536,11 @@ module.exports = {
   getAvailableMachinesByType,
   getOccupiedCountForMachine,
   getSellValue,
+  reconcileActiveTasksWithFarm,
   RENTAL_DURATION_MS,
   SELL_VALUE_RATE,
   reserveMachinesForTask,
+  releaseMachinesForTask,
   getBestTaskSpeedMultiplier,
   getMachineSetSpeedMultiplier,
   canTractorRunImplement,

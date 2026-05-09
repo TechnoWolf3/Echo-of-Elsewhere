@@ -895,15 +895,6 @@ async function startMachineBackedFieldTask({
   const baseTaskMs = farming.getTaskDurationMs(field, action, 60000);
   const speedMult = await machineEngine.getBestTaskSpeedMultiplier(guildId, userId, action);
   const taskMs = Math.max(15000, Math.round(baseTaskMs * speedMult));
-  const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, action, taskMs, extra);
-
-  if (!result.ok) {
-    await interaction.followUp({
-      content: `❌ ${result.reasonText}`,
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
-    return;
-  }
 
   const machineCheck = await machineEngine.reserveMachinesForTask(
     guildId,
@@ -917,6 +908,17 @@ async function startMachineBackedFieldTask({
     await farming.clearFieldTask(guildId, userId, farm, fieldIndex).catch(() => {});
     await interaction.followUp({
       content: `❌ ${machineCheck.reasonText}`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    return;
+  }
+
+  const result = await farming.startFieldTask(guildId, userId, farm, fieldIndex, action, taskMs, extra);
+
+  if (!result.ok) {
+    await machineEngine.releaseMachinesForTask(guildId, userId, fieldIndex, action).catch(() => {});
+    await interaction.followUp({
+      content: `Failed: ${result.reasonText}`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     return;

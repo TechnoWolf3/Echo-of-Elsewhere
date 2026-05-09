@@ -91,6 +91,12 @@ function formatMoney(n) {
   return `$${v.toLocaleString("en-AU")}`;
 }
 
+async function respond(interaction, payload) {
+  if (interaction.deferred) return interaction.editReply(payload);
+  if (interaction.replied) return interaction.followUp(payload);
+  return interaction.reply(payload);
+}
+
 async function ensureTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS lottery_state (
@@ -284,34 +290,45 @@ function parseMainNumbers(input) {
 }
 
 async function buyTicketsSelected(interaction, main, power, count) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  }
+  const originalReply = interaction.reply.bind(interaction);
+  interaction.reply = (payload) => (
+    interaction.deferred || interaction.replied
+      ? respond(interaction, payload)
+      : originalReply(payload)
+  );
+
   const guildId = interaction.guildId;
   const userId = interaction.user.id;
+  const drawUtc = nextDrawUtcMs();
+  const drawKey = drawKeyFromDrawUtc(drawUtc);
+  const closeUtc = salesCloseUtcMs(drawUtc);
   const nowMs = Date.now();
 
-  if (nowMs >= salesCloseUtcMs()) {
-    await interaction.reply({ content: 'Sales are closed for the current draw. Come back after the draw.', flags: MessageFlags.Ephemeral });
+  if (nowMs >= closeUtc) {
+    await respond(interaction, { content: 'Sales are closed for the current draw. Come back after the draw.' });
     return true;
   }
 
   count = Math.max(1, Math.min(config.maxTicketsPerUser, Number(count || 1)));
-  const current = await countUserTickets(guildId, userId);
+  const current = await countUserTickets(guildId, userId, drawKey);
   const canBuy = Math.max(0, config.maxTicketsPerUser - current);
   if (canBuy <= 0) {
-    await interaction.reply({ content: `You already have the maximum (${config.maxTicketsPerUser}) tickets for this draw.`, flags: MessageFlags.Ephemeral });
+    await respond(interaction, { content: `You already have the maximum (${config.maxTicketsPerUser}) tickets for this draw.` });
     return true;
   }
   if (count > canBuy) count = canBuy;
 
   const totalCost = count * config.ticketPrice;
-  const ok = await economy.tryDebitBank(guildId, userId, totalCost, 'lottery_ticket', { count, mode: 'pick' });
-  if (!ok) {
-    await interaction.reply({ content: `Not enough funds. You need ${formatMoney(totalCost)}.`, flags: MessageFlags.Ephemeral });
+  const debit = await economy.tryDebitBank(guildId, userId, totalCost, 'lottery_ticket', { count, mode: 'pick' });
+  if (!debit.ok) {
+    await respond(interaction, { content: `Not enough funds. You need ${formatMoney(totalCost)}.` });
     return true;
   }
 
-  const drawUtc = nextDrawUtcMs();
-  const drawKey = drawKeyFromDrawUtc(drawUtc);
-  await ensureDraw(guildId, drawKey, drawUtc);
+  await getDrawRow(guildId, drawKey, drawUtc, closeUtc);
 
   const payload = { main: [...main].sort((a, b) => a - b), power };
   const inserts = [];
@@ -325,9 +342,8 @@ async function buyTicketsSelected(interaction, main, power, count) {
   await Promise.all(inserts);
 
   const drawUnix = Math.floor(drawUtc / 1000);
-  await interaction.reply({
+  await respond(interaction, {
     content: `✅ Bought **${count}** ticket(s) with **your numbers** for the draw <t:${drawUnix}:F>.\nMain: **${payload.main.join(', ')}** | PB **${String(power).padStart(2, '0')}**`,
-    flags: MessageFlags.Ephemeral,
   });
   return true;
 }
@@ -584,6 +600,16 @@ async function scheduleLoop(client) {
 }
 
 async function buyTickets(interaction, count) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  }
+  const originalReply = interaction.reply.bind(interaction);
+  interaction.reply = (payload) => (
+    interaction.deferred || interaction.replied
+      ? respond(interaction, payload)
+      : originalReply(payload)
+  );
+
   const guildId = interaction.guildId;
   const userId = interaction.user.id;
 

@@ -108,6 +108,10 @@ async function renderEnterpriseView({
     if (session.machinePage?.startsWith("machine_cat:")) {
       const [, mode, category] = session.machinePage.split(":");
       const machineState = await machineEngine.ensureMachineState(guildId, userId);
+      const farm = await farming.ensureFarm(guildId, userId);
+      if (machineEngine.reconcileActiveTasksWithFarm(machineState, farm)) {
+        await machineEngine.saveMachineState(guildId, userId, machineState);
+      }
       await msg.edit({
         embeds: [farmingUi.buildMachineActionCategoryEmbed(category, machineState, mode)],
         components: farmingUi.buildMachineActionSelectComponents(category, machineState, mode),
