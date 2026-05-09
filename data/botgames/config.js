@@ -1,9 +1,6 @@
 module.exports = {
   enabled: true,
 
-  // 🔔 Role to ping
-  roleId: "1474683699344838809",
-
   // 📍 Channel to post in
   channelId: "1449217901306581074",
 

@@ -227,7 +227,6 @@ async function debugSpawn(client, guild, opts = {}) {
   const {
     eventId = null,
     channelId = null,
-    ping = false,
     force = false,
   } = opts;
 
@@ -253,7 +252,6 @@ async function debugSpawn(client, guild, opts = {}) {
   const payload = renderEvent(eventMod, state, false);
 
   const msg = await channel.send({
-    content: ping ? `<@&${config.roleId}>` : undefined,
     ...payload,
   });
 
@@ -358,7 +356,6 @@ async function spawnEvent(client, guild) {
   const payload = renderEvent(eventMod, state, false);
 
   const msg = await channel.send({
-    content: `<@&${config.roleId}>`,
     ...payload
   });
 
@@ -434,6 +431,7 @@ function makeCtx(interaction) {
     econGetBalance,
     econAdd,
     econRemove,
+    end: () => { active = null; },
     // Render helper for multi-step events
     render: () => renderEvent(active.eventMod, active.state, true),
   };
@@ -647,16 +645,10 @@ active.expiryTimer = setTimeout(() => {
 
     // Multi-step events
     if (typeof active.eventMod.onAction === "function") {
-      await active.eventMod.onAction(ctx, active.state, action);
+      const result = await active.eventMod.onAction(ctx, active.state, action);
 
-      // If the event ended (we removed buttons), clear active
-      // We can detect by checking if message components are empty in the update, but we don't get that back here.
-      // Simple rule: clear on cashout or bust (handled by event) by setting ctx.end().
-      // For now, event will end by updating components: [] — we’ll clear on those actions.
-      if (action === "cashout" || action === "continue") {
-        // continue might not end; keep active unless it busts.
-        // We'll keep active unless the message got cleared; best-effort: if bust it likely cleared.
-      }
+      // Multi-step games can explicitly end after non-cashout actions.
+      if (result?.ended) active = null;
       // If action was cashout, end it.
       if (action === "cashout") active = null;
       return;

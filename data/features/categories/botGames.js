@@ -26,7 +26,7 @@ module.exports = {
       detail:
         "Quickdraw is the simplest Bot Game.\n" +
         "The first player to click **Play** wins the listed prize.\n" +
-        "There is no stake, no extra decision, and no second step. It rewards fast reactions.",
+        "There is no stake, no extra decision, and no second step. It rewards fast reactions with a boosted $8,000 prize.",
     },
     {
       id: "double_or_nothing",
@@ -55,6 +55,24 @@ module.exports = {
         "The Mystery Box offers unpredictable outcomes ranging from nothing to a rare jackpot.\n" +
         "The first claimant pays the listed cost, opens the box, and accepts the result.\n" +
         "There are no previews, no guarantees, and no second chances.",
+    },
+    {
+      id: "echo_cups",
+      name: "Echo Cups",
+      short: "Pick the marked cup for a clean reward.",
+      detail:
+        "Echo Cups gives the first claimant one choice from three cups.\n" +
+        "Finding the marked cup wins the main prize, while some misses still receive a small consolation payout.\n" +
+        "It is a fast luck event with no entry cost.",
+    },
+    {
+      id: "static_sweep",
+      name: "Static Sweep",
+      short: "Choose a safer or riskier signal sweep.",
+      detail:
+        "Static Sweep lets the claimant choose between Ground, Tune, and Overload.\n" +
+        "Ground has the best odds and smallest payout, Tune sits in the middle, and Overload has the biggest payout with the lowest chance.\n" +
+        "It gives players a quick risk decision without pushing into ritual-sized rewards.",
     },
   ],
 };

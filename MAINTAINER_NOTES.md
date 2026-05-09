@@ -326,7 +326,7 @@ Underworld specifics:
 
 ### Scheduled Systems
 
-- Bot Games: `utils/botGames.js`, planned in Brisbane time.
+- Bot Games: `utils/botGames.js`, planned in Brisbane time. Scheduled posts no longer ping the Bot Games role. Current events live in `data/botgames/events/*`; balance is intentionally boosted above old novelty values but kept below ritual scale. Quickdraw pays `$8,000`, Risk Ladder starts at `$4,500`, Mystery Box costs `$2,000` with a rare `$28,000` jackpot, Static Sweep tops out at `$24,000`, and Echo Cups pays `$12,000` for the marked cup.
 - Lottery: `utils/lottery.js`, weekly Powerball using configured timezone.
 - Echo Rift: `utils/echoRift.js`, scheduled random rift event.
 - Echo Stock Exchange: `utils/ese/engine.js`, ticked by `index.js` interval.

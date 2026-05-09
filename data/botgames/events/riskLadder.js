@@ -8,7 +8,7 @@ module.exports = {
   create() {
     // Free entry by default (house-funded)
     // You can make it a stake by adding `stake` and charging it on claim.
-    const basePrize = 2500;
+    const basePrize = 4500;
 
     // Each step increases pot + increases bust chance
     const ladder = [
@@ -106,6 +106,7 @@ module.exports = {
 
       // Bust?
       if (Math.random() < current.bust) {
+        ctx.end?.();
         return interaction.update({
           embeds: [{
             title: "💥 BUST!",

@@ -4,7 +4,7 @@ module.exports = {
   weight: 3,
 
   create() {
-    const cost = 1500;
+    const cost = 2000;
     return {
       cost,
       title: "📦 Mystery Box",
@@ -29,10 +29,10 @@ module.exports = {
     let payout = 0;
     let label = "";
 
-    if (roll < 0.55) { payout = 0; label = "🗑️ Empty box. Pain."; }
-    else if (roll < 0.85) { payout = Math.floor(cost * 1.2); label = "🪙 Small win."; }
-    else if (roll < 0.97) { payout = Math.floor(cost * 2.0); label = "💰 Nice hit!"; }
-    else { payout = Math.floor(cost * 8.0); label = "💎 JACKPOT!!"; }
+    if (roll < 0.48) { payout = 0; label = "🗑️ Empty box. Pain."; }
+    else if (roll < 0.80) { payout = Math.floor(cost * 1.5); label = "🪙 Small win."; }
+    else if (roll < 0.96) { payout = Math.floor(cost * 3.0); label = "💰 Nice hit!"; }
+    else { payout = Math.floor(cost * 14.0); label = "💎 JACKPOT!!"; }
 
     if (payout > 0) await ctx.econAdd(ctx.guildId, ctx.userId, payout);
 

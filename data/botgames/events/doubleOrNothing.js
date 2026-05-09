@@ -4,7 +4,7 @@ module.exports = {
   weight: 2,
 
   create() {
-    const bet = Math.floor(Math.random() * 5000) + 1000; // 1k–6k
+    const bet = Math.floor(Math.random() * 6000) + 2500; // 2.5k-8.5k
     return {
       bet,
       title: "🎲 Double or Nothing!",

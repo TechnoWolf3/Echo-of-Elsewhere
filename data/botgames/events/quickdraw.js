@@ -4,7 +4,7 @@ module.exports = {
   weight: 3,
 
   create() {
-    const prize = 5000;
+    const prize = 8000;
     return {
       prize,
       title: "⚡ Quickdraw!",
