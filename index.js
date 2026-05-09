@@ -11,6 +11,7 @@ const echoCurses = require("./utils/echoCurses");
 const echoRift = require("./utils/echoRift");
 const adminPanel = require("./utils/adminPanel");
 const guildConfig = require("./utils/guildConfig");
+const configureCommand = require("./commands/configure");
 const bankCommand = require("./commands/bank");
 const timersCommand = require("./commands/timers");
 const bankRecurringDeposits = require("./utils/bankRecurringDeposits");
@@ -896,6 +897,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (handled) return;
   } catch (e) {
     console.error("[ADMINPANEL] handler failed:", e);
+  }
+
+  // ⚙️ Basic server configuration hub
+  try {
+    const handled = await configureCommand.handleInteraction?.(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[CONFIGURE] handler failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "❌ Echo could not handle that configuration action.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "❌ Echo could not handle that configuration action.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
   }
 
   // 🏦 Bank hub interactions

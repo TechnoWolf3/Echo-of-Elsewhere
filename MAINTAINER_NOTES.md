@@ -58,6 +58,7 @@ Important: `commands/_retired/**` and `admin/legacy_commands/**` are not active 
 - `help:*` is ignored globally so `/help` collectors can handle it.
 - `ese-*` and `ese-view-stock` go to `commands/ese.js`.
 - `adminpanel:*` goes to `utils/adminPanel.js`.
+- `configure:*` goes to `commands/configure.js`.
 - `bank:*` goes to `commands/bank.js`.
 - `timers:*` goes to `commands/timers.js`.
 - `contracts:*` goes to `commands/contracts.js`, which delegates to `utils/contracts.js`.
@@ -132,9 +133,9 @@ Money movement should go through `utils/economy.js` where possible:
 - Basic setup command: `commands/configure.js`.
 - Shared helper: `utils/guildConfig.js`.
 - Table: `guild_settings` with `guild_id`, `bot_channel_id`, `feature_hub_channel_id`, `powerball_channel_id`, `ese_news_channel_id`, `bot_master_role_id`, `cleared_settings`, `created_at`, and `updated_at`.
-- `/configure` is for safe server setup only: Bot Channel, Feature Hub Channel, Powerball Channel, ESE News Channel, and Bot Master Role. It must stay separate from `/adminpanel`.
+- `/configure` is a button/modal hub for safe server setup only: Bot Channel, Feature Hub Channel, Powerball Channel, ESE News Channel, and Bot Master Role. It must stay separate from `/adminpanel`.
 - `/adminpanel > Configure` is reserved for future powerful tuning controls that affect money, XP, progression, cooldowns, rewards, risks, or feature enablement. Do not move economy/progression controls into `/configure`.
-- Bot Master bootstrap rule: if the guild has no configured Bot Master role, a Discord Administrator may set the first one with `/configure bot-master set`. Once configured, only members with that Bot Master role may change it.
+- Bot Master bootstrap rule: if the guild has no configured Bot Master role, a Discord Administrator may set the first one from the `/configure` hub. Once configured, only members with that Bot Master role may change it.
 - There is no hardcoded Bot Master fallback. Until `bot_master_role_id` is set, `/adminpanel` is completely locked and `/help` Game Boss details are inaccessible.
 - Channel behaviour: Feature Hub, Powerball, ESE News, Bot Games, deploy announcements, Echo Rift, and channel-locked games read channel IDs from `guild_settings`. They do not fall back to hardcoded channel IDs.
 - Startup systems read guild config safely. Missing Feature Hub, Powerball, ESE News, or Bot Channel values should skip posting instead of crashing.
