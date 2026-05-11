@@ -352,6 +352,12 @@ function buildTruckerEmbed(run, { completed = false } = {}) {
     `**Payout:** $${Number(manifest.payoutBase || 0).toLocaleString()}`,
   ];
 
+  if (!started && Number.isFinite(Number(run?.refreshLimit))) {
+    const limit = Math.max(0, Number(run.refreshLimit || 0));
+    const used = Math.max(0, Math.min(limit, Number(run.refreshCount || 0)));
+    lines.push(`**Manifest Refreshes:** ${Math.max(0, limit - used)}/${limit} remaining`);
+  }
+
   if (started) {
     lines.push(
       "",
@@ -474,12 +480,19 @@ function buildEmailSorterSummaryEmbed(run, { paid = null } = {}) {
 function buildTruckerButtons(run = {}) {
   const started = Boolean(run?.startMs);
   const ready = Boolean(run?.ready);
+  const refreshLimit = Math.max(0, Number(run?.refreshLimit ?? truckerCfg.manifestRefreshLimit ?? 5));
+  const refreshCount = Math.max(0, Number(run?.refreshCount || 0));
+  const refreshRemaining = Math.max(0, refreshLimit - refreshCount);
 
   if (!started) {
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("job_trucker_start").setLabel("🚛 Start Job").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("job_trucker_refresh").setLabel("🔁 New Manifest").setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder()
+          .setCustomId("job_trucker_refresh")
+          .setLabel(`🔁 New Manifest (${refreshRemaining})`)
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(refreshRemaining <= 0)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("job_back:95").setLabel(ui.nav.back.label).setEmoji(ui.nav.back.emoji).setStyle(ui.nav.back.style),

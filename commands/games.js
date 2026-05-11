@@ -422,6 +422,40 @@ async function showFunCategory(interaction, existingMessage = null) {
   return msg;
 }
 
+async function showCasinoCategory(interaction, existingMessage = null) {
+  const channelId = interaction.channelId || interaction.channel?.id;
+  const categories = loadCategories();
+  const cat = getCategory(categories, "casino");
+  if (!cat) return null;
+
+  let msg = existingMessage;
+  if (!msg) {
+    const rec = panels.get(channelId);
+    if (rec?.messageId) {
+      try {
+        msg = await interaction.channel.messages.fetch(rec.messageId);
+      } catch {}
+    }
+  }
+
+  if (!msg) {
+    msg = await upsertPanel(interaction);
+  }
+
+  const state = panels.get(channelId);
+  if (state) {
+    state.view = "cat";
+    state.catId = "casino";
+  }
+
+  await msg.edit({
+    embeds: [buildCategoryEmbed(channelId, cat)],
+    components: [buildGameSelect(cat), buildButtons({ showBack: true })],
+  }).catch(() => {});
+
+  return msg;
+}
+
 // Internal helper for rerouting (like your old pattern)
 async function ensureHub(interaction) {
   try {
@@ -456,3 +490,4 @@ module.exports = {
 
 module.exports.ensureHub = ensureHub;
 module.exports.showFunCategory = showFunCategory;
+module.exports.showCasinoCategory = showCasinoCategory;

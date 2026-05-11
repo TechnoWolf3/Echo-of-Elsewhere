@@ -510,6 +510,7 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
     deck: [],
     currentCard: null,
     message: null,
+    reuseHubMessage: Boolean(reuseMessage),
     channel: interaction.channel,
     hostSecurity: null,
   };
@@ -518,12 +519,13 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
   activeGames.set(channelId, { type: "higherlower", state: "lobby" });
   setActiveGame(channelId, { type: "higherlower", state: "lobby" });
 
-  const msg = await interaction.channel.send({
+  const msg = reuseMessage || await interaction.channel.send({
     embeds: [buildLobbyEmbed(table)],
     components: buildLobbyComponents(table),
   });
 
   table.message = msg;
+  if (reuseMessage) await render(table);
 
   const collector = msg.createMessageComponentCollector({ idle: 30 * 60 * 1000 });
 
@@ -625,6 +627,12 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
     tablesById.delete(table.tableId);
     activeGames.delete(channelId);
     clearActiveGame(channelId);
+
+    if (table.reuseHubMessage) {
+      const gamesCmd = require("../../commands/games");
+      await gamesCmd.showCasinoCategory({ channelId, channel: table.channel }, table.message).catch(() => {});
+      return;
+    }
 
     setTimeout(() => {
       table.message?.delete().catch(() => {});

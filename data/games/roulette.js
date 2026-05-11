@@ -756,6 +756,7 @@ async function startFromHub(interaction, opts = {}) {
     defaultBetValue: null,
     hostSecurity: null,
     message: null,
+    reuseHubMessage: Boolean(opts.reuseMessage),
   };
 
   tablesById.set(table.tableId, table);
@@ -777,10 +778,11 @@ async function startFromHub(interaction, opts = {}) {
     paid: false,
   });
 
-  table.message = await interaction.channel.send({
+  table.message = opts.reuseMessage || await interaction.channel.send({
     embeds: [buildTableEmbed(table)],
     components: buildComponents(table),
   });
+  if (opts.reuseMessage) await render(table);
 
   const collector = table.message.createMessageComponentCollector({ time: 30 * 60 * 60_000 });
 
@@ -907,6 +909,12 @@ async function startFromHub(interaction, opts = {}) {
     tablesById.delete(table.tableId);
     activeGames.delete(channelId);
     clearActiveGame(channelId);
+
+    if (table.reuseHubMessage) {
+      const gamesCmd = require("../../commands/games");
+      await gamesCmd.showCasinoCategory({ channelId, channel: interaction.channel }, table.message).catch(() => {});
+      return;
+    }
 
     setTimeout(() => {
       table.message?.delete().catch(() => {});

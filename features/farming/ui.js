@@ -413,6 +413,7 @@ function buildMachineActionSelectComponents(category, state, mode = "buy") {
 function buildFarmingComponents(farm) {
   const rows = [];
   const fields = farm.fields || [];
+  const plotEntries = getFarmPlotDisplayEntries(farm);
   const actionButtons = [];
 
   if (fields.length < config.MAX_FIELDS) {
@@ -433,14 +434,14 @@ function buildFarmingComponents(farm) {
 
   rows.push(new ActionRowBuilder().addComponents(actionButtons));
 
-  for (let start = 0; start < fields.length; start += 5) {
+  for (let start = 0; start < plotEntries.length; start += 5) {
     rows.push(
       new ActionRowBuilder().addComponents(
-        fields.slice(start, start + 5).map((_, offset) => {
-          const index = start + offset;
+        plotEntries.slice(start, start + 5).map((entry) => {
+          const index = entry.index;
           return new ButtonBuilder()
             .setCustomId(`farm_select:${index}`)
-            .setLabel(farming.isBarn(fields[index]) ? `Barn ${index + 1}` : `Field ${index + 1}`)
+            .setLabel(`${entry.label} ${entry.displayNumber}`)
             .setStyle(ButtonStyle.Primary);
         })
       )
@@ -460,8 +461,37 @@ function buildFarmingComponents(farm) {
   return rows;
 }
 
+function getFarmPlotDisplayEntries(farm) {
+  const fields = farm.fields || [];
+  const entries = fields.map((field, index) => ({
+    field,
+    index,
+    kind: farming.isBarn(field) ? "barn" : "field",
+  }));
+
+  let fieldNumber = 0;
+  let barnNumber = 0;
+  return [
+    ...entries.filter((entry) => entry.kind === "field"),
+    ...entries.filter((entry) => entry.kind === "barn"),
+  ].map((entry) => {
+    if (entry.kind === "barn") {
+      barnNumber += 1;
+      return { ...entry, label: "Barn", displayNumber: barnNumber };
+    }
+    fieldNumber += 1;
+    return { ...entry, label: "Field", displayNumber: fieldNumber };
+  });
+}
+
+function getFarmPlotDisplayName(farm, fieldIndex) {
+  const entry = getFarmPlotDisplayEntries(farm).find((item) => item.index === fieldIndex);
+  return entry ? `${entry.label} ${entry.displayNumber}` : `Field ${fieldIndex + 1}`;
+}
+
 function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
   const fields = farm.fields || [];
+  const plotEntries = getFarmPlotDisplayEntries(farm);
   const season = farming.getCurrentSeason(guildId);
   const nextCost = fields.length < config.MAX_FIELDS ? farming.getNextFieldCost(fields.length) : null;
 
@@ -481,58 +511,70 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
   );
 
   const fieldLines = fields.length
-  ? fields.map((field, index) => {
-      if (farming.isBarn(field)) {
-        const type = farming.getLivestockType(field.livestockType);
-        const production = farming.getBarnProductionInfo(field);
-        const barnCounts = farming.getBarnAnimalCounts(field);
-        const status = farming.isBarnTaskActive(field)
-          ? `${formatFarmTaskName(field.task.key)}, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`
-          : barnCounts.total <= 0
-          ? "Empty barn"
-          : production.readyCycles > 0
-            ? `${type?.output?.name || "Products"} ready`
-            : barnCounts.adults > 0 && production.readyAt
-              ? `Next produce <t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
-              : "Waiting for adults";
-        const babyText = barnCounts.babies > 0 ? ` (${barnCounts.babies} young)` : "";
-        return [
-          `**Barn ${index + 1}** - Lv **${field.level || 1}** - ${type?.animalName || "Livestock"}`,
-          `${barnCounts.adults}/${farming.getBarnCapacity(field)} adults${babyText} - ${status}`,
-        ].join("\n");
-      }
-
-      let status = "Empty";
-
-      if (field.state === "growing") {
-        if (field.readyAt) {
-          status = `Growing, ready <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`;
-        } else {
-          status = "Growing";
-        }
-      }
-
-      if (field.state === "ready") status = "Ready";
-      if (field.state === "spoiled") status = "Spoiled";
-      if (field.state === "empty" && !field.cultivated) status = "Needs cleanup";
-      if (field.fieldCondition?.label) status = field.fieldCondition.label;
-
-      if (farming.isFieldTaskActive(field)) {
-        status = `${formatFarmTaskName(field.task.key)}, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
-      }
-
-      const crop = field.cropId ? formatCropName(field.cropId) : "No crop";
-      const size = farming.getFieldSize(field.level || 1);
-      const usable = farming.getUsablePlots(field);
-      const total = farming.getTotalPlots(field);
-      const plotText = usable === total ? `${size}x${size}` : `${usable}/${total} plots`;
-
-      return [
-        `**Field ${index + 1}** - Lv **${field.level || 1}** - ${plotText}`,
-        `${crop} - ${status}`,
-      ].join("\n");
-    }).join("\n\n")
+  ? [
+      ...buildFarmPlotLines(plotEntries.filter((entry) => entry.kind === "field"), "Fields"),
+      ...buildFarmPlotLines(plotEntries.filter((entry) => entry.kind === "barn"), "Barns"),
+    ].join("\n\n")
   : "No fields yet. Buy your first field to start farming.";
+
+  function buildFarmPlotLines(entries, heading) {
+    if (!entries.length) return [];
+    return [
+      `**${heading}**`,
+      ...entries.map((entry) => {
+        const field = entry.field;
+        if (entry.kind === "barn") {
+          const type = farming.getLivestockType(field.livestockType);
+          const production = farming.getBarnProductionInfo(field);
+          const barnCounts = farming.getBarnAnimalCounts(field);
+          const status = farming.isBarnTaskActive(field)
+            ? `${formatFarmTaskName(field.task.key)}, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`
+            : barnCounts.total <= 0
+            ? "Empty barn"
+            : production.readyCycles > 0
+              ? `${type?.output?.name || "Products"} ready`
+              : barnCounts.adults > 0 && production.readyAt
+                ? `Next produce <t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
+                : "Waiting for adults";
+          const babyText = barnCounts.babies > 0 ? ` (${barnCounts.babies} young)` : "";
+          return [
+            `**Barn ${entry.displayNumber}** - Lv **${field.level || 1}** - ${type?.animalName || "Livestock"}`,
+            `${barnCounts.adults}/${farming.getBarnCapacity(field)} adults${babyText} - ${status}`,
+          ].join("\n");
+        }
+
+        let status = "Empty";
+
+        if (field.state === "growing") {
+          if (field.readyAt) {
+            status = `Growing, ready <t:${Math.floor(Number(field.readyAt) / 1000)}:R>`;
+          } else {
+            status = "Growing";
+          }
+        }
+
+        if (field.state === "ready") status = "Ready";
+        if (field.state === "spoiled") status = "Spoiled";
+        if (field.state === "empty" && !field.cultivated) status = "Needs cleanup";
+        if (field.fieldCondition?.label) status = field.fieldCondition.label;
+
+        if (farming.isFieldTaskActive(field)) {
+          status = `${formatFarmTaskName(field.task.key)}, completes <t:${Math.floor(Number(field.task.endsAt) / 1000)}:R>`;
+        }
+
+        const crop = field.cropId ? formatCropName(field.cropId) : "No crop";
+        const size = farming.getFieldSize(field.level || 1);
+        const usable = farming.getUsablePlots(field);
+        const total = farming.getTotalPlots(field);
+        const plotText = usable === total ? `${size}x${size}` : `${usable}/${total} plots`;
+
+        return [
+          `**Field ${entry.displayNumber}** - Lv **${field.level || 1}** - ${plotText}`,
+          `${crop} - ${status}`,
+        ].join("\n");
+      }),
+    ];
+  }
 
   const embed = new EmbedBuilder()
     .setTitle("Farming")
@@ -692,6 +734,7 @@ function renderFieldVisual(field) {
 
 function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   const field = (farm.fields || [])[fieldIndex];
+  const displayName = getFarmPlotDisplayName(farm, fieldIndex);
 
   if (!field) {
     return new EmbedBuilder()
@@ -719,7 +762,7 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
           : "Restock or breed animals to restart production.";
 
     return new EmbedBuilder()
-      .setTitle(`Barn ${fieldIndex + 1}`)
+      .setTitle(displayName)
       .setDescription(renderBarnVisual(field))
       .addFields(
         {
@@ -811,7 +854,7 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   if (field.fieldCondition?.label) weatherLines.push(`🧱 **Field Condition:** ${field.fieldCondition.label}`);
 
   return new EmbedBuilder()
-    .setTitle(`Field ${fieldIndex + 1}`)
+    .setTitle(displayName)
     .setDescription(visual)
     .addFields(
       {

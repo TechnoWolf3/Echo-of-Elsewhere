@@ -469,6 +469,10 @@ async function cancelTable(table, reason) {
   activeGames.delete(table.channelId);
   clearActiveGame(table.channelId);
   tablesById.delete(table.tableId);
+
+  if (table.reuseHubMessage) {
+    setTimeout(() => restoreCasinoCategory(table).catch(() => {}), 15_000);
+  }
 }
 
 async function endGame(table, winId) {
@@ -540,6 +544,16 @@ async function endGame(table, winId) {
   activeGames.delete(table.channelId);
   clearActiveGame(table.channelId);
   tablesById.delete(table.tableId);
+
+  if (table.reuseHubMessage) {
+    setTimeout(() => restoreCasinoCategory(table).catch(() => {}), 15_000);
+  }
+}
+
+async function restoreCasinoCategory(table) {
+  if (!table?.message) return;
+  const gamesCmd = require("../../commands/games");
+  await gamesCmd.showCasinoCategory({ channelId: table.channelId, channel: table.channel }, table.message).catch(() => {});
 }
 
 async function startGame(table) {
@@ -1116,6 +1130,7 @@ async function startFromHub(interaction, opts = {}) {
     players: new Map(),
     hostSecurity: null,
     message: null,
+    reuseHubMessage: Boolean(opts.reuseMessage),
     testMode: false,
 
     // game runtime
@@ -1156,10 +1171,11 @@ async function startFromHub(interaction, opts = {}) {
     table.hostSecurity = { level: 0, label: "Normal", feePct: 0 };
   }
 
-  table.message = await interaction.channel.send({
+  table.message = opts.reuseMessage || await interaction.channel.send({
     embeds: [buildLobbyEmbed(table)],
     components: buildLobbyComponents(table),
   });
+  if (opts.reuseMessage) await render(table);
 
   const collector = table.message.createMessageComponentCollector({ time: 30 * 60 * 60_000 });
 

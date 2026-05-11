@@ -517,7 +517,7 @@ async function promptBetModal(i, gameId) {
   return submitted;
 }
 
-async function startLobbyFromHub(interaction) {
+async function startLobbyFromHub(interaction, opts = {}) {
   if (!interaction.inGuild()) {
     // this is a component interaction; ephemeral
     return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -554,12 +554,19 @@ async function startLobbyFromHub(interaction) {
   });
 
   await ensureHostSecurity(session, guildId, interaction.user.id);
+  session.reuseHubMessage = Boolean(opts.reuseMessage);
+  session.hubMessage = opts.reuseMessage || null;
 
   activeGames.set(channelId, session);
   setActiveGame(channelId, { type: "blackjack", state: "lobby", gameId: session.gameId, hostId: session.hostId });
 
   session.addPlayer(interaction.user);
-  await session.postOrEditPanel();
+  if (session.hubMessage) {
+    session.message = session.hubMessage;
+    await session.updatePanel();
+  } else {
+    await session.postOrEditPanel();
+  }
 
   const collector = session.message.createMessageComponentCollector({ time: 30 * 60_000 });
   wireCollectorHandlers({ collector, session, guildId, channelId });
@@ -1010,6 +1017,15 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
     activeGames.delete(channelId);
     clearActiveGame(channelId);
     if (session.timeout) clearTimeout(session.timeout);
+
+    if (session.reuseHubMessage) {
+      const gamesCmd = require("../../commands/games");
+      await gamesCmd.showCasinoCategory({ channelId, channel: session.channel }, session.message).catch(() => {});
+      setTimeout(() => {
+        session.resultsMessage?.delete().catch(() => {});
+      }, 15_000);
+      return;
+    }
 
     setTimeout(() => {
       session.message?.delete().catch(() => {});

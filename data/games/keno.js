@@ -385,6 +385,13 @@ async function closeSession(session, reason = "closed") {
     clearActiveGame(session.channelId);
   } catch {}
   tablesById.delete(session.tableId);
+
+  if (session.reuseHubMessage) {
+    setTimeout(async () => {
+      const gamesCmd = require("../../commands/games");
+      await gamesCmd.showCasinoCategory({ channelId: session.channelId, channel: session.channel }, session.message).catch(() => {});
+    }, 15_000);
+  }
 }
 
 function bumpIdle(session) {
@@ -575,7 +582,7 @@ async function gameLoop(session) {
 }
 
 // ---------- Hub entry ----------
-async function startFromHub(interaction) {
+async function startFromHub(interaction, ctx = {}) {
   if (!interaction.inGuild?.()) {
     return interaction.reply({ content: "❌ Server only.", flags: MessageFlags.Ephemeral }).catch(() => {});
   }
@@ -602,6 +609,7 @@ async function startFromHub(interaction) {
     hostId: interaction.user.id,
     channel: interaction.channel,
     message: null,
+    reuseHubMessage: Boolean(ctx.reuseMessage),
 
     round: 1,
     phase: "betting",
@@ -630,7 +638,7 @@ async function startFromHub(interaction) {
   setActiveGame(channelId, { type: "keno", state: "running" });
 
   // Post the table in-channel
-  const msg = await interaction.channel
+  const msg = ctx.reuseMessage || await interaction.channel
     .send({
       embeds: [buildEmbed(session)],
       components: buildComponents(session),
@@ -648,6 +656,7 @@ async function startFromHub(interaction) {
   }
 
   session.message = msg;
+  if (ctx.reuseMessage) await safeEdit(session);
   bumpIdle(session);
 
   // Collector for table buttons (betting actions)

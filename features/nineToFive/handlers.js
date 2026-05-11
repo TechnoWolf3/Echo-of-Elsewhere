@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require("discord.js");
+const { EmbedBuilder, MessageFlags } = require("discord.js");
 
 const contractCfg = require("../../data/work/categories/nineToFive/transportContract");
 const skillCfg = require("../../data/work/categories/nineToFive/skillCheck");
@@ -63,14 +63,32 @@ async function handleNineToFiveInteraction({
   }
 
   if (actionId === "job_trucker_refresh") {
-  if (!session.trucker || session.trucker.startMs) return true;
-  session.trucker.manifest = nineToFiveUi.generateTruckerManifest();
-  await msg.edit({
-    embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
-    components: nineToFiveUi.buildTruckerButtons(session.trucker),
-  }).catch(() => {});
-  return true;
-}
+    if (!session.trucker || session.trucker.startMs) return true;
+    const refreshLimit = Math.max(0, Number(truckerCfg.manifestRefreshLimit || 5));
+    const refreshed = await truckerRuns.refreshDraft(
+      guildId,
+      userId,
+      nineToFiveUi.generateTruckerManifest(),
+      refreshLimit
+    );
+
+    if (!refreshed) {
+      session.trucker.refreshCount = refreshLimit;
+      session.trucker.refreshLimit = refreshLimit;
+      await interaction.followUp({
+        content: `You have used all ${refreshLimit} manifest refreshes. Start this job to reset them after delivery.`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+    } else {
+      session.trucker = refreshed;
+    }
+
+    await msg.edit({
+      embeds: [nineToFiveUi.buildTruckerEmbed(session.trucker, { completed: session.trucker.ready })],
+      components: nineToFiveUi.buildTruckerButtons(session.trucker),
+    }).catch(() => {});
+    return true;
+  }
 
   if (actionId === "job_trucker_start") {
     return startTrucker({
@@ -247,13 +265,13 @@ async function handleNineToFiveEntry({
   if (mode === "trucker") {
     session.view = "trucker";
     if (session.trucker?.interval) clearInterval(session.trucker.interval);
-    session.trucker = await truckerRuns.getActiveRun(interaction.guildId, interaction.user.id) || {
-      manifest: nineToFiveUi.generateTruckerManifest(),
-      startMs: 0,
-      durationMs: 0,
-      ready: false,
-      interval: null,
-    };
+    session.trucker = await truckerRuns.getActiveRun(interaction.guildId, interaction.user.id)
+      || await truckerRuns.getOrCreateDraft(
+        interaction.guildId,
+        interaction.user.id,
+        nineToFiveUi.generateTruckerManifest(),
+        Math.max(0, Number(truckerCfg.manifestRefreshLimit || 5))
+      );
 
     armTruckerTimer({ session, msg });
 
@@ -284,13 +302,12 @@ async function handleNineToFiveEntry({
 
 async function startTrucker({ interaction, session, msg, guildId, userId, checkCooldownOrTell }) {
   if (!session.trucker) {
-    session.trucker = {
-      manifest: nineToFiveUi.generateTruckerManifest(),
-      startMs: 0,
-      durationMs: 0,
-      ready: false,
-      interval: null,
-    };
+    session.trucker = await truckerRuns.getOrCreateDraft(
+      guildId,
+      userId,
+      nineToFiveUi.generateTruckerManifest(),
+      Math.max(0, Number(truckerCfg.manifestRefreshLimit || 5))
+    );
   }
   if (session.trucker.interval) clearInterval(session.trucker.interval);
 
@@ -375,6 +392,7 @@ async function collectTrucker({ guildId, userId, session, msg, payUser, schedule
       { countJob: true, allowLegendarySpawn: true, activityEffects: truckerCfg.activityEffects, cooldownKey: "job:95:trucker", cooldownSeconds: 0 }
     );
     await truckerRuns.completePaidRun(guildId, userId);
+    await truckerRuns.resetDraft(guildId, userId).catch(() => {});
   } catch (error) {
     await truckerRuns.releaseClaim(guildId, userId).catch(() => {});
     throw error;

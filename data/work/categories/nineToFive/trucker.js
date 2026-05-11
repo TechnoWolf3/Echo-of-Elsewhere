@@ -13,6 +13,7 @@ module.exports = {
   completeTitle: "✅ Delivery Complete",
   footer: "Start the run, let the kilometres roll, then collect the cheque.",
   updateEverySeconds: 30,
+  manifestRefreshLimit: 5,
 
   xp: {
     success: 18,
