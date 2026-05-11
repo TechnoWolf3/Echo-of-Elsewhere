@@ -388,6 +388,26 @@ async function render(table) {
     .catch(() => {});
 }
 
+function resetRouletteTable(table) {
+  table.state = "lobby";
+  table.players.clear();
+  table.lastBets.clear();
+  table.lastResult = null;
+  table.defaultBetAmount = MIN_BET;
+  table.defaultBetType = "red";
+  table.defaultBetValue = null;
+  table.players.set(table.hostId, {
+    userId: table.hostId,
+    user: `<@${table.hostId}>`,
+    betAmount: table.defaultBetAmount,
+    betType: null,
+    betValue: null,
+    paid: false,
+  });
+  activeGames.set(table.channelId, table);
+  setActiveGame(table.channelId, { type: "roulette", state: "lobby", gameId: table.tableId, hostId: table.hostId });
+}
+
 // ---------- bet flow ----------
 function buildBetTypeSelect(tableId) {
   return new ActionRowBuilder().addComponents(
@@ -900,6 +920,11 @@ async function startFromHub(interaction, opts = {}) {
 
     if (action === "end") {
       if (!isHost) return sendEphemeralToast(i, "❌ Only the host can end the table.");
+      if (table.reuseHubMessage) {
+        resetRouletteTable(table);
+        await render(table);
+        return;
+      }
       collector.stop("ended_by_host");
       return;
     }

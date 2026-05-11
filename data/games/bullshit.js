@@ -471,7 +471,7 @@ async function cancelTable(table, reason) {
   tablesById.delete(table.tableId);
 
   if (table.reuseHubMessage) {
-    setTimeout(() => restoreCasinoCategory(table).catch(() => {}), 15_000);
+    setTimeout(() => restartBullshitTable(table).catch(() => restoreCasinoCategory(table).catch(() => {})), 5000);
   }
 }
 
@@ -546,8 +546,26 @@ async function endGame(table, winId) {
   tablesById.delete(table.tableId);
 
   if (table.reuseHubMessage) {
-    setTimeout(() => restoreCasinoCategory(table).catch(() => {}), 15_000);
+    setTimeout(() => restartBullshitTable(table).catch(() => restoreCasinoCategory(table).catch(() => {})), 5000);
   }
+}
+
+async function restartBullshitTable(table) {
+  if (!table?.message) return;
+  const host = await table.channel.client.users.fetch(table.hostId).catch(() => ({ id: table.hostId }));
+  const fakeInteraction = {
+    inGuild: () => true,
+    channelId: table.channelId,
+    guildId: table.guildId,
+    channel: table.channel,
+    user: host,
+    deferred: true,
+    replied: true,
+    editReply: async () => {},
+    reply: async () => {},
+    followUp: async () => {},
+  };
+  await startFromHub(fakeInteraction, { reuseMessage: table.message });
 }
 
 async function restoreCasinoCategory(table) {

@@ -284,6 +284,25 @@ async function render(table) {
   await table.message.edit(payload).catch(() => {});
 }
 
+function resetTableToLobby(table) {
+  table.state = "lobby";
+  table.deck = [];
+  table.currentCard = null;
+  table.lastResult = null;
+  table.restartTimer = null;
+  table.players.clear();
+  activeGames.set(table.channelId, { type: "higherlower", state: "lobby" });
+  setActiveGame(table.channelId, { type: "higherlower", state: "lobby" });
+}
+
+function scheduleCleanRestart(table, delayMs = 5000) {
+  if (!table || table.restartTimer) return;
+  table.restartTimer = setTimeout(async () => {
+    resetTableToLobby(table);
+    await render(table);
+  }, Math.max(1000, Number(delayMs) || 5000));
+}
+
 async function promptAmountModal(i, tableId) {
   const modal = new ModalBuilder()
     .setCustomId(`holbet:${tableId}`)
@@ -414,6 +433,9 @@ async function cashOut(interaction, table) {
   p.pick = null;
 
   await render(table);
+  if (![...table.players.values()].some((player) => player.alive)) {
+    scheduleCleanRestart(table);
+  }
 }
 
 async function resolveRound(table) {
@@ -463,6 +485,10 @@ async function resolveRound(table) {
     }
   }
   table.lastResult = resultLines.join("\n");
+
+  if (![...table.players.values()].some((p) => p.alive)) {
+    scheduleCleanRestart(table);
+  }
 }
 
 async function startRound(interaction, table) {
@@ -591,7 +617,8 @@ async function startFromHub(interaction, { reuseMessage } = {}) {
 
       if (action === "end") {
         await i.deferUpdate().catch(() => {});
-        collector.stop("ended");
+        resetTableToLobby(table);
+        await render(table);
         return;
       }
 

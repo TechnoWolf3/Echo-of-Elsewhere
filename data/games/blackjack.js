@@ -574,6 +574,31 @@ async function startLobbyFromHub(interaction, opts = {}) {
   await interaction.editReply("🃏 Blackjack lobby launched. Use **Set Bet** to place your buy-in.");
 }
 
+async function restartBlackjackLobbyFromSession(previous, guildId, channelId) {
+  const session = new BlackjackSession({
+    channel: previous.channel,
+    hostId: previous.hostId,
+    guildId,
+    maxPlayers: 10,
+    defaultBet: null,
+  });
+
+  session.reuseHubMessage = true;
+  session.hubMessage = previous.message;
+  session.message = previous.message;
+  await ensureHostSecurity(session, guildId, previous.hostId);
+
+  activeGames.set(channelId, session);
+  setActiveGame(channelId, { type: "blackjack", state: "lobby", gameId: session.gameId, hostId: session.hostId });
+
+  const hostUser = await previous.channel.client.users.fetch(previous.hostId).catch(() => null);
+  if (hostUser) session.addPlayer(hostUser);
+
+  await session.updatePanel();
+  const collector = session.message.createMessageComponentCollector({ time: 30 * 60_000 });
+  wireCollectorHandlers({ collector, session, guildId, channelId });
+}
+
 function wireCollectorHandlers({ collector, session, guildId, channelId }) {
   async function handleGameEnd(triggerInteraction) {
     if (session.endHandled) return;
@@ -1019,11 +1044,10 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
     if (session.timeout) clearTimeout(session.timeout);
 
     if (session.reuseHubMessage) {
-      const gamesCmd = require("../../commands/games");
-      await gamesCmd.showCasinoCategory({ channelId, channel: session.channel }, session.message).catch(() => {});
       setTimeout(() => {
         session.resultsMessage?.delete().catch(() => {});
-      }, 15_000);
+        restartBlackjackLobbyFromSession(session, guildId, channelId).catch(() => {});
+      }, 5000);
       return;
     }
 

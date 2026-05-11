@@ -629,6 +629,19 @@ async function settleRound(interaction, session, options = {}) {
     components: buildResultComponents(session),
   }).catch(() => {});
 
+  clearTimeout(session.restartTimer);
+  session.restartTimer = setTimeout(async () => {
+    if (session.lastMode !== 'result') return;
+    session.currentRound = null;
+    session.lastMode = 'hub';
+    setActiveGame(session.channelId, { type: 'scratchcards', state: 'hub', tableId: session.id });
+    activeGames.set(session.channelId, { type: 'scratchcards', state: 'hub', hostId: session.hostId });
+    await session.message.edit({
+      embeds: [buildCardHubEmbed(session)],
+      components: buildHubComponents(session),
+    }).catch(() => {});
+  }, 5000);
+
   if (interaction && payoutNote) {
     await sendEphemeral(interaction, payoutNote);
   }
