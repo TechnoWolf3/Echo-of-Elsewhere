@@ -55,6 +55,16 @@ module.exports = {
         "Choose your entries, confirm the play, and wait for the draw result. Payouts depend on the selected mode and how the drawn result lands.",
     },
     {
+      id: "insideTrack",
+      name: "How to Play - Inside Track",
+      short: "Bet on live Echo Downs horse races.",
+      detail:
+        "**Inside Track**\n" +
+        "Launch Inside Track from the Casino category in **/games**.\n\n" +
+        "Each race posts a field with horse numbers, odds, form notes, and a betting timer. Choose **Win**, **Place**, or **Show**, enter a horse number and wager, then watch the live track update until the finish.\n\n" +
+        "The table keeps cycling races while active and closes after three consecutive races with no bets.",
+    },
+    {
       id: "scratchcards",
       name: "How to Play - Scratch Cards",
       short: "Pick a scratch card and reveal the result.",

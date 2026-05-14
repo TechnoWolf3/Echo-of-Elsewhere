@@ -28,6 +28,7 @@ async function getEseActivitySnapshot() {
             'higherlower_bet',
             'bullshit_bet',
             'keno_bet',
+            'inside_track_bet',
             'lottery_ticket',
             'powerball_ticket'
           )
@@ -44,6 +45,7 @@ async function getEseActivitySnapshot() {
             'higherlower_payout',
             'bullshit_payout',
             'keno_payout',
+            'inside_track_win',
             'lottery_payout',
             'powerball_payout'
           )

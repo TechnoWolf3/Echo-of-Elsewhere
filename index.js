@@ -5,6 +5,7 @@ const rouletteGame = require("./data/games/roulette");
 const higherLowerGame = require("./data/games/higherLower");
 const bullshitGame = require("./data/games/bullshit");
 const kenoGame = require("./data/games/keno");
+const insideTrackGame = require("./data/games/insideTrack");
 const botGames = require("./utils/botGames");
 const lottery = require("./utils/lottery");
 const echoCurses = require("./utils/echoCurses");
@@ -1139,6 +1140,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         if (typeof kenoGame.handleInteraction === "function") {
           const handled = await kenoGame.handleInteraction(interaction);
+          if (handled) return;
+        }
+        if (typeof insideTrackGame.handleInteraction === "function") {
+          const handled = await insideTrackGame.handleInteraction(interaction);
           if (handled) return;
         }
       } catch (e) {

@@ -53,6 +53,17 @@ module.exports = {
     },
 
     {
+      id: "inside_track",
+      name: "Inside Track",
+      emoji: "🏇",
+      description: "Bet the rail and watch Echo Downs run live.",
+      run: async (interaction, ctx = {}) => {
+        const insideTrack = require("../insideTrack");
+        return insideTrack.startFromHub(interaction, ctx);
+      },
+    },
+
+    {
       id: "scratchcards",
       name: "Scratch Cards",
       emoji: "🎟️",

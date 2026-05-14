@@ -50,6 +50,14 @@ module.exports = {
         "Players choose entries and wait for the draw result. It is built for simple odds, quick resolution, and clear risk.",
     },
     {
+      id: "inside_track",
+      name: "Inside Track",
+      short: "Live horse racing with win, place, and show betting.",
+      detail:
+        "Inside Track opens a live Echo Downs racing table from the Casino category in **/games**.\n\n" +
+        "Players bet on temporary race fields, watch the horses move across the track, and collect payouts on Win, Place, or Show tickets. The table closes itself after several races with no betting activity.",
+    },
+    {
       id: "scratchcards",
       name: "Scratch Cards",
       short: "Fast fixed-price scratchie outcomes.",

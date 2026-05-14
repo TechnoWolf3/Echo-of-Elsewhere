@@ -300,14 +300,17 @@ function txTypePatterns(search) {
   if (raw === 'server') return { label: raw, patterns: [], serverOnly: true };
 
   const aliases = {
-    casino: ['blackjack%', 'roulette%', 'higherlower%', 'bullshit%', 'keno%', 'scratchcard%'],
-    games: ['blackjack%', 'roulette%', 'higherlower%', 'bullshit%', 'keno%', 'scratchcard%'],
+    casino: ['blackjack%', 'roulette%', 'higherlower%', 'bullshit%', 'keno%', 'inside_track%', 'scratchcard%'],
+    games: ['blackjack%', 'roulette%', 'higherlower%', 'bullshit%', 'keno%', 'inside_track%', 'scratchcard%'],
     blackjack: ['blackjack%'],
     roulette: ['roulette%'],
     higherlower: ['higherlower%'],
     'higher/lower': ['higherlower%'],
     bullshit: ['bullshit%'],
     keno: ['keno%'],
+    insidetrack: ['inside_track%'],
+    'inside-track': ['inside_track%'],
+    inside_track: ['inside_track%'],
     scratchcards: ['scratchcard%'],
     scratchcard: ['scratchcard%'],
     enterprises: ['farming%', 'farm_machine%', 'manufacturing%', 'underworld%'],
