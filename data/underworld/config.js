@@ -55,7 +55,7 @@ module.exports = {
     minor: {
       id: "minor",
       name: "Minor Raid",
-      payoutMultiplier: 0.65,
+      payoutMultiplier: 0.72,
       suspicionDelta: 8,
     },
     major: {

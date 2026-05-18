@@ -37,6 +37,26 @@ function formatStoredGoods(goods = []) {
     .join("\n");
 }
 
+function formatOwnedUpgrades(building) {
+  const owned = engine.getOwnedUpgrades(building);
+  if (!owned.length) return "None yet";
+  return owned
+    .slice(0, 12)
+    .map(({ upgrade, tier }) => `${upgrade.name} T${tier}`)
+    .join("\n");
+}
+
+function formatUpgradeOption(entry) {
+  const cost = ui.money(entry.tier.cost || 0);
+  const summary = entry.tier.effectSummary || entry.upgrade.description || "Meaningful operation improvement.";
+  return `${cost} | ${summary}`.slice(0, 100);
+}
+
+function resolveSelectedUpgrade(building, selectedUpgradeId) {
+  const available = engine.getAvailableUpgrades(building);
+  return available.find((entry) => entry.upgrade.id === selectedUpgradeId) || available[0] || null;
+}
+
 function buildUnderworldHomeEmbed(state) {
   const summary = engine.getStateSummary(state);
   const averageSuspicion = summary.total ? Math.round(summary.suspicion / summary.total) : 0;
@@ -577,10 +597,11 @@ function buildBuildingEmbed(state, buildingId) {
   const run = building.activeRun;
   const pendingEvent = run?.pendingEvent ? engine.EVENTS[run.pendingEvent.eventId] : null;
   const storageStock = Number(building.storage?.stock || 0);
+  const effectiveCapacity = engine.getEffectiveStorageCapacity(building);
 
   const lines = [
     `**Building:** ${def?.name || "Unknown"}`,
-    `**Capacity:** ${def?.capacity || 0}`,
+    `**Capacity:** ${effectiveCapacity.toLocaleString()}`,
     `**Status:** ${formatStatus(building)}`,
     `**Suspicion:** ${suspicionMeter(building.suspicion)}`,
     `**Operation:** ${op?.name || "Empty"}`,
@@ -615,7 +636,7 @@ function buildBuildingEmbed(state, buildingId) {
     const lockedUntil = Number(building.storage?.sellLockedUntil || 0);
     lines.push("");
     lines.push("**Storage**");
-    lines.push(`Stock: **${storageStock.toLocaleString()}/${Number(def?.capacity || 0).toLocaleString()}**`);
+    lines.push(`Stock: **${storageStock.toLocaleString()}/${effectiveCapacity.toLocaleString()}**`);
     if (Number(building.storage?.totalValue || 0) > 0) {
       lines.push(`Estimated street value: **${ui.money(building.storage.totalValue)}**`);
     }
@@ -664,11 +685,7 @@ function buildBuildingEmbed(state, buildingId) {
 
   embed.addFields({
     name: "Upgrades",
-    value: [
-      `Security ${building.upgrades?.security || 0}/3`,
-      `Equipment ${building.upgrades?.equipment || 0}/3`,
-      `Efficiency ${building.upgrades?.efficiency || 0}/3`,
-    ].join("\n"),
+    value: formatOwnedUpgrades(building),
     inline: true,
   });
 
@@ -685,6 +702,7 @@ function buildBuildingComponents(state, buildingId) {
   const op = engine.getOperationDefinition(building.operationType);
   const hasStoredGoods = Boolean(op?.storageEnabled && Number(building.storage?.stock || 0) > 0 && Number(building.storage?.totalValue || 0) > 0);
   const runCooldownActive = Date.now() < Number(building.runCooldownUntil || 0);
+  const effectiveCapacity = engine.getEffectiveStorageCapacity(building);
 
   if (!building.operationType && !building.conversion) {
     rows.push(
@@ -762,7 +780,7 @@ function buildBuildingComponents(state, buildingId) {
             .setCustomId(`uw_start:${building.id}`)
             .setLabel("Start Operation")
             .setStyle(ButtonStyle.Primary)
-            .setDisabled(runCooldownActive || Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0)),
+            .setDisabled(runCooldownActive || Number(building.storage?.stock || 0) >= effectiveCapacity),
           new ButtonBuilder()
             .setCustomId(`uw_dismantle:${building.id}`)
             .setLabel("Dismantle")
@@ -778,7 +796,7 @@ function buildBuildingComponents(state, buildingId) {
           .setCustomId(`uw_start:${building.id}`)
           .setLabel("Start Operation")
           .setStyle(ButtonStyle.Primary)
-          .setDisabled(Boolean(building.activeRun) || runCooldownActive || (op?.storageEnabled && Number(building.storage?.stock || 0) >= Number(engine.getBuildingDefinition(building.buildingId)?.capacity || 0))),
+          .setDisabled(Boolean(building.activeRun) || runCooldownActive || (op?.storageEnabled && Number(building.storage?.stock || 0) >= effectiveCapacity)),
         new ButtonBuilder()
           .setCustomId(`uw_dismantle:${building.id}`)
           .setLabel("Dismantle")
@@ -807,10 +825,109 @@ function buildBuildingComponents(state, buildingId) {
         .setEmoji(ui.nav.back.emoji)
         .setStyle(ui.nav.back.style),
       new ButtonBuilder()
+        .setCustomId(`uw_upgrades:${building.id}`)
+        .setLabel("Upgrades")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(!building.operationType),
+      new ButtonBuilder()
         .setCustomId("uw_refresh")
         .setLabel(ui.nav.refresh.label)
         .setEmoji(ui.nav.refresh.emoji)
         .setStyle(ui.nav.refresh.style)
+    )
+  );
+
+  return rows;
+}
+
+function buildUpgradeEmbed(state, buildingId, selectedUpgradeId = null) {
+  const { building, buildingIndex } = engine.resolveBuilding(state, buildingId);
+  if (!building) {
+    return ui.applySystemStyle(
+      new EmbedBuilder()
+        .setTitle("Underworld Upgrades")
+        .setDescription("That building no longer exists."),
+      "underworld"
+    );
+  }
+
+  const def = engine.getBuildingDefinition(building.buildingId);
+  const op = engine.getOperationDefinition(building.operationType || building.conversion?.targetOperationId);
+  const selected = resolveSelectedUpgrade(building, selectedUpgradeId);
+  const available = engine.getAvailableUpgrades(building);
+
+  const lines = [
+    "Upgrade your operation to increase profit, reduce risk, improve storage, and protect your product.",
+    "",
+    `**Operation:** ${op?.name || "Converting"}`,
+    `**Warehouse:** ${def?.name || "Unknown"} (${def?.tier || 1})`,
+    `**Owned upgrades:**\n${formatOwnedUpgrades(building)}`,
+  ];
+
+  if (!available.length) {
+    lines.push("");
+    lines.push("No upgrades are available for this operation and warehouse size yet.");
+  } else if (selected) {
+    lines.push("");
+    lines.push(`**Selected:** ${selected.upgrade.name} - Tier ${selected.nextTier}`);
+    lines.push(`**Category:** ${selected.upgrade.category || "General"}`);
+    lines.push(`**Cost:** ${ui.money(selected.tier.cost || 0)}`);
+    lines.push(`**Effect:** ${selected.tier.effectSummary || selected.upgrade.description}`);
+    if (selected.upgrade.temporary) lines.push("**Type:** Temporary, repurchasable service");
+    lines.push("");
+    lines.push(selected.upgrade.description);
+  }
+
+  return ui.applySystemStyle(
+    new EmbedBuilder()
+      .setTitle(`Underworld - Warehouse ${buildingIndex + 1} Upgrades`)
+      .setDescription(lines.join("\n")),
+    "underworld",
+    "Only upgrades valid for this operation and warehouse size are shown."
+  );
+}
+
+function buildUpgradeComponents(state, buildingId, selectedUpgradeId = null) {
+  const { building } = engine.resolveBuilding(state, buildingId);
+  if (!building) return buildOperationsComponents(state);
+
+  const rows = [];
+  const available = engine.getAvailableUpgrades(building);
+  const selected = resolveSelectedUpgrade(building, selectedUpgradeId);
+
+  if (available.length) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`uw_upgrade_select_menu:${building.id}`)
+          .setPlaceholder("Choose an upgrade...")
+          .addOptions(
+            available.slice(0, 25).map((entry) => ({
+              label: `${entry.upgrade.name} - Tier ${entry.nextTier}`.slice(0, 100),
+              value: `uw_upgrade_select:${building.id}:${entry.upgrade.id}`,
+              description: formatUpgradeOption(entry),
+            }))
+          )
+      )
+    );
+  }
+
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`uw_upgrade_buy:${building.id}:${selected?.upgrade.id || "none"}`)
+        .setLabel("Purchase Upgrade")
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(!selected),
+      new ButtonBuilder()
+        .setCustomId(`uw_upgrades:${building.id}`)
+        .setLabel("Refresh")
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`uw_select:${building.id}`)
+        .setLabel(ui.nav.back.label)
+        .setEmoji(ui.nav.back.emoji)
+        .setStyle(ui.nav.back.style)
     )
   );
 
@@ -824,6 +941,8 @@ module.exports = {
   buildOperationsComponents,
   buildBuildingEmbed,
   buildBuildingComponents,
+  buildUpgradeEmbed,
+  buildUpgradeComponents,
   buildSmugglingHomeEmbed,
   buildSmugglingHomeComponents,
   buildVehicleGarageEmbed,

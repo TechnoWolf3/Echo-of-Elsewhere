@@ -1,7 +1,7 @@
 const { pool } = require("../db");
 const buildings = require("../../data/underworld/buildings");
 const { OPERATIONS, EVENTS } = require("../../data/underworld/operations");
-const upgrades = require("../../data/underworld/upgrades");
+const upgradeCatalog = require("../../data/underworld/upgrades");
 const config = require("../../data/underworld/config");
 const storageGoodsConfig = require("../../data/underworld/storageGoods");
 const { tryDebitBank, creditBank, addServerBank } = require("../economy");
@@ -12,6 +12,7 @@ const timers = require("../timers");
 
 const BUILDING_MAP = Object.fromEntries(buildings.map((entry) => [entry.id, entry]));
 const OPERATION_MAP = Object.fromEntries(OPERATIONS.map((entry) => [entry.id, entry]));
+const UPGRADE_MAP = Object.fromEntries(upgradeCatalog.map((entry) => [entry.id, entry]));
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -66,12 +67,89 @@ function resolveBuilding(state, buildingRef) {
 }
 
 function getUpgradeLevelBonus(upgradeId, level, field) {
-  const def = upgrades[upgradeId];
+  const def = UPGRADE_MAP[upgradeId];
   if (!def) return field == null ? 0 : null;
-  const hit = def.levels.find((entry) => entry.level === Number(level || 0));
+  const levels = def.levels || def.tiers || [];
+  const hit = levels.find((entry) => Number(entry.level || entry.tier) === Number(level || 0));
   if (!hit) return field == null ? 0 : null;
   if (field == null) return hit;
-  return Number(hit[field] || 0);
+  return Number(hit.effects?.[field] || hit[field] || 0);
+}
+
+function normalizeUpgradeLevel(building, upgradeId) {
+  return Math.max(0, Math.floor(Number(building?.upgrades?.[upgradeId] || 0)));
+}
+
+function getUpgradeTier(upgradeId, tier) {
+  const def = UPGRADE_MAP[upgradeId];
+  if (!def) return null;
+  return (def.tiers || def.levels || []).find((entry) => Number(entry.tier || entry.level) === Number(tier)) || null;
+}
+
+function getUpgradeEffectTotal(building, field) {
+  if (!building?.upgrades || !field) return 0;
+  return Object.entries(building.upgrades).reduce((total, [upgradeId, level]) => {
+    return total + getUpgradeLevelBonus(upgradeId, level, field);
+  }, 0);
+}
+
+function getEffectiveStorageCapacity(building) {
+  const buildingDef = getBuildingDefinition(building?.buildingId);
+  const baseCapacity = Math.max(1, Number(buildingDef?.capacity || 100));
+  const capacityBonus = clamp(getUpgradeEffectTotal(building, "storageCapacityBonusPercent"), 0, 1);
+  return Math.max(1, Math.round(baseCapacity * (1 + capacityBonus)));
+}
+
+function getAvailableUpgrades(building) {
+  const operationId = building?.operationType || null;
+  const buildingTier = Number(getBuildingDefinition(building?.buildingId)?.tier || 1);
+  if (!operationId) return [];
+
+  return upgradeCatalog
+    .filter((upgrade) => {
+      if (!Array.isArray(upgrade.operationTypes) || !upgrade.operationTypes.includes(operationId)) return false;
+      if (buildingTier < Number(upgrade.minWarehouseTier || 1)) return false;
+      if (upgrade.temporary && upgrade.id === "fast_fence_broker") {
+        const lockedUntil = Number(building?.storage?.sellLockedUntil || 0);
+        return lockedUntil > Date.now() && Number(building?.storage?.stock || 0) > 0;
+      }
+      const currentTier = normalizeUpgradeLevel(building, upgrade.id);
+      return upgrade.repeatable || currentTier < Number(upgrade.maxTier || (upgrade.tiers || []).length || 1);
+    })
+    .map((upgrade) => {
+      const currentTier = normalizeUpgradeLevel(building, upgrade.id);
+      const nextTier = upgrade.repeatable ? 1 : currentTier + 1;
+      const tier = getUpgradeTier(upgrade.id, nextTier);
+      return { upgrade, currentTier, nextTier, tier };
+    })
+    .filter((entry) => entry.tier);
+}
+
+function getOwnedUpgrades(building) {
+  return Object.entries(building?.upgrades || {})
+    .map(([upgradeId, level]) => {
+      const upgrade = UPGRADE_MAP[upgradeId];
+      const tier = normalizeUpgradeLevel(building, upgradeId);
+      if (!upgrade || tier <= 0) return null;
+      return { upgrade, tier };
+    })
+    .filter(Boolean);
+}
+
+function getUpgradeAvailability(building, upgradeId) {
+  return getAvailableUpgrades(building).find((entry) => entry.upgrade.id === upgradeId) || null;
+}
+
+function reduceStorageLock(building, effects = {}, now = Date.now()) {
+  const lockedUntil = Number(building?.storage?.sellLockedUntil || 0);
+  if (!lockedUntil || lockedUntil <= now) return { changed: false, previousLockedUntil: lockedUntil, nextLockedUntil: lockedUntil };
+  const remainingMs = lockedUntil - now;
+  const percentMs = Math.round(remainingMs * clamp(Number(effects.instantFenceCooldownReductionPercent || 0), 0, 0.95));
+  const flatMs = Math.round(Number(effects.instantFenceCooldownReductionMinutes || 0) * 60 * 1000);
+  const reductionMs = clamp(Math.max(percentMs, flatMs), 0, Math.max(0, remainingMs - 5 * 60 * 1000));
+  const nextLockedUntil = lockedUntil - reductionMs;
+  building.storage.sellLockedUntil = nextLockedUntil;
+  return { changed: reductionMs > 0, previousLockedUntil: lockedUntil, nextLockedUntil };
 }
 
 function newState() {
@@ -156,8 +234,8 @@ function getBuildingStatus(building) {
 
 function getOperationRunDurationMs(building, operation) {
   const buildingDef = getBuildingDefinition(building.buildingId);
-  const efficiencyBonus = getUpgradeLevelBonus("efficiency", building.upgrades?.efficiency, "suspicionReduction");
-  const efficiencyMult = clamp(1 - efficiencyBonus * 0.01, 0.82, 1);
+  const durationReduction = clamp(getUpgradeEffectTotal(building, "durationReductionPercent"), 0, 0.45);
+  const efficiencyMult = clamp(1 - durationReduction, 0.55, 1);
   return Math.round(operation.baseDurationMs * (buildingDef?.durationMultiplier || 1) * efficiencyMult);
 }
 
@@ -167,7 +245,7 @@ function getOperationRunCost(building, operation) {
 }
 
 function getBaseGrossMultiplier(building, operation) {
-  const equipmentBonus = getUpgradeLevelBonus("equipment", building.upgrades?.equipment, "outputMultiplier");
+  const equipmentBonus = getUpgradeEffectTotal(building, "outputMultiplier");
   return Number(operation.baseGrossMultiplier || 1.5) + Number(equipmentBonus || 0);
 }
 
@@ -198,8 +276,7 @@ function weightedPick(entries = []) {
 }
 
 function generateStorageGoods(building, run, operation) {
-  const buildingDef = getBuildingDefinition(building.buildingId);
-  const capacity = Math.max(1, Number(buildingDef?.capacity || 100));
+  const capacity = getEffectiveStorageCapacity(building);
   const maxUnits = Math.max(3, Math.floor(capacity / 8));
   const minUnits = Math.max(2, Math.floor(capacity / 14));
   const units = randInt(minUnits, maxUnits);
@@ -236,8 +313,13 @@ function generateStorageGoods(building, run, operation) {
   const outputValue = Math.round(
     totalValue *
     Number(run.grossMultiplier || operation.baseGrossMultiplier || 1) *
-    clamp(Number(run.outputMultiplier || 1), 0.4, 3)
+    clamp(Number(run.outputMultiplier || 1), 0.4, 3) *
+    (1 + clamp(getUpgradeEffectTotal(building, "storageValueMultiplier"), 0, 0.75))
   );
+  const coolOffReduction = clamp(getUpgradeEffectTotal(building, "storageCoolOffReductionPercent"), 0, 0.65);
+  if (coolOffReduction > 0) {
+    sellReadyAt = Date.now() + Math.round((sellReadyAt - Date.now()) * (1 - coolOffReduction));
+  }
 
   return {
     units,
@@ -660,6 +742,56 @@ async function dismantleOperation(guildId, userId, state, buildingRef, { emergen
   return { ok: true, refund };
 }
 
+async function purchaseUpgrade(guildId, userId, state, buildingRef, upgradeId) {
+  const { building } = resolveBuilding(state, buildingRef);
+  if (!building) return { ok: false, reasonText: "That building does not exist." };
+  if (!building.operationType && !building.conversion) {
+    return { ok: false, reasonText: "Convert this building before buying operation upgrades." };
+  }
+  if (!building.operationType) {
+    return { ok: false, reasonText: "Wait for the conversion to finish before buying operation upgrades." };
+  }
+
+  building.upgrades = building.upgrades || {};
+  const availability = getUpgradeAvailability(building, upgradeId);
+  if (!availability) {
+    return { ok: false, reasonText: "That upgrade is not available for this operation and warehouse size." };
+  }
+
+  const { upgrade, nextTier, tier } = availability;
+  const cost = Math.max(0, Math.round(Number(tier.cost || 0)));
+  const debit = await tryDebitBank(guildId, userId, cost, "underworld_upgrade_purchase", {
+    enterprise: "underworld",
+    upgradeId,
+    upgradeTier: nextTier,
+    operationId: building.operationType || building.conversion?.targetOperationId,
+    buildingId: building.buildingId,
+  });
+  if (!debit.ok) {
+    return { ok: false, reasonText: `You need $${cost.toLocaleString()} in your bank for ${upgrade.name}.` };
+  }
+
+  await addServerBank(guildId, cost, "underworld_upgrade_purchase_bank", {
+    enterprise: "underworld",
+    upgradeId,
+    upgradeTier: nextTier,
+    buildingId: building.buildingId,
+    userId,
+  });
+
+  let temporaryResult = null;
+  if (upgrade.temporary && upgrade.id === "fast_fence_broker") {
+    temporaryResult = reduceStorageLock(building, tier.effects || {});
+  } else {
+    building.upgrades[upgradeId] = nextTier;
+    building.setupInvestment = Number(building.setupInvestment || 0) + cost;
+  }
+
+  await saveState(guildId, userId, state);
+  await sharedSuspicion.recordUnderworldActivity(guildId, userId, "underworld_upgrade_purchase").catch(() => {});
+  return { ok: true, upgrade, tier: nextTier, tierDefinition: tier, cost, temporaryResult };
+}
+
 async function startRun(guildId, userId, state, buildingRef) {
   const { building } = resolveBuilding(state, buildingRef);
   if (!building) return { ok: false, reasonText: "That building does not exist." };
@@ -677,8 +809,7 @@ async function startRun(guildId, userId, state, buildingRef) {
     };
   }
   if (operation.storageEnabled) {
-    const buildingDef = getBuildingDefinition(building.buildingId);
-    const capacity = Math.max(1, Number(buildingDef?.capacity || 100));
+    const capacity = getEffectiveStorageCapacity(building);
     if (Number(building.storage?.stock || 0) >= capacity) {
       return { ok: false, reasonText: "Storage is full. Sell some goods before starting another run." };
     }
@@ -744,7 +875,9 @@ async function resolveEventChoice(guildId, userId, state, buildingRef, choiceId)
   const choice = (event.choices || []).find((entry) => entry.id === choiceId);
   if (!choice) return { ok: false, reasonText: "That response is no longer available." };
 
-  const cost = Math.max(0, Number(choice.costFlat || 0) + Math.round(Number(choice.costPct || 0) * Number(run.batchCost || 0)));
+  const rawCost = Math.max(0, Number(choice.costFlat || 0) + Math.round(Number(choice.costPct || 0) * Number(run.batchCost || 0)));
+  const costReduction = clamp(getUpgradeEffectTotal(building, "eventCostReductionPercent"), 0, 0.4);
+  const cost = Math.round(rawCost * (1 - costReduction));
   if (cost > 0) {
     const debit = await tryDebitBank(guildId, userId, cost, "underworld_event_cost", {
       enterprise: "underworld",
@@ -789,9 +922,10 @@ async function resolveEventChoice(guildId, userId, state, buildingRef, choiceId)
   return { ok: true, choice, cost, event };
 }
 
-function rollRaidOutcome(raidChance, suspicion) {
+function rollRaidOutcome(raidChance, suspicion, fullBustReduction = 0) {
   const roll = Math.random();
-  const fullBustChance = suspicion >= 70 ? raidChance * 0.18 : suspicion >= 55 ? raidChance * 0.1 : 0;
+  const fullBustChanceBase = suspicion >= 70 ? raidChance * 0.18 : suspicion >= 55 ? raidChance * 0.1 : 0;
+  const fullBustChance = fullBustChanceBase * clamp(1 - Number(fullBustReduction || 0), 0.25, 1);
   const majorChance = raidChance * 0.32;
 
   if (roll < fullBustChance) return "full_bust";
@@ -852,8 +986,13 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     }
   }
 
-  const securityReduction = getUpgradeLevelBonus("security", building.upgrades?.security, "raidChanceReduction");
-  const efficiencyReduction = getUpgradeLevelBonus("efficiency", building.upgrades?.efficiency, "suspicionReduction");
+  const securityReduction = getUpgradeEffectTotal(building, "raidChanceReduction");
+  const efficiencyReduction = getUpgradeEffectTotal(building, "suspicionReduction");
+  const payoutBonus = getUpgradeEffectTotal(building, "payoutMultiplierBonus");
+  const suspicionBonus = getUpgradeEffectTotal(building, "suspicionBonus");
+  const raidPayoutProtection = clamp(getUpgradeEffectTotal(building, "raidPayoutProtection"), 0, 0.45);
+  const fullBustReduction = clamp(getUpgradeEffectTotal(building, "fullBustChanceReduction"), 0, 0.5);
+  const jailTimeReduction = clamp(getUpgradeEffectTotal(building, "jailTimeReductionPercent"), 0, 0.5);
 
   const grossBase = operation.storageEnabled && run?.storageGoods
     ? Number(run.storageGoods.totalValue || 0)
@@ -868,13 +1007,13 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
 
   let gross = Math.round(
     grossBase *
-    (Number(mode.payoutMultiplier || 1) + Number(run?.payoutMultiplierBonus || 0)) *
+    (Number(mode.payoutMultiplier || 1) + Number(run?.payoutMultiplierBonus || 0) + Number(payoutBonus || 0)) *
     Number(earlySale?.payoutMultiplier || 1)
   );
 
   const sharedInfo = await sharedSuspicion.getUnderworldSuspicion(guildId, userId).catch(() => ({ suspicion: 0 }));
   const suspicionBefore = Math.max(getBuildingSuspicion(building), Number(sharedInfo.suspicion || 0));
-  let suspicionGain = Number(operation.baseSuspicionGain || 0) + Number(mode.suspicionDelta || 0) + Number(run?.suspicionBonus || 0) - Number(efficiencyReduction || 0);
+  let suspicionGain = Number(operation.baseSuspicionGain || 0) + Number(mode.suspicionDelta || 0) + Number(run?.suspicionBonus || 0) + Number(suspicionBonus || 0) - Number(efficiencyReduction || 0);
   suspicionGain += Number(earlySale?.suspicionGain || 0);
   suspicionGain = Math.max(-config.CLEAN_RUN_SUSPICION_REDUCTION, suspicionGain);
 
@@ -899,11 +1038,11 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
     gross = Math.round(gross * clamp(1 - stolenReport.payoutPenalty, 0.4, 1));
   }
 
-  const raidOutcomeId = rollRaidOutcome(raidChance, suspicionBefore + suspicionGain);
+  const raidOutcomeId = rollRaidOutcome(raidChance, suspicionBefore + suspicionGain, fullBustReduction);
   const raidOutcome = raidOutcomeId ? config.RAID_OUTCOMES[raidOutcomeId] : null;
 
   if (raidOutcome) {
-    gross = Math.round(gross * Number(raidOutcome.payoutMultiplier || 0));
+    gross = Math.round(gross * clamp(Number(raidOutcome.payoutMultiplier || 0) + raidPayoutProtection, 0, 1));
     suspicionGain += Number(raidOutcome.suspicionDelta || 0);
   } else {
     suspicionGain -= config.CLEAN_RUN_SUSPICION_REDUCTION;
@@ -925,17 +1064,18 @@ async function chooseDistribution(guildId, userId, state, buildingRef, modeId, o
   };
 
   if (raidOutcomeId === "full_bust") {
+    const jailedMinutes = Math.max(10, Math.round(Number(config.FULL_BUST_JAIL_MINUTES || 60) * (1 - jailTimeReduction)));
     state.buildings.splice(buildingIndex, 1);
     await saveState(guildId, userId, state);
     await sharedSuspicion.addUnderworldSuspicion(guildId, userId, suspicionGain, "underworld_full_bust").catch(() => {});
-    await setJail(guildId, userId, config.FULL_BUST_JAIL_MINUTES);
+    await setJail(guildId, userId, jailedMinutes);
     return {
       ok: true,
       payout: 0,
       distribution: mode,
       raidOutcome,
       buildingLost: true,
-      jailedMinutes: config.FULL_BUST_JAIL_MINUTES,
+      jailedMinutes,
       earlySale,
       stolenReport,
     };
@@ -1033,7 +1173,7 @@ async function storeRunForSmuggling(guildId, userId, state, buildingRef) {
 module.exports = {
   buildings,
   operations: OPERATIONS,
-  upgrades,
+  upgrades: upgradeCatalog,
   config,
   EVENTS,
   ensureState,
@@ -1045,11 +1185,15 @@ module.exports = {
   getStateSummary,
   getBuildingSuspicion,
   getBuildingStatus,
+  getAvailableUpgrades,
+  getOwnedUpgrades,
+  getEffectiveStorageCapacity,
   getOperationRunCost,
   getOperationRunDurationMs,
   purchaseBuilding,
   startConversion,
   dismantleOperation,
+  purchaseUpgrade,
   startRun,
   resolveEventChoice,
   chooseDistribution,

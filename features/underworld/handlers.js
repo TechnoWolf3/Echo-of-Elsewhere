@@ -19,6 +19,9 @@ function isUnderworldInteraction(actionId) {
     actionId.startsWith("uw_buy_building:") ||
     actionId.startsWith("uw_convert:") ||
     actionId.startsWith("uw_start:") ||
+    actionId.startsWith("uw_upgrades:") ||
+    actionId.startsWith("uw_upgrade_select:") ||
+    actionId.startsWith("uw_upgrade_buy:") ||
     actionId.startsWith("uw_event:") ||
     actionId.startsWith("uw_distribution:") ||
     actionId.startsWith("uw_store_smuggling:") ||
@@ -365,6 +368,53 @@ async function handleUnderworldInteraction({
       interaction,
       `✅ ${result.operation.name} run started. Production wraps <t:${Math.floor(Number(result.building.activeRun.readyAt) / 1000)}:R>.`
     );
+    await redraw();
+    return true;
+  }
+
+  if (actionId.startsWith("uw_upgrades:")) {
+    const buildingId = actionId.split(":")[1];
+    await load();
+    session.view = "underworld_upgrades";
+    session.underworldBuildingId = buildingId;
+    session.underworldSelectedUpgradeId = null;
+    await redraw();
+    return true;
+  }
+
+  if (actionId.startsWith("uw_upgrade_select:")) {
+    const [, buildingId, upgradeId] = actionId.split(":");
+    await load();
+    session.view = "underworld_upgrades";
+    session.underworldBuildingId = buildingId;
+    session.underworldSelectedUpgradeId = upgradeId;
+    await redraw();
+    return true;
+  }
+
+  if (actionId.startsWith("uw_upgrade_buy:")) {
+    const [, buildingId, upgradeId] = actionId.split(":");
+    if (!upgradeId || upgradeId === "none") {
+      await tell(interaction, "âŒ Choose an upgrade first.");
+      return true;
+    }
+    const state = await load();
+    const result = await engine.purchaseUpgrade(guildId, userId, state, buildingId, upgradeId);
+    if (!result.ok) {
+      await tell(interaction, `âŒ ${result.reasonText}`);
+      return true;
+    }
+
+    const cooldownText = result.temporaryResult?.changed
+      ? ` Fence cooldown now ends <t:${Math.floor(Number(result.temporaryResult.nextLockedUntil) / 1000)}:R>.`
+      : "";
+    await tell(
+      interaction,
+      `âœ… Purchased ${result.upgrade.name}${result.upgrade.temporary ? "" : ` Tier ${result.tier}`} for $${Number(result.cost || 0).toLocaleString()}.${cooldownText}`
+    );
+    session.view = "underworld_upgrades";
+    session.underworldBuildingId = buildingId;
+    session.underworldSelectedUpgradeId = null;
     await redraw();
     return true;
   }

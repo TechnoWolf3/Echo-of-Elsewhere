@@ -267,6 +267,29 @@ async function renderEnterpriseView({
     return true;
   }
 
+  if (session.view === "underworld_upgrades") {
+    const state = await underworld.ensureState(guildId, userId);
+    await underworld.applyRuntime(guildId, userId, state);
+
+    const currentBuilding = underworld.resolveBuilding(state, session.underworldBuildingId);
+    if (!currentBuilding.building) {
+      session.view = "underworld_operations";
+      session.underworldBuildingId = null;
+      session.underworldSelectedUpgradeId = null;
+      await msg.edit({
+        embeds: [underworldUi.buildOperationsEmbed(state)],
+        components: underworldUi.buildOperationsComponents(state),
+      }).catch(() => {});
+      return true;
+    }
+
+    await msg.edit({
+      embeds: [underworldUi.buildUpgradeEmbed(state, session.underworldBuildingId, session.underworldSelectedUpgradeId)],
+      components: underworldUi.buildUpgradeComponents(state, session.underworldBuildingId, session.underworldSelectedUpgradeId),
+    }).catch(() => {});
+    return true;
+  }
+
   if (session.view === "underworld_smuggling") {
     const state = await underworld.ensureState(guildId, userId);
     await underworld.applyRuntime(guildId, userId, state);

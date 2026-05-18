@@ -305,7 +305,8 @@ Underworld specifics:
 - Storage House is now a live storage operation. Finished cooled-off goods move into `building.storage`, clear `building.activeRun`, and allow another run to start while sellable goods remain in storage.
 - Storage House sell options can resolve either a cooling active run or accumulated `building.storage` goods. Selling clears storage after payout.
 - Storage House start is blocked only while an active run exists or storage is full. UI shows both sell buttons and Start Operation when cooled goods are waiting and the building can stockpile more.
-- Storage goods values live in `data/underworld/storageGoods.js` and were raised by about 15% to counterbalance police payoff costs and Storage House setup investment.
+- Storage goods values live in `data/underworld/storageGoods.js`. Storage House is tuned as the cheap/easy operation with modest margins; meth and cocaine labs carry the stronger gross multipliers so longer, riskier runs stay meaningfully profitable after normal distribution pressure.
+- Underworld building upgrades are data-driven from `data/underworld/upgrades.js`. Availability is filtered by operation type, warehouse tier, owned tier, and repeatable temporary services. `Fast Fence Broker` is a repurchasable Storage House service that shortens the current fence cooldown instead of becoming a permanent tier.
 
 ### Games
 
