@@ -28,12 +28,23 @@ module.exports = {
     {
       id: "justForFun",
       name: "Just for Fun Games",
-      short: "Low-stakes games with no economy tie-ins.",
+      short: "Low-stakes games, quick duels, and social deduction.",
       detail:
         "**Just for Fun**\n" +
         "These games are launched from the Just for Fun category in **/games**.\n\n" +
-        "**Current games:** Rock Paper Scissors, Trivia, Guess the Number, Word Scramble, Hangman, Emoji Guess, Movie Quote, Story Builder, and Meme Rating.\n\n" +
-        "They are built for chat activity, duels, voting, and quick server moments rather than money making.",
+        "**Current games:** Echo Whisper, Rock Paper Scissors, Trivia, Guess the Number, Word Scramble, Hangman, Emoji Guess, Movie Quote, Story Builder, and Meme Rating.\n\n" +
+        "They are built for chat activity, duels, voting, social deduction, and quick server moments. Echo Whisper supports optional wagers, but betting is not required.",
+    },
+    {
+      id: "echoWhisper",
+      name: "Echo Whisper",
+      short: "Social deduction word game.",
+      detail:
+        "**Echo Whisper**\n" +
+        "Found under **/games -> Just for Fun**.\n\n" +
+        "Echo Whisper is a social deduction word game. Civilians receive the same secret word while spies receive a different one. Give clues, debate, vote, and try to expose the spies.\n\n" +
+        "**Minimum players:** 3. **Maximum players:** 14.\n\n" +
+        "Optional wagers are supported, but betting is not required. Civilians win by eliminating all spies. Spies win by reaching parity or surviving through the final round.",
     },
     {
       id: "typedGuessGames",
