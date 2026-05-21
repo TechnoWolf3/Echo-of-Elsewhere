@@ -50,16 +50,20 @@ function toLevelCardData(profile, avatarDataUri = null) {
   };
 }
 
-async function renderLevelCardPng(profile) {
+async function renderLevelCardSvg(profile) {
   const avatarDataUri = await fetchAvatarDataUri(profile.avatarUrl);
-  const svg = buildLevelCardSvg(toLevelCardData(profile, avatarDataUri));
+  return buildLevelCardSvg(toLevelCardData(profile, avatarDataUri));
+}
+
+async function renderLevelCardPng(profile) {
+  const svg = await renderLevelCardSvg(profile);
   const resvg = new Resvg(svg, {
     fitTo: {
       mode: "width",
       value: CARD_WIDTH,
     },
     font: {
-      loadSystemFonts: false,
+      loadSystemFonts: true,
       defaultFontFamily: "Arial",
     },
   });
@@ -74,6 +78,7 @@ async function renderLevelCardPng(profile) {
 
 module.exports = {
   renderLevelCardPng,
+  renderLevelCardSvg,
   toLevelCardData,
   fetchAvatarDataUri,
   CARD_WIDTH,
