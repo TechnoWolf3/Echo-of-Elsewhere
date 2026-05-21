@@ -27,6 +27,7 @@ const contracts = require('./contracts');
 const farming = require('./farming/engine');
 const seasonControl = require('./farming/seasonControl');
 const channelPurger = require('./channelPurger');
+const communityService = require('./community/communityService');
 const { pool } = require('./db');
 
 async function hasBotMaster(member) {
@@ -49,6 +50,7 @@ const CATEGORIES = [
   { value: 'rift', label: 'Echo Rift' },
   { value: 'ese', label: 'Echo Stock Exchange' },
   { value: 'contracts', label: 'Contracts' },
+  { value: 'community', label: 'Community / Resonance' },
   { value: 'enterprises', label: 'Enterprises' },
   { value: 'misc', label: 'Misc' },
 ];
@@ -137,6 +139,9 @@ const ACTIONS_BY_CATEGORY = {
     { id: 'contracts:stop', label: 'Stop Active', style: ButtonStyle.Danger, modal: false },
     { id: 'contracts:rotate', label: 'Rotate', style: ButtonStyle.Secondary, modal: false },
     { id: 'contracts:post_daily', label: 'Post Daily Now', style: ButtonStyle.Secondary, modal: false },
+  ],
+  community: [
+    { id: 'community:status', label: 'Status', style: ButtonStyle.Secondary, modal: false },
   ],
   enterprises: [
     { id: 'enterprises:season_status', label: 'Season Status', style: ButtonStyle.Secondary, modal: false },
@@ -1027,6 +1032,26 @@ async function runActionFromId({ interaction, actionId, fields }) {
       `Powerball: ${cfg?.powerball_channel_id ? `<#${cfg.powerball_channel_id}>` : 'Not set'}`,
       `ESE News: ${cfg?.ese_news_channel_id ? `<#${cfg.ese_news_channel_id}>` : 'Not set'}`,
       `Bot Master: ${roleId ? `<@&${roleId}>` : 'Not set'}`,
+    ].join('\n'));
+  }
+
+  if (actionId === 'community:status') {
+    const settings = await communityService.getSettings(guild.id);
+    const pulse = await communityService.getWeeklyPulse(guild.id);
+    return safeReply([
+      '**Echo Community / Echo Resonance**',
+      `Enabled: **${settings.enabled ? 'ON' : 'OFF'}**`,
+      `Level-up messages: **${settings.announceLevelups ? 'ON' : 'OFF'}**`,
+      `Level-up channel: ${settings.levelupChannelId ? `<#${settings.levelupChannelId}>` : 'Current channel fallback'}`,
+      `Chat XP: **${settings.chatXpMin}-${settings.chatXpMax}** every **${settings.chatXpCooldownSeconds}s**`,
+      `Voice XP: **${settings.voiceXpMin}-${settings.voiceXpMax}** every **${settings.voiceXpIntervalSeconds}s**`,
+      '',
+      '**Rolling 7 Days**',
+      `Messages counted: **${Number(pulse.messages || 0).toLocaleString('en-AU')}**`,
+      `Voice time: **${communityService.formatDurationShort(pulse.voiceSeconds)}**`,
+      `Level ups: **${Number(pulse.levelUps || 0).toLocaleString('en-AU')}**`,
+      '',
+      'Full tuning UI is ready to be added here without adding public commands.',
     ].join('\n'));
   }
 

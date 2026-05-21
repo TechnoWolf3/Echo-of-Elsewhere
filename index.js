@@ -23,6 +23,8 @@ const contracts = require("./utils/contracts");
 const channelPurger = require("./utils/channelPurger");
 const jailSystem = require("./utils/jail");
 const underworldSuspicion = require("./utils/underworld/suspicion");
+const communityService = require("./utils/community/communityService");
+const communityVoiceTracker = require("./utils/community/voiceTracker");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -109,7 +111,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.MessageContent,
-    // ✅ Removed GuildVoiceStates (music system removed)
+    GatewayIntentBits.GuildVoiceStates,
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
@@ -745,6 +747,7 @@ client.once(Events.ClientReady, async () => {
       await userTimers.ensureSchema();
       await contracts.ensureSchema();
       await channelPurger.ensureSchema(client.db);
+      await communityService.ensureSchema();
       console.log("[ESE] schema ready");
 
       // Start Bot Games AFTER DB tables exist
@@ -767,6 +770,7 @@ client.once(Events.ClientReady, async () => {
 
       // 🧹 Scheduled channel purger
       channelPurger.startScheduler(client);
+      await communityVoiceTracker.start(client);
 
       const count = await syncAchievements(client.db);
       if (count) console.log(`🏆 [achievements] auto-synced ${count} from data/achievements/*`);
@@ -1335,8 +1339,18 @@ client.on(Events.MessageCreate, async (message) => {
         }
       }
     }
+
+    await communityService.handleMessageXp(message);
   } catch (e) {
     console.error("Message achievement handler error:", e);
+  }
+});
+
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  try {
+    await communityVoiceTracker.handleVoiceStateUpdate(oldState, newState);
+  } catch (e) {
+    console.error("[community] voice state handler error:", e);
   }
 });
 
