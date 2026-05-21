@@ -163,20 +163,6 @@ async function ensureTable() {
   `);
 }
 
-async function ensureCropStoreItem(guildId, crop) {
-  await pool.query(
-    `INSERT INTO store_items (guild_id, item_id, name, description, price, kind, stackable, enabled, meta, sort_order)
-     VALUES ($1,$2,$3,$4,0,'produce',true,true,$5::jsonb,9500)
-     ON CONFLICT (guild_id, item_id)
-     DO UPDATE SET
-       name = EXCLUDED.name,
-       description = EXCLUDED.description,
-       kind = 'produce',
-       enabled = true`,
-    [guildId, crop.id, crop.name, `${crop.name} harvested from your farm.`, JSON.stringify({ farming: true })]
-  );
-}
-
 async function ensureFarmStoreItem(guildId, item) {
   const itemId = item?.itemId || item?.id;
   if (!itemId) {
@@ -214,9 +200,8 @@ async function addFarmItemToInventory(guildId, userId, item, qty = 1) {
   );
 }
 
-async function addProduceToInventory(guildId, userId, crop) {
-  await ensureCropStoreItem(guildId, crop);
-  await addFarmItemToInventory(guildId, userId, { itemId: crop.id, name: crop.name }, 1);
+async function addProduceToInventory(guildId, userId, crop, qty = 1) {
+  await addFarmItemToInventory(guildId, userId, { itemId: crop.id, name: crop.name }, qty);
 }
 
 function newField() {
@@ -833,9 +818,7 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
   if (!crop) return { ok: false, reasonText: "Unknown crop." };
 
   const qty = rollYield(crop, field);
-  for (let i = 0; i < qty; i++) {
-    await addProduceToInventory(guildId, userId, crop);
-  }
+  await addProduceToInventory(guildId, userId, crop, qty);
 
   const hasFieldDamage = Boolean(field.fieldCondition?.requiresCultivation);
   weather.clearHarvestWeather(field);
@@ -1043,9 +1026,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     if (!crop) return failAndSave("Unknown crop.");
 
     const qty = rollYield(crop, field);
-    for (let i = 0; i < qty; i++) {
-      await addProduceToInventory(guildId, userId, crop);
-    }
+    await addProduceToInventory(guildId, userId, crop, qty);
 
     const hasFieldDamage = Boolean(field.fieldCondition?.requiresCultivation);
     weather.clearHarvestWeather(field);
