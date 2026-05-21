@@ -28,10 +28,18 @@ module.exports = {
     {
       id: "arcade_games",
       name: "Just for Fun Games",
-      short: "Low-stakes games with no economy tie-ins.",
+      short: "Low-stakes games, quick duels, and social deduction.",
       detail:
-        "The Just for Fun category includes Rock Paper Scissors, Trivia, Guess the Number, Word Scramble, Hangman, Emoji Guess, Movie Quote, Story Builder, and Meme Rating.\n\n" +
-        "These are designed for activity, duels, chat participation, and quick server moments without direct balance payouts.",
+        "The Just for Fun category includes Echo Whisper, Rock Paper Scissors, Trivia, Guess the Number, Word Scramble, Hangman, Emoji Guess, Movie Quote, Story Builder, and Meme Rating.\n\n" +
+        "Echo Whisper is a social deduction word game for at least 3 players: civilians share one secret word while spies receive a different one. Optional wagers are supported, but betting is not required.",
+    },
+    {
+      id: "echo_whisper",
+      name: "Echo Whisper",
+      short: "Social deduction word game with optional wagers.",
+      detail:
+        "Echo Whisper is found under **/games -> Just for Fun**.\n\n" +
+        "Civilians receive the same secret word, spies receive a different random word, and everyone gives clues before the group debates and votes. It supports 3-14 players, optional wagers, and no casino table fees.",
     },
     {
       id: "active_game_controls",

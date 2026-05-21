@@ -8,6 +8,12 @@ module.exports = {
 
   games: [
     {
+      id: 'echowhisper',
+      name: 'Echo Whisper',
+      description: 'Social deduction word game for 3-14 players.',
+      run: async (interaction, ctx = {}) => require('../echoWhisper').startFromHub(interaction, ctx),
+    },
+    {
       id: 'rps',
       name: 'Rock Paper Scissors',
       emoji: '🪨',

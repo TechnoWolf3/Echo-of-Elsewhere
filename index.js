@@ -1123,6 +1123,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // Let message-collector based hubs handle themselves
     const _cid = String(interaction.customId || "");
     if (_cid.startsWith("games:")) return;
+    if (_cid.startsWith("ew_")) return;
     if (_cid.startsWith("job_select:") || _cid.startsWith("job_") || _cid.startsWith("jail:") || _cid.startsWith("farm_") || _cid.startsWith("machine_") || _cid.startsWith("enterprise:") || _cid.startsWith("uw_")) return;
 
       try {
