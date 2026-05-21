@@ -18,6 +18,9 @@ const CMD_SELECT_ID = "help:cmd";
 const BTN_HOME_ID = "help:home";
 const BTN_BACK_ID = "help:back";
 const BTN_CLOSE_ID = "help:close";
+const BTN_CMD_PREV_ID = "help:cmdprev";
+const BTN_CMD_NEXT_ID = "help:cmdnext";
+const COMMAND_PAGE_SIZE = 25;
 
 function buildHubEmbed(categories) {
   const embed = new EmbedBuilder()
@@ -82,13 +85,25 @@ function buildCategorySelect(categories) {
   );
 }
 
-function buildCommandSelect(category) {
+function getCommandPageCount(category) {
+  return Math.max(1, Math.ceil((category.commands?.length || 0) / COMMAND_PAGE_SIZE));
+}
+
+function clampCommandPage(category, page) {
+  return Math.min(Math.max(Number(page) || 0, 0), getCommandPageCount(category) - 1);
+}
+
+function buildCommandSelect(category, page = 0) {
+  const safePage = clampCommandPage(category, page);
+  const start = safePage * COMMAND_PAGE_SIZE;
+  const commands = category.commands.slice(start, start + COMMAND_PAGE_SIZE);
+
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId(CMD_SELECT_ID)
       .setPlaceholder("Choose a command…")
       .addOptions(
-        category.commands.map((cmd) => ({
+        commands.map((cmd) => ({
           label: cmd.name,
           value: cmd.id,
           description: (cmd.short || "").slice(0, 100) || "View details",
@@ -97,12 +112,28 @@ function buildCommandSelect(category) {
   );
 }
 
-function buildNavButtons({ showBack = false } = {}) {
+function buildNavButtons({ showBack = false, category = null, commandPage = 0 } = {}) {
   const row = new ActionRowBuilder();
+  const totalPages = category ? getCommandPageCount(category) : 1;
 
   if (showBack) {
     row.addComponents(
       new ButtonBuilder().setCustomId(BTN_BACK_ID).setLabel("Back").setStyle(ButtonStyle.Secondary).setEmoji("⬅️")
+    );
+  }
+
+  if (category && totalPages > 1) {
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(BTN_CMD_PREV_ID)
+        .setLabel("Prev")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(commandPage <= 0),
+      new ButtonBuilder()
+        .setCustomId(BTN_CMD_NEXT_ID)
+        .setLabel("Next")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(commandPage >= totalPages - 1)
     );
   }
 
@@ -123,6 +154,7 @@ module.exports = {
     // Start on HUB
     let view = "hub"; // hub | category | command | noaccess
     let currentCategoryId = null;
+    let currentCommandPage = 0;
 
     const hubEmbed = buildHubEmbed(categories);
 
@@ -158,6 +190,7 @@ module.exports = {
         if (i.customId === BTN_HOME_ID) {
           view = "hub";
           currentCategoryId = null;
+          currentCommandPage = 0;
           return i.update({
             embeds: [buildHubEmbed(categories)],
             components: [buildCategorySelect(categories), buildNavButtons({ showBack: false })],
@@ -168,9 +201,30 @@ module.exports = {
           // Back goes to HUB from category/command/noaccess
           view = "hub";
           currentCategoryId = null;
+          currentCommandPage = 0;
           return i.update({
             embeds: [buildHubEmbed(categories)],
             components: [buildCategorySelect(categories), buildNavButtons({ showBack: false })],
+          });
+        }
+
+        if (i.customId === BTN_CMD_PREV_ID || i.customId === BTN_CMD_NEXT_ID) {
+          if (!currentCategoryId) return i.deferUpdate();
+          const cat = getCategory(categories, currentCategoryId);
+          if (!cat) return i.deferUpdate();
+
+          currentCommandPage = clampCommandPage(
+            cat,
+            currentCommandPage + (i.customId === BTN_CMD_NEXT_ID ? 1 : -1)
+          );
+          view = "category";
+
+          return i.update({
+            embeds: [buildCategoryEmbed(cat)],
+            components: [
+              buildCommandSelect(cat, currentCommandPage),
+              buildNavButtons({ showBack: true, category: cat, commandPage: currentCommandPage }),
+            ],
           });
         }
 
@@ -195,10 +249,14 @@ module.exports = {
 
           view = "category";
           currentCategoryId = cat.id;
+          currentCommandPage = 0;
 
           return i.update({
             embeds: [buildCategoryEmbed(cat)],
-            components: [buildCommandSelect(cat), buildNavButtons({ showBack: true })],
+            components: [
+              buildCommandSelect(cat, currentCommandPage),
+              buildNavButtons({ showBack: true, category: cat, commandPage: currentCommandPage }),
+            ],
           });
         }
 
@@ -224,7 +282,10 @@ module.exports = {
           view = "command";
           return i.update({
             embeds: [buildCommandEmbed(cat, cmd)],
-            components: [buildCommandSelect(cat), buildNavButtons({ showBack: true })],
+            components: [
+              buildCommandSelect(cat, currentCommandPage),
+              buildNavButtons({ showBack: true, category: cat, commandPage: currentCommandPage }),
+            ],
           });
         }
 
