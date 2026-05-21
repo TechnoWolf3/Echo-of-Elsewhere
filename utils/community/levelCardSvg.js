@@ -1,6 +1,6 @@
 const CARD_WIDTH = 934;
 const CARD_HEIGHT = 282;
-const FONT_FAMILY = "Arial, sans-serif";
+const FONT_FAMILY = "Inter, Arial, sans-serif";
 
 function clamp01(value) {
   const n = Number(value);
@@ -52,7 +52,95 @@ function textAttrs({
   anchor = null,
 } = {}) {
   const anchorAttr = anchor ? ` text-anchor="${anchor}"` : "";
-  return `font-family="${FONT_FAMILY}" font-size="${size}" font-weight="${weight}" fill="${fill}"${anchorAttr}`;
+  return `font-family="${FONT_FAMILY}" font-size="${size}" font-weight="${weight}" fill="${fill}" fill-opacity="0"${anchorAttr}`;
+}
+
+const GLYPHS = {
+  "A": ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+  "B": ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+  "C": ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
+  "D": ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
+  "E": ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+  "F": ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
+  "G": ["01111", "10000", "10000", "10011", "10001", "10001", "01111"],
+  "H": ["10001", "10001", "10001", "11111", "10001", "10001", "10001"],
+  "I": ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
+  "J": ["00111", "00010", "00010", "00010", "10010", "10010", "01100"],
+  "K": ["10001", "10010", "10100", "11000", "10100", "10010", "10001"],
+  "L": ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
+  "M": ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+  "N": ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
+  "O": ["01110", "10001", "10001", "10001", "10001", "10001", "01110"],
+  "P": ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
+  "Q": ["01110", "10001", "10001", "10001", "10101", "10010", "01101"],
+  "R": ["11110", "10001", "10001", "11110", "10100", "10010", "10001"],
+  "S": ["01111", "10000", "10000", "01110", "00001", "00001", "11110"],
+  "T": ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
+  "U": ["10001", "10001", "10001", "10001", "10001", "10001", "01110"],
+  "V": ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
+  "W": ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
+  "X": ["10001", "10001", "01010", "00100", "01010", "10001", "10001"],
+  "Y": ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
+  "Z": ["11111", "00001", "00010", "00100", "01000", "10000", "11111"],
+  "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+  "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+  "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+  "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+  "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+  "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+  "6": ["01110", "10000", "10000", "11110", "10001", "10001", "01110"],
+  "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+  "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+  "9": ["01110", "10001", "10001", "01111", "00001", "00001", "01110"],
+  "#": ["01010", "11111", "01010", "01010", "11111", "01010", "01010"],
+  "/": ["00001", "00001", "00010", "00100", "01000", "10000", "10000"],
+  "-": ["00000", "00000", "00000", "11111", "00000", "00000", "00000"],
+  ".": ["00000", "00000", "00000", "00000", "00000", "01100", "01100"],
+  ",": ["00000", "00000", "00000", "00000", "00000", "01100", "01000"],
+  ":": ["00000", "01100", "01100", "00000", "01100", "01100", "00000"],
+  "%": ["11001", "11010", "00010", "00100", "01000", "01011", "10011"],
+  "&": ["01100", "10010", "10100", "01000", "10101", "10010", "01101"],
+  "<": ["00010", "00100", "01000", "10000", "01000", "00100", "00010"],
+  ">": ["01000", "00100", "00010", "00001", "00010", "00100", "01000"],
+  "?": ["01110", "10001", "00001", "00010", "00100", "00000", "00100"],
+};
+
+function vectorTextWidth(text, scale, letterSpacing = 1) {
+  const chars = String(text ?? "").toUpperCase().split("");
+  let width = 0;
+  for (const ch of chars) {
+    if (ch === " ") width += 4 * scale;
+    else width += 5 * scale;
+    width += letterSpacing * scale;
+  }
+  return Math.max(0, width - letterSpacing * scale);
+}
+
+function vectorText({ x, y, text, scale, fill, anchor = "start", opacity = 1, letterSpacing = 1 }) {
+  const raw = String(text ?? "").toUpperCase();
+  const width = vectorTextWidth(raw, scale, letterSpacing);
+  let cursor = anchor === "end" ? x - width : anchor === "middle" ? x - width / 2 : x;
+  const d = [];
+
+  for (const ch of raw) {
+    if (ch === " ") {
+      cursor += 4 * scale;
+      continue;
+    }
+    const glyph = GLYPHS[ch] || GLYPHS["?"];
+    for (let row = 0; row < glyph.length; row += 1) {
+      for (let col = 0; col < glyph[row].length; col += 1) {
+        if (glyph[row][col] !== "1") continue;
+        const px = Number((cursor + col * scale).toFixed(2));
+        const py = Number((y + row * scale).toFixed(2));
+        d.push(`M${px} ${py}h${scale}v${scale}h-${scale}z`);
+      }
+    }
+    cursor += (5 + letterSpacing) * scale;
+  }
+
+  if (!d.length) return "";
+  return `<path d="${d.join("")}" fill="${fill}" opacity="${opacity}"/>`;
 }
 
 function buildStatPill({ x, y, label, value }) {
@@ -61,6 +149,8 @@ function buildStatPill({ x, y, label, value }) {
       <rect x="${x}" y="${y}" width="154" height="48" rx="15" fill="#0e334d" fill-opacity="0.72" stroke="#55bce8" stroke-opacity="0.22" />
       <text x="${x + 16}" y="${y + 19}" ${textAttrs({ fill: "#9fc3d5", size: 12, weight: 700 })}>${escapeSvg(label)}</text>
       <text x="${x + 16}" y="${y + 38}" ${textAttrs({ fill: "#eef9ff", size: 16, weight: 800 })}>${escapeSvg(value)}</text>
+      ${vectorText({ x: x + 16, y: y + 10, text: label, scale: 1.35, fill: "#9fc3d5", opacity: 0.98 })}
+      ${vectorText({ x: x + 16, y: y + 25, text: value, scale: 2.05, fill: "#eef9ff", opacity: 1 })}
     </g>`;
 }
 
@@ -83,7 +173,8 @@ function buildLevelCardSvg(card) {
   const avatar = avatarDataUri
     ? `<image x="58" y="54" width="136" height="136" href="${escapeSvg(avatarDataUri)}" preserveAspectRatio="xMidYMid slice" clip-path="url(#avatarClip)" />`
     : `<circle cx="126" cy="122" r="68" fill="url(#avatarFallback)" />
-       <text x="126" y="133" ${textAttrs({ fill: "#effaff", size: 42, weight: 850, anchor: "middle" })}>${initials}</text>`;
+       <text x="126" y="133" ${textAttrs({ fill: "#effaff", size: 42, weight: 850, anchor: "middle" })}>${initials}</text>
+       ${vectorText({ x: 126, y: 104, text: initials, scale: 4.7, fill: "#effaff", anchor: "middle" })}`;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${CARD_WIDTH}" height="${CARD_HEIGHT}" viewBox="0 0 ${CARD_WIDTH} ${CARD_HEIGHT}">
@@ -130,14 +221,21 @@ function buildLevelCardSvg(card) {
   <text x="232" y="56" ${textAttrs({ fill: "#8bd5ff", size: 16, weight: 700 })}>Echo Resonance</text>
   <text x="232" y="104" ${textAttrs({ fill: "#f4fbff", size: 34, weight: 800 })}>${displayName}</text>
   <text x="234" y="135" ${textAttrs({ fill: "#b8d9ea", size: 21, weight: 600 })}>${title}</text>
+  ${vectorText({ x: 232, y: 45, text: "Echo Resonance", scale: 2.05, fill: "#8bd5ff" })}
+  ${vectorText({ x: 232, y: 77, text: trimText(card.displayName || "Unknown Voice", 22), scale: 4.05, fill: "#f4fbff" })}
+  ${vectorText({ x: 234, y: 120, text: trimText(card.title || "New Voice", 30), scale: 2.45, fill: "#b8d9ea" })}
 
   <g transform="translate(676 50)">
     <text x="0" y="18" ${textAttrs({ fill: "#9fc3d5", size: 12, weight: 700 })}>LEVEL</text>
     <text x="0" y="58" ${textAttrs({ fill: "#ffffff", size: 32, weight: 850 })}>${level}</text>
+    ${vectorText({ x: 0, y: 9, text: "LEVEL", scale: 1.35, fill: "#9fc3d5" })}
+    ${vectorText({ x: 0, y: 36, text: level, scale: 3.7, fill: "#ffffff" })}
   </g>
   <g transform="translate(802 50)">
     <text x="0" y="18" ${textAttrs({ fill: "#9fc3d5", size: 12, weight: 700 })}>RANK</text>
     <text x="0" y="58" ${textAttrs({ fill: "#ffffff", size: 32, weight: 850 })}>${escapeSvg(rank)}</text>
+    ${vectorText({ x: 0, y: 9, text: "RANK", scale: 1.35, fill: "#9fc3d5" })}
+    ${vectorText({ x: 0, y: 36, text: rank, scale: 3.7, fill: "#ffffff" })}
   </g>
 
   ${buildStatPill({ x: 232, y: 153, label: "TOTAL XP", value: totalXp })}
@@ -146,6 +244,8 @@ function buildLevelCardSvg(card) {
 
   <text x="284" y="223" ${textAttrs({ fill: "#d7edf8", size: 18, weight: 800 })}>${escapeSvg(progressLabel)}</text>
   <text x="844" y="223" ${textAttrs({ fill: "#9fc3d5", size: 15, weight: 650, anchor: "end" })}>${Math.round(progressRatio * 100)}%</text>
+  ${vectorText({ x: 284, y: 209, text: progressLabel, scale: 2.4, fill: "#d7edf8" })}
+  ${vectorText({ x: 844, y: 211, text: `${Math.round(progressRatio * 100)}%`, scale: 1.85, fill: "#9fc3d5", anchor: "end" })}
   <rect x="284" y="237" width="560" height="20" rx="10" fill="#07111b" stroke="#8bd5ff" stroke-opacity="0.18"/>
   <rect x="284" y="237" width="${progressWidth}" height="20" rx="10" fill="url(#barFill)"/>
   <circle cx="${284 + progressWidth}" cy="247" r="${progressWidth > 0 ? 4 : 0}" fill="#e7f8ff" opacity="0.85"/>

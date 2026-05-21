@@ -63,7 +63,7 @@ async function renderLevelCardPng(profile) {
       value: CARD_WIDTH,
     },
     font: {
-      loadSystemFonts: true,
+      loadSystemFonts: false,
       defaultFontFamily: "Arial",
     },
   });
