@@ -39,6 +39,7 @@ function isFarmingInteraction(actionId) {
     actionId.startsWith("farm_upgrade:") ||
     actionId.startsWith("farm_barn:") ||
     actionId.startsWith("farm_barn_collect:") ||
+    actionId.startsWith("farm_barn_slaughter_elderly:") ||
     actionId.startsWith("farm_barn_slaughter:") ||
     actionId.startsWith("farm_barn_restock:") ||
     actionId.startsWith("farm_barn_breed:") ||
@@ -47,6 +48,7 @@ function isFarmingInteraction(actionId) {
     actionId.startsWith("farm_plant:") ||
     actionId.startsWith("farm_harvest:") ||
     actionId.startsWith("farm_fertilise:") ||
+    actionId.startsWith("farm_rest:") ||
     actionId.startsWith("farm_store_fertiliser_buy:") ||
     actionId.startsWith("farm_store_husbandry_buy:") ||
     actionId.startsWith("farm_sell:") ||
@@ -509,6 +511,31 @@ async function handleFarmingInteraction({
     return true;
   }
 
+  if (actionId.startsWith("farm_rest:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const result = await farming.restField(guildId, userId, farm, fieldIndex);
+
+    if (!result.ok) {
+      await interaction.followUp({
+        content: `❌ ${result.reasonText}`,
+        flags: MessageFlags.Ephemeral,
+      }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `✅ Rested the field. Soil health improved from ${result.before}/100 to ${result.after}/100.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
   if (actionId.startsWith("farm_upgrade:")) {
     const fieldIndex = Number(actionId.split(":")[1]);
     const farm = await farming.ensureFarm(guildId, userId);
@@ -673,6 +700,28 @@ async function handleFarmingInteraction({
     return true;
   }
 
+  if (actionId.startsWith("farm_barn_slaughter_elderly:")) {
+    const fieldIndex = Number(actionId.split(":")[1]);
+    const farm = await farming.ensureFarm(guildId, userId);
+    const result = await farming.slaughterElderlyBarn(guildId, userId, farm, fieldIndex);
+
+    if (!result.ok) {
+      await interaction.followUp({ content: `❌ ${result.reasonText}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return true;
+    }
+
+    const updatedFarm = await farming.ensureFarm(guildId, userId);
+    await interaction.followUp({
+      content: `✅ Slaughtered ${result.animals} elderly animals and produced ${result.qty}x ${result.itemName}.`,
+      flags: MessageFlags.Ephemeral,
+    }).catch(() => {});
+    await msg.edit({
+      embeds: [farmingUi.buildFieldEmbed(updatedFarm, fieldIndex, guildId)],
+      components: farmingUi.buildFieldComponents(updatedFarm, fieldIndex, guildId),
+    });
+    return true;
+  }
+
   if (actionId.startsWith("farm_barn_restock:")) {
     const fieldIndex = Number(actionId.split(":")[1]);
     const farm = await farming.ensureFarm(guildId, userId);
@@ -738,7 +787,7 @@ async function handleFarmingInteraction({
 
     const updatedFarm = await farming.ensureFarm(guildId, userId);
     await interaction.followUp({
-      content: `âœ… Added ${result.qty} ${result.item.babyName || "baby animals"} to ${result.type.name}. They mature <t:${Math.floor(Number(result.maturesAt) / 1000)}:R>.`,
+      content: `✅ Added ${result.qty} ${result.item.babyName || "young animals"} to ${result.type.name}. Next age stage <t:${Math.floor(Number(result.nextAt || Date.now()) / 1000)}:R>.`,
       flags: MessageFlags.Ephemeral,
     }).catch(() => {});
     await msg.edit({

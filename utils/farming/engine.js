@@ -9,6 +9,20 @@ const seasonControl = require("./seasonControl");
 const { recordProgress: recordContractProgress } = require("../contracts");
 const timers = require("../timers");
 
+const HOUR_MS = 60 * 60 * 1000;
+const ANIMAL_STAGE_LABELS = {
+  young: "Young",
+  juvenile: "Juvenile",
+  adult: "Mature",
+  elderly: "Elderly",
+};
+const SLAUGHTER_STAGE_MULTIPLIERS = {
+  young: 0.25,
+  juvenile: 0.5,
+  adult: 1,
+  elderly: 0.45,
+};
+
 async function recordFarmContractProgress(guildId, userId, metric, amount) {
   await recordContractProgress({ guildId, userId, metric, amount }).catch(() => {});
 }
@@ -40,6 +54,70 @@ function getUsablePlots(field) {
   return Math.max(1, Math.floor(total * multiplier));
 }
 
+function getCropFamily(cropId) {
+  const id = String(cropId || "");
+  if (["wheat", "barley", "oats", "corn", "rice"].includes(id)) return "grain";
+  if (["peas", "soybeans", "green_beans"].includes(id)) return "legume";
+  if (["potatoes", "carrots", "beetroot", "garlic", "onions", "turnips", "leeks"].includes(id)) return "root";
+  if (["spinach", "lettuce", "cabbage", "cauliflower", "celery", "broccoli", "asparagus"].includes(id)) return "leafy";
+  if (["zucchini", "tomatoes", "cucumbers", "eggplant", "pumpkins", "watermelon", "capsicum", "chillies"].includes(id)) return "fruiting";
+  if (["canola", "cotton", "sunflowers", "saffron", "lavender", "hops", "tea_leaf"].includes(id)) return "industrial";
+  if (["strawberries", "blueberries", "grapes", "sugarcane", "artichokes"].includes(id)) return "perennial";
+  return "general";
+}
+
+function getSoilHealth(field) {
+  if (!field || field.soilHealth == null) return 100;
+  return Math.max(0, Math.min(100, Math.round(Number(field.soilHealth) || 0)));
+}
+
+function getSoilYieldMultiplier(field) {
+  const health = getSoilHealth(field);
+  if (health >= 85) return 1.08;
+  if (health >= 70) return 1;
+  if (health >= 50) return 0.88;
+  if (health >= 30) return 0.72;
+  return 0.55;
+}
+
+function getRotationPenalty(field, cropId) {
+  const family = getCropFamily(cropId);
+  if (!field?.lastCropFamily || field.lastCropFamily !== family) return 0;
+  return Math.max(0, Math.min(0.35, 0.18 + Math.max(0, Number(field.sameFamilyStreak || 0) - 1) * 0.08));
+}
+
+function getCropRotationInfo(field, cropId = field?.cropId || null) {
+  const family = getCropFamily(cropId);
+  const repeated = Boolean(cropId && field?.lastCropFamily === family);
+  const penalty = repeated ? getRotationPenalty(field, cropId) : 0;
+  return {
+    family,
+    repeated,
+    penalty,
+    sameFamilyStreak: Math.max(0, Number(field?.sameFamilyStreak || 0)),
+  };
+}
+
+function getFieldLandCareInfo(field) {
+  const health = getSoilHealth(field);
+  const status = health >= 85
+    ? "Excellent"
+    : health >= 70
+      ? "Good"
+      : health >= 50
+        ? "Tired"
+        : health >= 30
+          ? "Poor"
+          : "Depleted";
+  return {
+    health,
+    status,
+    yieldMultiplier: getSoilYieldMultiplier(field),
+    lastCropFamily: field?.lastCropFamily || null,
+    sameFamilyStreak: Math.max(0, Number(field?.sameFamilyStreak || 0)),
+  };
+}
+
 function getCropYieldScale(field, crop) {
   const fieldLevel = Math.max(1, Number(field?.level || 1));
   if (!crop) {
@@ -51,7 +129,9 @@ function getCropYieldScale(field, crop) {
   const extraLevels = Math.max(0, fieldLevel - unlockLevel);
   const perLevelBonus = Number(config.CROP_YIELD_SCALING?.perLevelBeyondUnlock || 0);
   const usablePlotScale = weather.getUsablePlotMultiplier(field);
-  return Math.max(1, (unlockPlots * usablePlotScale * (1 + extraLevels * Math.max(0, perLevelBonus))) / 9);
+  const soilMult = getSoilYieldMultiplier(field);
+  const rotationMult = 1 - getRotationPenalty(field, crop.id || field?.cropId);
+  return Math.max(1, (unlockPlots * usablePlotScale * soilMult * rotationMult * (1 + extraLevels * Math.max(0, perLevelBonus))) / 9);
 }
 
 function getTaskDurationMs(field, taskKey, baseMs = 60000) {
@@ -241,58 +321,166 @@ function getBarnUpgradeDurationMs() {
   return Math.max(60_000, Number(config.BARN_UPGRADE_DURATION_MS || 60 * 60 * 1000));
 }
 
-function normalizeBarnAnimals(barn) {
-  if (!isBarn(barn)) return { adults: 0, babies: [] };
+function getLivestockLifecycle(typeOrId) {
+  const type = typeof typeOrId === "string" ? getLivestockType(typeOrId) : typeOrId;
+  const configured = type?.lifecycleHours || {};
+  const adult = Math.max(1, Number(configured.adult || 48));
+  const juvenile = Math.max(1, Math.min(adult - 1, Number(configured.juvenile || Math.round(adult * 0.5))));
+  const elderly = Math.max(adult + 1, Number(configured.elderly || adult * 4));
+  const death = Math.max(elderly + 1, Number(configured.death || adult * 6));
+  return {
+    juvenileAtMs: juvenile * HOUR_MS,
+    adultAtMs: adult * HOUR_MS,
+    elderlyAtMs: elderly * HOUR_MS,
+    deathAtMs: death * HOUR_MS,
+  };
+}
 
-  const adultCount = Number.isFinite(Number(barn.adultCount))
-    ? Math.max(0, Math.floor(Number(barn.adultCount || 0)))
-    : Math.max(0, Math.floor(Number(barn.animalCount || 0)));
+function getAnimalStageFromAge(ageMs, lifecycle) {
+  if (ageMs >= lifecycle.deathAtMs) return "dead";
+  if (ageMs >= lifecycle.elderlyAtMs) return "elderly";
+  if (ageMs >= lifecycle.adultAtMs) return "adult";
+  if (ageMs >= lifecycle.juvenileAtMs) return "juvenile";
+  return "young";
+}
 
-  const babies = Array.isArray(barn.babies)
-    ? barn.babies
-        .map((baby) => ({
-          qty: Math.max(0, Math.floor(Number(baby?.qty || 0))),
-          maturesAt: Number(baby?.maturesAt || 0),
-          itemId: baby?.itemId || null,
-        }))
-        .filter((baby) => baby.qty > 0 && baby.maturesAt > 0)
-    : [];
+function getAnimalStageInfo(animal, livestockType, now = Date.now()) {
+  const lifecycle = getLivestockLifecycle(livestockType);
+  const bornAt = Number(animal?.bornAt || now);
+  const ageMs = Math.max(0, now - bornAt);
+  const stage = getAnimalStageFromAge(ageMs, lifecycle);
+  const nextThreshold = stage === "young"
+    ? lifecycle.juvenileAtMs
+    : stage === "juvenile"
+      ? lifecycle.adultAtMs
+      : stage === "adult"
+        ? lifecycle.elderlyAtMs
+        : stage === "elderly"
+          ? lifecycle.deathAtMs
+          : null;
+  return {
+    stage,
+    label: ANIMAL_STAGE_LABELS[stage] || "Passed",
+    bornAt,
+    nextAt: nextThreshold == null ? null : bornAt + nextThreshold,
+    ageMs,
+  };
+}
 
-  barn.adultCount = adultCount;
-  barn.babies = babies;
-  barn.animalCount = adultCount + babies.reduce((sum, baby) => sum + baby.qty, 0);
-  return { adults: adultCount, babies };
+function makeAnimalCohort(qty, bornAt, itemId = null) {
+  return {
+    qty: Math.max(0, Math.floor(Number(qty || 0))),
+    bornAt: Number(bornAt || Date.now()),
+    itemId: itemId || null,
+  };
+}
+
+function normalizeBarnAnimals(barn, now = Date.now()) {
+  if (!isBarn(barn)) return { animals: [], removed: 0 };
+  const type = getLivestockType(barn.livestockType);
+  const lifecycle = getLivestockLifecycle(type);
+  let animals = [];
+
+  if (Array.isArray(barn.animals)) {
+    animals = barn.animals.map((animal) =>
+      makeAnimalCohort(animal?.qty, animal?.bornAt, animal?.itemId)
+    );
+  } else {
+    const adultCount = Number.isFinite(Number(barn.adultCount))
+      ? Math.max(0, Math.floor(Number(barn.adultCount || 0)))
+      : Math.max(0, Math.floor(Number(barn.animalCount || 0)));
+    if (adultCount > 0) {
+      animals.push(makeAnimalCohort(adultCount, now - lifecycle.adultAtMs));
+    }
+
+    if (Array.isArray(barn.babies)) {
+      for (const baby of barn.babies) {
+        const qty = Math.max(0, Math.floor(Number(baby?.qty || 0)));
+        if (qty <= 0) continue;
+        const maturesAt = Number(baby?.maturesAt || now + lifecycle.adultAtMs);
+        animals.push(makeAnimalCohort(qty, maturesAt - lifecycle.adultAtMs, baby?.itemId || null));
+      }
+    }
+  }
+
+  const merged = new Map();
+  let removed = 0;
+  for (const animal of animals) {
+    if (animal.qty <= 0) continue;
+    const stage = getAnimalStageInfo(animal, barn.livestockType, now).stage;
+    if (stage === "dead") {
+      removed += animal.qty;
+      continue;
+    }
+    const key = `${animal.bornAt}:${animal.itemId || ""}`;
+    const current = merged.get(key) || { ...animal, qty: 0 };
+    current.qty += animal.qty;
+    merged.set(key, current);
+  }
+
+  barn.animals = [...merged.values()].sort((a, b) => Number(a.bornAt) - Number(b.bornAt));
+
+  const counts = getBarnAnimalCountsFromCohorts(barn, now);
+  barn.adultCount = counts.adults;
+  barn.babies = counts.ageGroups
+    .filter((group) => group.stage === "young" || group.stage === "juvenile")
+    .map((group) => ({ qty: group.qty, maturesAt: group.nextAt, itemId: group.itemId || null }));
+  barn.animalCount = counts.total;
+  if (counts.adults > 0 && !barn.lastCollectedAt) barn.lastCollectedAt = now;
+
+  return { animals: barn.animals, removed };
+}
+
+function getBarnAnimalCountsFromCohorts(barn, now = Date.now()) {
+  const counts = {
+    young: 0,
+    juveniles: 0,
+    adults: 0,
+    elderly: 0,
+    babies: 0,
+    total: 0,
+    ageGroups: [],
+    babyGroups: [],
+  };
+
+  for (const animal of barn.animals || []) {
+    const qty = Math.max(0, Math.floor(Number(animal?.qty || 0)));
+    if (qty <= 0) continue;
+    const info = getAnimalStageInfo(animal, barn.livestockType, now);
+    if (info.stage === "dead") continue;
+    if (info.stage === "young") counts.young += qty;
+    if (info.stage === "juvenile") counts.juveniles += qty;
+    if (info.stage === "adult") counts.adults += qty;
+    if (info.stage === "elderly") counts.elderly += qty;
+    counts.total += qty;
+    counts.ageGroups.push({ ...info, qty, itemId: animal.itemId || null });
+  }
+
+  counts.babies = counts.young + counts.juveniles;
+  counts.babyGroups = counts.ageGroups.filter((group) => group.stage === "young" || group.stage === "juvenile");
+  return counts;
 }
 
 function matureBarnAnimals(barn, now = Date.now()) {
-  const animals = normalizeBarnAnimals(barn);
-  let matured = 0;
-  const remaining = [];
-
-  for (const baby of animals.babies) {
-    if (now >= Number(baby.maturesAt || 0)) matured += Number(baby.qty || 0);
-    else remaining.push(baby);
-  }
-
-  if (matured > 0) {
-    barn.adultCount = animals.adults + matured;
-    barn.babies = remaining;
-    barn.animalCount = barn.adultCount + remaining.reduce((sum, baby) => sum + baby.qty, 0);
-    if (!barn.lastCollectedAt) barn.lastCollectedAt = now;
-  }
-
-  return matured;
+  const before = JSON.stringify({
+    animals: barn?.animals || null,
+    adultCount: barn?.adultCount || 0,
+    babies: barn?.babies || [],
+    animalCount: barn?.animalCount || 0,
+  });
+  const result = normalizeBarnAnimals(barn, now);
+  const after = JSON.stringify({
+    animals: barn?.animals || null,
+    adultCount: barn?.adultCount || 0,
+    babies: barn?.babies || [],
+    animalCount: barn?.animalCount || 0,
+  });
+  return before === after ? 0 : Math.max(1, result.removed || 0);
 }
 
 function getBarnAnimalCounts(barn, now = Date.now()) {
-  matureBarnAnimals(barn, now);
-  const animals = normalizeBarnAnimals(barn);
-  return {
-    adults: animals.adults,
-    babies: animals.babies.reduce((sum, baby) => sum + baby.qty, 0),
-    total: Number(barn.animalCount || 0),
-    babyGroups: animals.babies,
-  };
+  normalizeBarnAnimals(barn, now);
+  return getBarnAnimalCountsFromCohorts(barn, now);
 }
 
 function isBarnTaskActive(barn, now = Date.now()) {
@@ -369,10 +557,12 @@ async function convertFieldToBarn(guildId, userId, farm, fieldIndex, livestockTy
   }
 
   const now = Date.now();
+  const lifecycle = getLivestockLifecycle(type);
   farm.fields[fieldIndex] = {
     kind: "barn",
     level: 1,
     livestockType,
+    animals: [makeAnimalCohort(Math.max(1, Number(type.capacityBase || 1)), now - lifecycle.adultAtMs)],
     adultCount: Math.max(1, Number(type.capacityBase || 1)),
     babies: [],
     animalCount: Math.max(1, Number(type.capacityBase || 1)),
@@ -412,15 +602,22 @@ async function slaughterBarn(guildId, userId, farm, fieldIndex) {
   const barn = farm.fields?.[fieldIndex];
   const type = getLivestockType(barn?.livestockType);
   if (!isBarn(barn) || !type) return { ok: false, reasonText: "That barn does not exist." };
-  const animals = Math.max(0, Math.floor(Number(barn.animalCount || 0)));
+  const counts = getBarnAnimalCounts(barn);
+  const animals = counts.total;
   if (animals <= 0) return { ok: false, reasonText: "There are no animals in this barn." };
 
   const slaughter = type.slaughter;
   const min = Number(slaughter?.minPerAnimal || 1);
   const max = Number(slaughter?.maxPerAnimal || min);
   let qty = 0;
-  for (let i = 0; i < animals; i += 1) qty += randInt(min, max);
+  for (const group of counts.ageGroups) {
+    const multiplier = Number(SLAUGHTER_STAGE_MULTIPLIERS[group.stage] || 1);
+    for (let i = 0; i < group.qty; i += 1) {
+      qty += Math.max(1, Math.round(randInt(min, max) * multiplier));
+    }
+  }
 
+  barn.animals = [];
   barn.adultCount = 0;
   barn.babies = [];
   barn.animalCount = 0;
@@ -431,6 +628,39 @@ async function slaughterBarn(guildId, userId, farm, fieldIndex) {
   return { ok: true, qty, itemName: slaughter.name, animals };
 }
 
+async function slaughterElderlyBarn(guildId, userId, farm, fieldIndex) {
+  const barn = farm.fields?.[fieldIndex];
+  const type = getLivestockType(barn?.livestockType);
+  if (!isBarn(barn) || !type) return { ok: false, reasonText: "That barn does not exist." };
+  const counts = getBarnAnimalCounts(barn);
+  if (counts.elderly <= 0) return { ok: false, reasonText: "There are no elderly animals in this barn." };
+
+  const slaughter = type.slaughter;
+  const min = Number(slaughter?.minPerAnimal || 1);
+  const max = Number(slaughter?.maxPerAnimal || min);
+  let qty = 0;
+  const remaining = [];
+
+  for (const animal of barn.animals || []) {
+    const info = getAnimalStageInfo(animal, barn.livestockType);
+    if (info.stage !== "elderly") {
+      remaining.push(animal);
+      continue;
+    }
+    for (let i = 0; i < Number(animal.qty || 0); i += 1) {
+      qty += Math.max(1, Math.round(randInt(min, max) * SLAUGHTER_STAGE_MULTIPLIERS.elderly));
+    }
+  }
+
+  barn.animals = remaining;
+  normalizeBarnAnimals(barn);
+  if (barn.animalCount <= 0) barn.lastCollectedAt = null;
+  await addFarmItemToInventory(guildId, userId, slaughter, qty);
+  await saveFarm(guildId, userId, farm);
+  await recordFarmContractProgress(guildId, userId, "farm_crops_harvested", qty);
+  return { ok: true, qty, itemName: slaughter.name, animals: counts.elderly };
+}
+
 async function restockBarn(guildId, userId, farm, fieldIndex) {
   const barn = farm.fields?.[fieldIndex];
   const type = getLivestockType(barn?.livestockType);
@@ -439,11 +669,14 @@ async function restockBarn(guildId, userId, farm, fieldIndex) {
   const counts = getBarnAnimalCounts(barn);
   if (counts.total >= capacity) return { ok: false, reasonText: "That barn is already stocked." };
 
+  const now = Date.now();
+  const lifecycle = getLivestockLifecycle(type);
+  barn.animals = [makeAnimalCohort(capacity, now - lifecycle.adultAtMs)];
   barn.adultCount = capacity;
   barn.babies = [];
   barn.animalCount = capacity;
-  barn.stockedAt = Date.now();
-  barn.lastCollectedAt = Date.now();
+  barn.stockedAt = now;
+  barn.lastCollectedAt = now;
   await saveFarm(guildId, userId, farm);
   return { ok: true, type, capacity };
 }
@@ -528,9 +761,8 @@ async function breedBarnAnimals(guildId, userId, farm, fieldIndex, itemId) {
 
   const qty = Math.min(room, Math.max(1, Number(item.offspring || 1)));
   const now = Date.now();
-  const maturesAt = now + Math.max(1, Number(item.maturityHours || 24)) * 60 * 60 * 1000;
-  barn.babies = Array.isArray(barn.babies) ? barn.babies : [];
-  barn.babies.push({ qty, maturesAt, itemId });
+  barn.animals = Array.isArray(barn.animals) ? barn.animals : [];
+  barn.animals.push(makeAnimalCohort(qty, now, itemId));
   normalizeBarnAnimals(barn);
 
   const inventory = getFarmHusbandryInventory(farm);
@@ -538,7 +770,8 @@ async function breedBarnAnimals(guildId, userId, farm, fieldIndex, itemId) {
   if (inventory[itemId] <= 0) delete inventory[itemId];
 
   await saveFarm(guildId, userId, farm);
-  return { ok: true, item, type, qty, maturesAt };
+  const info = getAnimalStageInfo({ qty, bornAt: now, itemId }, barn.livestockType, now);
+  return { ok: true, item, type, qty, nextAt: info.nextAt, stage: info.stage };
 }
 
 async function ensureFarm(guildId, userId) {
@@ -688,10 +921,28 @@ async function cultivateField(guildId, userId, farm, fieldIndex) {
   field.state = "empty";
   field.fertiliserStages = {};
   field.fertiliserApplications = {};
+  recoverSoilFromCultivation(field);
   weather.clearCultivationWeather(field);
 
   await saveFarm(guildId, userId, farm);
   return { ok: true };
+}
+
+async function restField(guildId, userId, farm, fieldIndex) {
+  const field = farm.fields?.[fieldIndex];
+  if (!field) return { ok: false, reasonText: "That field does not exist." };
+  if (field.cropId || field.state === "growing" || field.state === "ready") {
+    return { ok: false, reasonText: "The field must be empty before resting." };
+  }
+  if (!field.cultivated || field.fieldCondition?.requiresCultivation) {
+    return { ok: false, reasonText: "Cultivate the field before resting it." };
+  }
+  const before = getSoilHealth(field);
+  field.soilHealth = Math.min(100, before + 18);
+  field.sameFamilyStreak = Math.max(0, Number(field.sameFamilyStreak || 0) - 1);
+  if (field.sameFamilyStreak <= 0) field.lastCropFamily = null;
+  await saveFarm(guildId, userId, farm);
+  return { ok: true, before, after: getSoilHealth(field) };
 }
 
 async function upgradeField(guildId, userId, farm, fieldIndex) {
@@ -749,6 +1000,26 @@ async function plantCrop(guildId, userId, farm, fieldIndex, cropId) {
 function rollYield(crop, field = null) {
   const [min, max] = field ? getScaledYieldRange(crop, field) : (crop.yield || [1, 1]);
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function applyCropCycleAfterHarvest(field, crop) {
+  if (!field || !crop) return;
+  const family = getCropFamily(crop.id || field.cropId);
+  const previousFamily = field.lastCropFamily || null;
+  const repeated = previousFamily === family;
+  const currentHealth = getSoilHealth(field);
+  const cropDrain = crop.regrow ? 4 : 7;
+  const repeatDrain = repeated ? 10 + Math.max(0, Number(field.sameFamilyStreak || 0)) * 4 : 0;
+  const rotationRecovery = !repeated && previousFamily ? 5 : 0;
+
+  field.soilHealth = Math.max(0, Math.min(100, currentHealth - cropDrain - repeatDrain + rotationRecovery));
+  field.lastCropFamily = family;
+  field.sameFamilyStreak = repeated ? Math.max(1, Number(field.sameFamilyStreak || 1) + 1) : 1;
+}
+
+function recoverSoilFromCultivation(field, amount = 6) {
+  if (!field) return;
+  field.soilHealth = Math.min(100, getSoilHealth(field) + Math.max(0, Number(amount || 0)));
 }
 
 function getTaskResolvedAt(taskMeta = {}) {
@@ -819,6 +1090,7 @@ async function harvestField(guildId, userId, farm, fieldIndex) {
 
   const qty = rollYield(crop, field);
   await addProduceToInventory(guildId, userId, crop, qty);
+  applyCropCycleAfterHarvest(field, crop);
 
   const hasFieldDamage = Boolean(field.fieldCondition?.requiresCultivation);
   weather.clearHarvestWeather(field);
@@ -973,6 +1245,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
     field.fertiliserStages = {};
     field.fertiliserApplications = {};
     weather.clearCultivationWeather(field);
+    recoverSoilFromCultivation(field);
     await saveFarm(guildId, userId, farm);
     return {
       ok: true,
@@ -1027,6 +1300,7 @@ async function completeFieldTask(guildId, userId, farm, fieldIndex, extra = {}) 
 
     const qty = rollYield(crop, field);
     await addProduceToInventory(guildId, userId, crop, qty);
+    applyCropCycleAfterHarvest(field, crop);
 
     const hasFieldDamage = Boolean(field.fieldCondition?.requiresCultivation);
     weather.clearHarvestWeather(field);
@@ -1161,6 +1435,7 @@ module.exports = {
   applySeasonRolloverToAllFarms,
   buyField,
   cultivateField,
+  restField,
   upgradeField,
   startFieldUpgrade,
   plantCrop,
@@ -1175,6 +1450,9 @@ module.exports = {
   getFieldSize,
   getTotalPlots,
   getUsablePlots,
+  getCropFamily,
+  getCropRotationInfo,
+  getFieldLandCareInfo,
   getCropYieldScale,
   getTaskDurationMs,
   getScaledYieldRange,
@@ -1192,6 +1470,8 @@ module.exports = {
   getFertiliserYieldBonus,
   getLivestockTypes,
   getLivestockType,
+  getLivestockLifecycle,
+  getAnimalStageInfo,
   isBarn,
   getBarnCapacity,
   getBarnUpgradeDurationMs,
@@ -1204,6 +1484,7 @@ module.exports = {
   convertFieldToBarn,
   collectBarnProducts,
   slaughterBarn,
+  slaughterElderlyBarn,
   restockBarn,
   demolishBarn,
   startBarnUpgrade,

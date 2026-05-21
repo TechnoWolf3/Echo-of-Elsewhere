@@ -30,6 +30,24 @@ function formatCropName(cropId) {
     .join(" ");
 }
 
+function formatPct(value) {
+  return `${Math.round(Number(value || 0) * 100)}%`;
+}
+
+function formatAnimalAgeGroups(counts) {
+  const groups = counts.ageGroups || [];
+  if (!groups.length) return "No animals.";
+  return groups
+    .map((group) => {
+      const nextText = group.nextAt
+        ? `next stage <t:${Math.floor(Number(group.nextAt) / 1000)}:R>`
+        : "final stage";
+      return `${group.qty} ${group.label.toLowerCase()} - ${nextText}`;
+    })
+    .join("\n")
+    .slice(0, 1024);
+}
+
 function buildFarmMarketEmbed(items) {
   if (!items || items.length === 0) {
     return ui.applySystemStyle(
@@ -535,11 +553,18 @@ function buildFarmingEmbed(farm, weatherChannel = null, guildId = null) {
               ? `${type?.output?.name || "Products"} ready`
               : barnCounts.adults > 0 && production.readyAt
                 ? `Next produce <t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
-                : "Waiting for adults";
-          const babyText = barnCounts.babies > 0 ? ` (${barnCounts.babies} young)` : "";
+                : barnCounts.elderly > 0
+                  ? "Elderly stock only"
+                  : "Waiting for mature stock";
+          const ageText = [
+            barnCounts.young > 0 ? `${barnCounts.young} young` : null,
+            barnCounts.juveniles > 0 ? `${barnCounts.juveniles} juvenile` : null,
+            barnCounts.elderly > 0 ? `${barnCounts.elderly} elderly` : null,
+          ].filter(Boolean).join(", ");
+          const ageSuffix = ageText ? ` (${ageText})` : "";
           return [
             `**Barn ${entry.displayNumber}** - Lv **${field.level || 1}** - ${type?.animalName || "Livestock"}`,
-            `${barnCounts.adults}/${farming.getBarnCapacity(field)} adults${babyText} - ${status}`,
+            `${barnCounts.adults}/${farming.getBarnCapacity(field)} mature${ageSuffix} - ${status}`,
           ].join("\n");
         }
 
@@ -748,17 +773,17 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
     const capacity = farming.getBarnCapacity(field);
     const production = farming.getBarnProductionInfo(field);
     const counts = farming.getBarnAnimalCounts(field);
-    const babyLine = counts.babyGroups.length
-      ? counts.babyGroups.map((baby) => `${baby.qty} young mature <t:${Math.floor(Number(baby.maturesAt) / 1000)}:R>`).join("\n")
-      : "None";
+    const ageLine = formatAnimalAgeGroups(counts);
     const readyText = production.paused
       ? `Paused for upgrade until <t:${Math.floor(Number(production.readyAt || Date.now()) / 1000)}:R>`
       : production.readyCycles > 0
       ? `Ready now (${production.readyCycles} cycle${production.readyCycles === 1 ? "" : "s"})`
       : counts.adults > 0 && production.readyAt
         ? `<t:${Math.floor(Number(production.readyAt) / 1000)}:R>`
-        : counts.babies > 0
-          ? "Waiting for adults."
+        : counts.young + counts.juveniles > 0
+          ? "Waiting for mature animals."
+          : counts.elderly > 0
+            ? "Elderly animals no longer produce."
           : "Restock or breed animals to restart production.";
 
     return new EmbedBuilder()
@@ -777,8 +802,10 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
         {
           name: "Stock",
           value: [
-            `Adults: **${counts.adults}/${capacity}**`,
-            `Young: **${counts.babies}/${capacity}**`,
+            `Young: **${counts.young}/${capacity}**`,
+            `Juvenile: **${counts.juveniles}/${capacity}**`,
+            `Mature: **${counts.adults}/${capacity}**`,
+            `Elderly: **${counts.elderly}/${capacity}**`,
             `Total: **${Number(field.animalCount || 0)}/${capacity}** ${type?.animalName || "animals"}`,
           ].join("\n"),
           inline: true,
@@ -794,11 +821,11 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
         },
         {
           name: "Animal Ages",
-          value: `Maturing: ${babyLine}`,
+          value: ageLine,
         }
       )
       .setColor(ui.systems.job.color)
-      .setFooter({ text: "Barns produce over time. Slaughter clears the current stock." });
+      .setFooter({ text: "Only mature animals produce. Elderly animals stop producing and give reduced slaughter output." });
   }
 
   const visual = renderFieldVisual(field);
@@ -847,6 +874,15 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
   const totalPlots = farming.getTotalPlots(field);
   const usablePlots = farming.getUsablePlots(field);
   const yieldRange = crop ? farming.getScaledYieldRange(crop, field) : null;
+  const landCare = farming.getFieldLandCareInfo(field);
+  const rotation = crop ? farming.getCropRotationInfo(field, crop.id || field.cropId) : farming.getCropRotationInfo(field, field.cropId);
+  const rotationLine = crop
+    ? rotation.repeated
+      ? `Rotation: **Repeated ${rotation.family} (${formatPct(rotation.penalty)} penalty)**`
+      : `Rotation: **${rotation.family} crop**`
+    : landCare.lastCropFamily
+      ? `Last crop family: **${landCare.lastCropFamily}**`
+      : "Last crop family: **None**";
   const fertiliserWindow = farming.getFertiliserWindow(field);
   const yieldBonus = Math.round(farming.getFertiliserYieldBonus(field) * 100);
   const weatherLines = [];
@@ -883,6 +919,15 @@ function buildFieldEmbed(farm, fieldIndex, guildId = null) {
           `Machine need: **${machineHint}**`,
           taskLine || readyLine || "No active task.",
         ].filter(Boolean).join("\n"),
+      },
+      {
+        name: "Land Care",
+        value: [
+          `Soil: **${landCare.status} (${landCare.health}/100)**`,
+          `Soil yield: **${formatPct(landCare.yieldMultiplier)}**`,
+          rotationLine,
+        ].join("\n"),
+        inline: true,
       },
       {
         name: "Fertiliser",
@@ -972,11 +1017,15 @@ function buildFieldComponents(farm, fieldIndex, guildId = null) {
           .setCustomId(`farm_plant_select:${fieldIndex}`)
           .setPlaceholder("Choose a crop...")
           .addOptions(
-            cropOptions.map((crop) => ({
-              label: crop.name,
-              value: `farm_plant:${fieldIndex}:${crop.key}`,
-              description: `Level ${crop.level} - ${crop.growthHours}h growth - ${farming.getScaledYieldRange(crop, field).join("-")}` ,
-            }))
+            cropOptions.map((crop) => {
+              const rotation = farming.getCropRotationInfo(field, crop.key);
+              const rotationText = rotation.repeated ? `repeat penalty ${formatPct(rotation.penalty)}` : `family ${rotation.family}`;
+              return {
+                label: crop.name,
+                value: `farm_plant:${fieldIndex}:${crop.key}`,
+                description: `Lv ${crop.level} - ${crop.growthHours}h - ${farming.getScaledYieldRange(crop, field).join("-")} yield - ${rotationText}`.slice(0, 100),
+              };
+            })
           )
       )
     );
@@ -1054,6 +1103,18 @@ function buildFieldComponents(farm, fieldIndex, guildId = null) {
     );
   }
 
+  const landCare = farming.getFieldLandCareInfo(field);
+  if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation && (landCare.health < 100 || landCare.sameFamilyStreak > 0)) {
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`farm_rest:${fieldIndex}`)
+          .setLabel("Rest Field")
+          .setStyle(ButtonStyle.Secondary)
+      )
+    );
+  }
+
   if (field.state === "empty" && field.cultivated && !field.fieldCondition?.requiresCultivation && (field.level || 1) < config.MAX_FIELD_LEVEL) {
     const upgradeCost = farming.getUpgradeCost(field.level || 1);
     rows.push(
@@ -1112,6 +1173,7 @@ function buildBarnComponents(farm, fieldIndex) {
   const counts = farming.getBarnAnimalCounts(barn);
   const hasAnimals = counts.total > 0;
   const hasAdults = counts.adults > 0;
+  const hasElderly = counts.elderly > 0;
   const busy = farming.isBarnTaskActive(barn);
 
   rows.push(
@@ -1126,6 +1188,11 @@ function buildBarnComponents(farm, fieldIndex) {
         .setLabel("Slaughter")
         .setStyle(ButtonStyle.Danger)
         .setDisabled(busy || !hasAnimals),
+      new ButtonBuilder()
+        .setCustomId(`farm_barn_slaughter_elderly:${fieldIndex}`)
+        .setLabel("Slaughter Elderly")
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(busy || !hasElderly),
       new ButtonBuilder()
         .setCustomId(`farm_barn_restock:${fieldIndex}`)
         .setLabel("Restock")
