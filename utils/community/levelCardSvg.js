@@ -12,12 +12,31 @@ function fmtInt(value) {
   return Math.floor(Number(value) || 0).toLocaleString("en-AU");
 }
 
-function formatDuration(seconds) {
+function formatCompactNumber(value) {
+  const n = Math.max(0, Math.floor(Number(value) || 0));
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(n >= 10_000_000_000 ? 0 : 1).replace(/\.0$/, "")}b`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, "")}m`;
+  if (n >= 100_000) return `${Math.round(n / 1000)}k`;
+  return n.toLocaleString("en-AU");
+}
+
+function formatRank(rank) {
+  const n = Math.floor(Number(rank) || 0);
+  if (!Number.isFinite(n) || n <= 0) return "N/A";
+  if (n > 9999) return "#9999+";
+  return `#${n.toLocaleString("en-AU")}`;
+}
+
+function formatVoiceSeconds(seconds) {
   const total = Math.max(0, Math.floor(Number(seconds) || 0));
   const hours = Math.floor(total / 3600);
   const minutes = Math.floor((total % 3600) / 60);
   if (hours <= 0) return `${minutes}m`;
   return `${hours}h ${minutes}m`;
+}
+
+function truncateForCard(text, maxChars) {
+  return trimText(text, maxChars);
 }
 
 function escapeSvg(value) {
@@ -99,10 +118,15 @@ const GLYPHS = {
   ",": ["00000", "00000", "00000", "00000", "00000", "01100", "01000"],
   ":": ["00000", "01100", "01100", "00000", "01100", "01100", "00000"],
   "%": ["11001", "11010", "00010", "00100", "01000", "01011", "10011"],
+  "+": ["00000", "00100", "00100", "11111", "00100", "00100", "00000"],
   "&": ["01100", "10010", "10100", "01000", "10101", "10010", "01101"],
   "<": ["00010", "00100", "01000", "10000", "01000", "00100", "00010"],
   ">": ["01000", "00100", "00010", "00001", "00010", "00100", "01000"],
   "?": ["01110", "10001", "00001", "00010", "00100", "00000", "00100"],
+  "h": ["10000", "10000", "10110", "11001", "10001", "10001", "10001"],
+  "m": ["00000", "00000", "11010", "10101", "10101", "10101", "10101"],
+  "k": ["10000", "10010", "10100", "11000", "10100", "10010", "10001"],
+  "b": ["10000", "10000", "11110", "10001", "10001", "10001", "11110"],
 };
 
 function vectorTextWidth(text, scale, letterSpacing = 1) {
@@ -117,7 +141,7 @@ function vectorTextWidth(text, scale, letterSpacing = 1) {
 }
 
 function vectorText({ x, y, text, scale, fill, anchor = "start", opacity = 1, letterSpacing = 1 }) {
-  const raw = String(text ?? "").toUpperCase();
+  const raw = String(text ?? "");
   const width = vectorTextWidth(raw, scale, letterSpacing);
   let cursor = anchor === "end" ? x - width : anchor === "middle" ? x - width / 2 : x;
   const d = [];
@@ -127,7 +151,7 @@ function vectorText({ x, y, text, scale, fill, anchor = "start", opacity = 1, le
       cursor += 4 * scale;
       continue;
     }
-    const glyph = GLYPHS[ch] || GLYPHS["?"];
+    const glyph = GLYPHS[ch] || GLYPHS[ch.toUpperCase()] || GLYPHS["?"];
     for (let row = 0; row < glyph.length; row += 1) {
       for (let col = 0; col < glyph[row].length; col += 1) {
         if (glyph[row][col] !== "1") continue;
@@ -143,27 +167,29 @@ function vectorText({ x, y, text, scale, fill, anchor = "start", opacity = 1, le
   return `<path d="${d.join("")}" fill="${fill}" opacity="${opacity}"/>`;
 }
 
-function buildStatPill({ x, y, label, value }) {
+function buildStatPill({ x, y, width = 154, label, value }) {
   return `
     <g>
-      <rect x="${x}" y="${y}" width="154" height="48" rx="15" fill="#0e334d" fill-opacity="0.72" stroke="#55bce8" stroke-opacity="0.22" />
+      <rect x="${x}" y="${y}" width="${width}" height="48" rx="15" fill="#0e334d" fill-opacity="0.72" stroke="#55bce8" stroke-opacity="0.22" />
       <text x="${x + 16}" y="${y + 19}" ${textAttrs({ fill: "#9fc3d5", size: 12, weight: 700 })}>${escapeSvg(label)}</text>
       <text x="${x + 16}" y="${y + 38}" ${textAttrs({ fill: "#eef9ff", size: 16, weight: 800 })}>${escapeSvg(value)}</text>
       ${vectorText({ x: x + 16, y: y + 10, text: label, scale: 1.35, fill: "#9fc3d5", opacity: 0.98 })}
-      ${vectorText({ x: x + 16, y: y + 25, text: value, scale: 2.05, fill: "#eef9ff", opacity: 1 })}
+      ${vectorText({ x: x + 16, y: y + 26, text: value, scale: 1.85, fill: "#eef9ff", opacity: 1 })}
     </g>`;
 }
 
 function buildLevelCardSvg(card) {
-  const displayName = escapeSvg(trimText(card.displayName || "Unknown Voice", 22));
-  const title = escapeSvg(trimText(card.title || "New Voice", 30));
-  const level = fmtInt(card.level || 1);
-  const rank = card.rank ? `#${fmtInt(card.rank)}` : "Unranked";
-  const currentXp = fmtInt(card.currentXp || 0);
-  const neededXp = fmtInt(card.neededXp || 1);
-  const totalXp = fmtInt(card.totalXp || 0);
-  const messages = fmtInt(card.messageCount || 0);
-  const voiceTime = formatDuration(card.voiceSeconds || 0);
+  const displayNameRaw = truncateForCard(card.displayName || "Unknown Voice", 18);
+  const titleRaw = truncateForCard(card.title || "New Voice", 24);
+  const displayName = escapeSvg(displayNameRaw);
+  const title = escapeSvg(titleRaw);
+  const level = formatCompactNumber(card.level || 1);
+  const rank = formatRank(card.rank);
+  const currentXp = formatCompactNumber(card.currentXp || 0);
+  const neededXp = formatCompactNumber(card.neededXp || 1);
+  const totalXp = formatCompactNumber(card.totalXp || 0);
+  const messages = formatCompactNumber(card.messageCount || 0);
+  const voiceTime = formatVoiceSeconds(card.voiceSeconds || 0);
   const progressRatio = clamp01(card.progressPercent != null ? Number(card.progressPercent) / 100 : card.progressRatio);
   const progressWidth = Math.round(560 * progressRatio);
   const progressLabel = `${currentXp} / ${neededXp} XP`;
@@ -222,25 +248,25 @@ function buildLevelCardSvg(card) {
   <text x="232" y="104" ${textAttrs({ fill: "#f4fbff", size: 34, weight: 800 })}>${displayName}</text>
   <text x="234" y="135" ${textAttrs({ fill: "#b8d9ea", size: 21, weight: 600 })}>${title}</text>
   ${vectorText({ x: 232, y: 45, text: "Echo Resonance", scale: 2.05, fill: "#8bd5ff" })}
-  ${vectorText({ x: 232, y: 77, text: trimText(card.displayName || "Unknown Voice", 22), scale: 4.05, fill: "#f4fbff" })}
-  ${vectorText({ x: 234, y: 120, text: trimText(card.title || "New Voice", 30), scale: 2.45, fill: "#b8d9ea" })}
+  ${vectorText({ x: 232, y: 77, text: displayNameRaw, scale: 3.65, fill: "#f4fbff" })}
+  ${vectorText({ x: 234, y: 120, text: titleRaw, scale: 2.25, fill: "#b8d9ea" })}
 
-  <g transform="translate(676 50)">
+  <g transform="translate(690 50)">
     <text x="0" y="18" ${textAttrs({ fill: "#9fc3d5", size: 12, weight: 700 })}>LEVEL</text>
     <text x="0" y="58" ${textAttrs({ fill: "#ffffff", size: 32, weight: 850 })}>${level}</text>
     ${vectorText({ x: 0, y: 9, text: "LEVEL", scale: 1.35, fill: "#9fc3d5" })}
-    ${vectorText({ x: 0, y: 36, text: level, scale: 3.7, fill: "#ffffff" })}
+    ${vectorText({ x: 0, y: 36, text: level, scale: level.length > 3 ? 2.85 : 3.7, fill: "#ffffff" })}
   </g>
-  <g transform="translate(802 50)">
+  <g transform="translate(836 50)">
     <text x="0" y="18" ${textAttrs({ fill: "#9fc3d5", size: 12, weight: 700 })}>RANK</text>
     <text x="0" y="58" ${textAttrs({ fill: "#ffffff", size: 32, weight: 850 })}>${escapeSvg(rank)}</text>
     ${vectorText({ x: 0, y: 9, text: "RANK", scale: 1.35, fill: "#9fc3d5" })}
-    ${vectorText({ x: 0, y: 36, text: rank, scale: 3.7, fill: "#ffffff" })}
+    ${vectorText({ x: 0, y: 36, text: rank, scale: rank.length > 5 ? 2.1 : rank.length > 3 ? 2.65 : 3.35, fill: "#ffffff" })}
   </g>
 
-  ${buildStatPill({ x: 232, y: 153, label: "TOTAL XP", value: totalXp })}
-  ${buildStatPill({ x: 402, y: 153, label: "MESSAGES", value: messages })}
-  ${buildStatPill({ x: 572, y: 153, label: "VOICE", value: voiceTime })}
+  ${buildStatPill({ x: 232, y: 153, width: 156, label: "TOTAL XP", value: totalXp })}
+  ${buildStatPill({ x: 406, y: 153, width: 156, label: "MESSAGES", value: messages })}
+  ${buildStatPill({ x: 580, y: 153, width: 172, label: "VOICE", value: voiceTime })}
 
   <text x="284" y="223" ${textAttrs({ fill: "#d7edf8", size: 18, weight: 800 })}>${escapeSvg(progressLabel)}</text>
   <text x="844" y="223" ${textAttrs({ fill: "#9fc3d5", size: 15, weight: 650, anchor: "end" })}>${Math.round(progressRatio * 100)}%</text>
