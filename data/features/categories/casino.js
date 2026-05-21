@@ -55,7 +55,10 @@ module.exports = {
       short: "Live horse racing with win, place, and show betting.",
       detail:
         "Inside Track opens a live Echo Downs racing table from the Casino category in **/games**.\n\n" +
-        "Players bet on temporary race fields, watch the horses move across the track, and collect payouts on Win, Place, or Show tickets. The table closes itself after several races with no betting activity.",
+        "Each race creates a fresh field of horses with temporary hidden form, public odds, track conditions, and short flavour notes. Horse names are for flavour, not permanent power rankings.\n\n" +
+        "Players buy one ticket per race from their wallet by choosing **Win**, **Place**, or **Show**, then entering the horse number and wager. Casino Security table fees apply when relevant, and winning tickets pay from the server bank.\n\n" +
+        "Once betting closes, the table edits into a live horizontal race track where each horse moves toward the finish with commentary tied to actual race events. Rare major races can replace standard races with bigger fields and higher payout potential.\n\n" +
+        "Inside Track only runs after a player opens it. It keeps cycling races while active, and closes automatically after three consecutive races receive no bets.",
     },
     {
       id: "scratchcards",

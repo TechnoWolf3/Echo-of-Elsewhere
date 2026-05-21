@@ -41,7 +41,8 @@ module.exports = {
         "- Farm Market: sell harvested farm inventory\n" +
         "- Farm Store: buy fertiliser and animal husbandry items\n" +
         "- Machine Shed: buy, rent, and sell machinery\n" +
-        "- Barns: collect produce, restock, slaughter, breed, upgrade, or demolish",
+        "- Barns: collect produce, restock, slaughter, breed, upgrade, or demolish\n" +
+        "- Land care: rotate crop families, rest empty fields, and manage soil health",
     },
     {
       id: "farmingFieldsCrops",
@@ -58,6 +59,7 @@ module.exports = {
         "- Wait for the seeding and growth timers\n" +
         "- Harvest when the crop is ready\n" +
         "- Sell produce through the Farm Market\n\n" +
+        "**Land care:** Fields track soil health and recent crop families. Repeating the same crop family can reduce yield, while rotating crops, cultivating, and resting empty fields can help keep soil productive.\n\n" +
         "**Important:** Crops are limited by field level and season. Field upgrades are timed tasks, and the new level applies only when the upgrade completes.",
     },
     {
@@ -100,7 +102,15 @@ module.exports = {
         "- Choose a barn type: Chicken Coop, Sheep Barn, or Dairy Barn\n" +
         "- The new barn starts at level 1\n" +
         "- Collect produce when production cycles are ready\n" +
-        "- Restock an empty barn, slaughter animals, upgrade the barn, or demolish it back into a field\n\n" +
+        "- Restock an empty barn, slaughter animals, slaughter elderly animals separately, upgrade the barn, or demolish it back into a field\n\n" +
+        "Barn animals age through **Young**, **Juvenile**, **Mature**, and **Elderly**. Only mature animals produce. Elderly animals stop producing and give reduced meat when slaughtered.\n\n" +
+        "**Lifecycle Table**\n" +
+        "```text\n" +
+        "Animal    Young  Juvenile  Mature  Elderly\n" +
+        "Chicken   12h    12h       7d      48h\n" +
+        "Sheep     18h    18h       14d     72h\n" +
+        "Cow       24h    24h       21d     96h\n" +
+        "```\n\n" +
         "Converting field to barn resets the barn to level 1. Demolishing barn to field resets the field to level 1. Barn upgrades are timed, and production pauses while an upgrade is active.",
     },
     {
@@ -116,7 +126,7 @@ module.exports = {
         "- Make sure the barn has at least two adult animals\n" +
         "- Make sure there is free barn capacity\n" +
         "- Use the breed dropdown on the barn page\n\n" +
-        "Young animals count toward capacity but do not produce until they mature. Higher barn levels increase capacity, which lets players hold more animals and earn more produce once they are adults.",
+        "Young and juvenile animals count toward capacity but do not produce until they become mature. Mature animals produce goods; elderly animals stop producing, can be slaughtered separately, and eventually pass away. Higher barn levels increase capacity, which lets players hold more animals and earn more during mature production windows.",
     },
     {
       id: "farmingWeatherMarket",

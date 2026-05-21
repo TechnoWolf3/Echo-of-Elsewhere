@@ -61,8 +61,15 @@ module.exports = {
       detail:
         "**Inside Track**\n" +
         "Launch Inside Track from the Casino category in **/games**.\n\n" +
-        "Each race posts a field with horse numbers, odds, form notes, and a betting timer. Choose **Win**, **Place**, or **Show**, enter a horse number and wager, then watch the live track update until the finish.\n\n" +
-        "The table keeps cycling races while active and closes after three consecutive races with no bets.",
+        "Inside Track is a live horse racing betting table. It starts only when opened, then keeps running races in that channel while the table is active.\n\n" +
+        "**Before the race:** the board shows the race number, race type, track condition, horse numbers, odds, form notes, current bet count, and betting timer.\n\n" +
+        "**Bet types:**\n" +
+        "• **Win** - your horse must finish 1st.\n" +
+        "• **Place** - your horse must finish 1st or 2nd.\n" +
+        "• **Show** - your horse must finish 1st, 2nd, or 3rd.\n\n" +
+        "Choose **Win**, **Place**, or **Show**, then enter the horse number and wager amount. Bets come from your wallet. Casino Security table fees may apply on top of the wager.\n\n" +
+        "When betting closes, the embed becomes a live race board with moving horse lanes and commentary. Standard races cycle roughly every five minutes. Rare major races, like the Echo Derby or Elsewhere Cup, can appear with a bigger field and higher payout potential.\n\n" +
+        "Horse stats are regenerated every race, so a horse name does not stay permanently strong or weak. The table closes automatically after three consecutive races receive no bets.",
     },
     {
       id: "scratchcards",
