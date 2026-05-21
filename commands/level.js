@@ -1,6 +1,7 @@
-const { SlashCommandBuilder, MessageFlags } = require("discord.js");
+const { AttachmentBuilder, SlashCommandBuilder, MessageFlags } = require("discord.js");
 const community = require("../utils/community/communityService");
 const { renderLevelProfileEmbed } = require("../utils/community/renderLevelProfile");
+const { renderLevelCardPng } = require("../utils/community/renderLevelCard");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -22,8 +23,18 @@ module.exports = {
 
     const user = interaction.options.getUser("user") || interaction.user;
     const profile = await community.getLevelProfile({ guild: interaction.guild, user });
-    const embed = renderLevelProfileEmbed(profile);
 
-    return interaction.editReply({ embeds: [embed] });
+    try {
+      const cardBuffer = await renderLevelCardPng(profile);
+      const attachment = new AttachmentBuilder(cardBuffer, { name: "echo-resonance-card.png" });
+      return interaction.editReply({
+        content: "🌌 Echo Resonance",
+        files: [attachment],
+      });
+    } catch (error) {
+      console.error("[community] level card render failed; falling back to embed:", error);
+      const embed = renderLevelProfileEmbed(profile);
+      return interaction.editReply({ embeds: [embed] });
+    }
   },
 };
