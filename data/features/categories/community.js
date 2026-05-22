@@ -6,7 +6,7 @@ module.exports = {
   emoji: "🌌",
   blurb: "Server activity, Echo Resonance levels, rank cards, and weekly pulse.",
   description:
-    "Echo Community is the server presence layer. It watches eligible chat and voice activity, turns that activity into Echo Resonance XP, and gives members a clean way to see who has been most active around The Place.",
+    "Echo Community is the server presence layer. It watches eligible chat and voice activity, tracks bonds between members, follows each member's server standing, and gives members a clean way to see who has been most active around The Place.",
 
   items: [
     {
@@ -43,6 +43,22 @@ module.exports = {
       detail:
         "Echo Community uses recent activity to show a rolling weekly picture of the server.\n\n" +
         "The weekly view focuses on XP gained, eligible messages, eligible voice time, and level-ups. This keeps the hub useful for both long-term members and people who have been especially present this week.",
+    },
+    {
+      id: "echo_bonds",
+      name: "Echo Bonds",
+      short: "Build friendship levels by playing, working, and joining events together.",
+      detail:
+        "Echo Bonds are pair-based friendship levels between members.\n\n" +
+        "Play games, work jobs, and join shared activities with other members to grow your bond. Higher bonds unlock small bonuses when you play together.",
+    },
+    {
+      id: "server_standing",
+      name: "Server Standing",
+      short: "Your citizen reputation rises with legal/community activity and falls with crime.",
+      detail:
+        "Server Standing tracks whether you are acting like a reliable citizen or a known menace.\n\n" +
+        "Legal jobs and community milestones improve standing, while crime and underworld work drag it down. Standing unlocks small payout and XP modifiers without replacing existing economy rules.",
     },
   ],
 };

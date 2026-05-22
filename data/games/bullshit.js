@@ -28,6 +28,8 @@ const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../uti
 const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { recordProgress: recordContractProgress } = require("../../utils/contracts");
+const bondService = require("../../utils/community/bonds");
+const { BOND_CONFIG } = require("../../data/community/bondsConfig");
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -501,7 +503,20 @@ async function endGame(table, winId) {
   // Only pay out to a real player (bots don't get paid)
   if (winId && payout > 0 && !isBotId(winId)) {
     try {
-      await bankPayoutWithEffects({
+      const participantUserIds = [...table.players.keys()].filter((id) => !isBotId(id));
+      const minStake = Math.min(...[...table.players.values()].map((p) => Number(p.buyIn || 0)).filter((bet) => bet > 0));
+      if (participantUserIds.length >= 2 && Number.isFinite(minStake)) {
+        await bondService.awardBondXp({
+          guildId: table.guildId,
+          userIds: participantUserIds,
+          amount: BOND_CONFIG.xp.sharedCasinoGame,
+          source: "bullshit",
+          activityType: "casino",
+          reason: "shared_casino_game",
+          metadata: { stake: minStake, tableId: table.tableId },
+        }).catch(() => {});
+      }
+      const paid = await bankPayoutWithEffects({
         guildId: table.guildId,
         userId: winId,
         amount: payout,
@@ -514,6 +529,30 @@ async function endGame(table, winId) {
         activityEffects: ACTIVITY_EFFECTS,
         awardSource: "bullshit",
       });
+      const profit = Math.max(0, Number(paid?.finalAmount || payout) - Number(table.players.get(winId)?.buyIn || 0));
+      if (paid?.ok && profit > 0 && participantUserIds.length >= 2) {
+        const bondBonus = await bondService.getBestBondBonusForGroup(table.guildId, participantUserIds, { userId: winId, context: "casino" }).catch(() => null);
+        const pct = bondBonus?.bonuses?.casinoProfitPct || 0;
+        const bonus = Math.floor(profit * (pct / 100));
+        if (bonus > 0) {
+          await creditUser(table.guildId, winId, bonus, "bullshit_bond_bonus", {
+            tableId: table.tableId,
+            profit,
+            bonus,
+            bondLevel: bondBonus.level,
+            bondCasinoProfitPct: pct,
+          }).catch(() => {});
+        }
+        await bondService.awardBondXp({
+          guildId: table.guildId,
+          userIds: participantUserIds,
+          amount: BOND_CONFIG.xp.sharedCasinoWinBonus,
+          source: "bullshit",
+          activityType: "casino",
+          reason: "shared_casino_win",
+          metadata: { stake: Number(table.players.get(winId)?.buyIn || 0), tableId: table.tableId },
+        }).catch(() => {});
+      }
     } catch (e) {
       console.error("[Bullshit] payout failed:", e);
     }

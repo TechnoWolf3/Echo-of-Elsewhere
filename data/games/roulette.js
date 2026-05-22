@@ -21,6 +21,7 @@ const { activeGames } = require("../../utils/gameManager");
 
 const {
   tryDebitUser,
+  creditUser,
   addServerBank,
   bankToUserIfEnough,
   getWalletBalance,
@@ -32,6 +33,8 @@ const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 const ui = require("../../utils/ui");
+const bondService = require("../../utils/community/bonds");
+const { BOND_CONFIG } = require("../../data/community/bondsConfig");
 
 const {
   getUserCasinoSecurity,
@@ -613,6 +616,19 @@ async function spinRound({ interaction, table }) {
   const lines = [];
   const notes = [];
   const guildId = table.guildId;
+  const participantUserIds = [...table.players.keys()].filter((id) => !String(id).startsWith("bot:"));
+  const minStake = Math.min(...[...table.players.values()].map((p) => Number(p.betAmount || 0)).filter((bet) => bet > 0));
+  if (participantUserIds.length >= 2 && Number.isFinite(minStake)) {
+    await bondService.awardBondXp({
+      guildId,
+      userIds: participantUserIds,
+      amount: BOND_CONFIG.xp.sharedCasinoGame,
+      source: "roulette",
+      activityType: "casino",
+      reason: "shared_casino_game",
+      metadata: { stake: minStake, tableId: table.tableId },
+    }).catch(() => {});
+  }
 
   for (const p of table.players.values()) {
     const stake = Number(p.betAmount || 0);
@@ -657,6 +673,33 @@ async function spinRound({ interaction, table }) {
 
       if (full.ok) {
         paid = full.finalAmount || payoutWanted;
+        const profit = Math.max(0, paid - stake);
+        if (profit > 0 && participantUserIds.length >= 2) {
+          const bondBonus = await bondService.getBestBondBonusForGroup(guildId, participantUserIds, { userId: p.userId, context: "casino" }).catch(() => null);
+          const pct = bondBonus?.bonuses?.casinoProfitPct || 0;
+          const bonus = Math.floor(profit * (pct / 100));
+          if (bonus > 0) {
+            await creditUser(guildId, p.userId, bonus, "roulette_bond_bonus", {
+              channelId: table.channelId,
+              tableId: table.tableId,
+              userId: p.userId,
+              profit,
+              bonus,
+              bondLevel: bondBonus.level,
+              bondCasinoProfitPct: pct,
+            }).catch(() => {});
+            paid += bonus;
+          }
+          await bondService.awardBondXp({
+            guildId,
+            userIds: participantUserIds,
+            amount: BOND_CONFIG.xp.sharedCasinoWinBonus,
+            source: "roulette",
+            activityType: "casino",
+            reason: "shared_casino_win",
+            metadata: { stake, tableId: table.tableId },
+          }).catch(() => {});
+        }
       } else {
         // fallback: refund stake
         const refund = await bankToUserIfEnough(guildId, p.userId, stake, "roulette_refund", {

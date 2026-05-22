@@ -10,6 +10,7 @@ const { pool } = require(path.join(process.cwd(), "utils", "db"));
 const { setJail } = require(path.join(process.cwd(), "utils", "jail"));
 const { tryDebitUser, addServerBank } = require(path.join(process.cwd(), "utils", "economy"));
 const { creditUserWithEffects } = require(path.join(process.cwd(), "utils", "effectSystem"));
+const standingService = require(path.join(process.cwd(), "utils", "community", "standing"));
 const content = require("./scamCall.data");
 
 const ACTIVITY_EFFECTS = {
@@ -78,12 +79,14 @@ async function ensureUserRow(guildId, userId) {
 }
 
 async function addUserWallet(guildId, userId, amount, type = "crime_payout", meta = {}) {
+  const standingRow = await standingService.getStanding(guildId, userId).catch(() => null);
+  const modified = standingService.applyCrimePayoutModifier(amount, standingRow?.standing || 0);
   await creditUserWithEffects({
     guildId,
     userId,
-    amount,
+    amount: modified.amount,
     type,
-    meta: { ...meta, destination: "wallet" },
+    meta: { ...meta, destination: "wallet", standingCrimePayoutPct: modified.pct },
     activityEffects: ACTIVITY_EFFECTS,
     awardSource: "crime_scam_call",
   });

@@ -17,6 +17,8 @@ const {
   resultRow,
   returnToFunHub,
 } = require('./funHelpers');
+const bondService = require('../../utils/community/bonds');
+const { BOND_CONFIG } = require('../../data/community/bondsConfig');
 
 const MEMES = [
   'A blurry photo of a possum stealing hot chips outside a servo.',
@@ -162,6 +164,16 @@ async function startFromHub(interaction, opts = {}) {
     componentCollector.stop(reason);
     msgCollector.stop(reason);
     endActive(interaction.channelId);
+    if (reason === 'done') {
+      await bondService.awardBondXp({
+        guildId: interaction.guildId,
+        userIds: [players.a, players.b],
+        amount: BOND_CONFIG.xp.sharedGroupGame,
+        source: 'meme_rating',
+        activityType: 'game',
+        reason: 'shared_group_game',
+      }).catch(() => {});
+    }
     let description = '🛑 Game closed.';
     if (reason === 'declined') description = `${mention(players.b)} declined the challenge.`;
     else if (reason === 'timeout') description = '⌛ Game timed out.';

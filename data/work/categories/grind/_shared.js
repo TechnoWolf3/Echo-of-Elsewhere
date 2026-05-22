@@ -4,6 +4,7 @@
 const { EmbedBuilder } = require("discord.js");
 const { creditUserWithEffects } = require("../../../../utils/effectSystem");
 const { renderProgressBar } = require("../../../../utils/progressBar");
+const standingService = require("../../../../utils/community/standing");
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
@@ -23,12 +24,23 @@ function bar10(pct, length = 16) {
 async function mintUser(db, guildId, userId, amount, type, meta = {}, options = {}) {
   const amt = Math.max(0, Math.floor(Number(amount || 0)));
   if (amt <= 0) return;
+  const standingRow = await standingService.getStanding(guildId, userId).catch(() => null);
+  const modified = standingService.applyLegalJobModifiers(amt, 0, standingRow?.standing || 0);
+  const finalAmount = modified.amount;
+  await standingService.adjustStanding({
+    guildId,
+    userId,
+    amount: 1,
+    source: type,
+    reason: "grind_job_completion",
+    metadata: meta,
+  }).catch(() => {});
   return creditUserWithEffects({
     guildId,
     userId,
-    amount: amt,
+    amount: finalAmount,
     type,
-    meta,
+    meta: { ...meta, standingModifierPct: modified.payoutPct },
     activityEffects: options.activityEffects || null,
     awardSource: options.awardSource || type,
   });

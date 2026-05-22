@@ -18,6 +18,9 @@ module.exports = {
         "- Top Echo Resonance members\n" +
         "- Most active members this week\n" +
         "- Weekly server pulse stats\n\n" +
+        "**New in Community:**\n" +
+        "- Echo Bonds: Build friendship levels by playing, working, and joining events with other members. Higher bonds unlock small bonuses when you play together.\n" +
+        "- Server Standing: Your reputation shifts based on how you act. Legal jobs and community activity improve standing, while crime and underworld work drag it down.\n\n" +
         "**Notes:**\n" +
         "- Activity is based on eligible chat and voice participation.\n" +
         "- Low-population servers may show fewer leaderboard entries until more activity is recorded.",

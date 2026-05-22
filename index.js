@@ -25,6 +25,8 @@ const jailSystem = require("./utils/jail");
 const underworldSuspicion = require("./utils/underworld/suspicion");
 const communityService = require("./utils/community/communityService");
 const communityVoiceTracker = require("./utils/community/voiceTracker");
+const bondService = require("./utils/community/bonds");
+const standingService = require("./utils/community/standing");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -748,6 +750,8 @@ client.once(Events.ClientReady, async () => {
       await contracts.ensureSchema();
       await channelPurger.ensureSchema(client.db);
       await communityService.ensureSchema();
+      await bondService.ensureSchema();
+      await standingService.ensureSchema();
       console.log("[ESE] schema ready");
 
       // Start Bot Games AFTER DB tables exist

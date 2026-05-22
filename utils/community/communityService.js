@@ -5,6 +5,7 @@ const { COMMUNITY_SYSTEM, DEFAULT_SETTINGS } = require("../../data/community/con
 const { randomLevelUpLine } = require("../../data/community/levelUpLines");
 const { getLevelProgress, levelFromTotalXp } = require("./levelMath");
 const { formatDuration } = require("./renderLevelProfile");
+const standingService = require("./standing");
 
 let schemaReady = false;
 
@@ -320,6 +321,14 @@ async function announceLevelUp({ guild, channel, userId, level, settings }) {
     levelFrom: level - 1,
     levelTo: level,
   });
+  await standingService.adjustStanding({
+    guildId: guild.id,
+    userId,
+    amount: 2,
+    source: "community_level_up",
+    reason: "community_milestone_contribution",
+    metadata: { level },
+  }).catch(() => {});
 
   if (!settings.announceLevelups) return;
 

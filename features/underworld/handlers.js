@@ -3,6 +3,7 @@ const { MessageFlags } = require("discord.js");
 const engine = require("../../utils/underworld/engine");
 const smuggling = require("../../utils/underworld/smugglingEngine");
 const { creditUserWithEffects } = require("../../utils/effectSystem");
+const standingService = require("../../utils/community/standing");
 const branches = require("../../data/underworld/branches");
 
 const BRANCH_MAP = Object.fromEntries(branches.map((branch) => [branch.value, branch]));
@@ -246,6 +247,14 @@ async function handleUnderworldInteraction({
       return true;
     }
     await engine.saveState(guildId, userId, state);
+    await standingService.adjustStanding({
+      guildId,
+      userId,
+      amount: -4,
+      source: "underworld_smuggling_start",
+      reason: "underworld_operation_started",
+      metadata: { productId: flow.productId, sourceType: flow.sourceType },
+    }).catch(() => {});
     await tell(interaction, `✅ Route started. ETA <t:${Math.floor(Number(result.run.endsAt) / 1000)}:R>.`);
     session.underworldSmugglingFlow = null;
     session.view = "underworld_smuggling_active";
@@ -285,14 +294,18 @@ async function handleUnderworldInteraction({
       return true;
     }
     const result = await smuggling.finalizeRun(guildId, userId, state, run.id, {
-      payoutFn: (amount, meta) => creditUserWithEffects({
-        guildId,
-        userId,
-        amount,
-        type: "underworld_smuggling_payout",
-        meta,
-        awardSource: "underworld_smuggling_payout",
-      }),
+      payoutFn: async (amount, meta) => {
+        const standingRow = await standingService.getStanding(guildId, userId).catch(() => null);
+        const modified = standingService.applyCrimePayoutModifier(amount, standingRow?.standing || 0);
+        return creditUserWithEffects({
+          guildId,
+          userId,
+          amount: modified.amount,
+          type: "underworld_smuggling_payout",
+          meta: { ...meta, standingCrimePayoutPct: modified.pct },
+          awardSource: "underworld_smuggling_payout",
+        });
+      },
     });
     if (!result.ok) {
       await tell(interaction, `❌ ${result.reasonText}`);
@@ -300,6 +313,14 @@ async function handleUnderworldInteraction({
     }
     smuggling.cleanupCompletedRuns(state);
     await engine.saveState(guildId, userId, state);
+    await standingService.adjustStanding({
+      guildId,
+      userId,
+      amount: result.jailedMinutes ? -10 : -5,
+      source: "underworld_smuggling_complete",
+      reason: result.jailedMinutes ? "underworld_jail" : "smuggling_run_completed",
+      metadata: { outcome: result.outcome, payout: result.payout, jailedMinutes: result.jailedMinutes },
+    }).catch(() => {});
     const jailLine = result.jailedMinutes ? ` Jailed for ${result.jailedMinutes} minutes.` : "";
     await tell(
       interaction,
@@ -345,6 +366,14 @@ async function handleUnderworldInteraction({
 
     session.view = "underworld_building";
     session.underworldBuildingId = buildingId;
+    await standingService.adjustStanding({
+      guildId,
+      userId,
+      amount: -4,
+      source: "underworld_operation_start",
+      reason: "underworld_operation_started",
+      metadata: { buildingId, operationName: result.operation?.name },
+    }).catch(() => {});
     await tell(
       interaction,
       `✅ ${result.operation.name} conversion started. It completes <t:${Math.floor(Number(result.building.conversion.completeAt) / 1000)}:R>.`
@@ -364,6 +393,14 @@ async function handleUnderworldInteraction({
 
     session.view = "underworld_building";
     session.underworldBuildingId = buildingId;
+    await standingService.adjustStanding({
+      guildId,
+      userId,
+      amount: -4,
+      source: "underworld_operation_start",
+      reason: "underworld_operation_started",
+      metadata: { buildingId, operationName: result.operation?.name },
+    }).catch(() => {});
     await tell(
       interaction,
       `✅ ${result.operation.name} run started. Production wraps <t:${Math.floor(Number(result.building.activeRun.readyAt) / 1000)}:R>.`
@@ -440,14 +477,18 @@ async function handleUnderworldInteraction({
     const [, buildingId, modeId] = actionId.split(":");
     const state = await load();
     const result = await engine.chooseDistribution(guildId, userId, state, buildingId, modeId, {
-      payoutFn: (amount, meta) => creditUserWithEffects({
-        guildId,
-        userId,
-        amount,
-        type: "underworld_operation_payout",
-        meta,
-        awardSource: "underworld_operation_payout",
-      }),
+      payoutFn: async (amount, meta) => {
+        const standingRow = await standingService.getStanding(guildId, userId).catch(() => null);
+        const modified = standingService.applyCrimePayoutModifier(amount, standingRow?.standing || 0);
+        return creditUserWithEffects({
+          guildId,
+          userId,
+          amount: modified.amount,
+          type: "underworld_operation_payout",
+          meta: { ...meta, standingCrimePayoutPct: modified.pct },
+          awardSource: "underworld_operation_payout",
+        });
+      },
     });
     if (!result.ok) {
       await tell(interaction, `❌ ${result.reasonText}`);
@@ -455,6 +496,14 @@ async function handleUnderworldInteraction({
     }
 
     if (result.buildingLost) {
+      await standingService.adjustStanding({
+        guildId,
+        userId,
+        amount: result.jailedMinutes ? -10 : -8,
+        source: "underworld_operation_bust",
+        reason: result.jailedMinutes ? "underworld_jail" : "major_underworld_bust",
+        metadata: { buildingId, modeId, payout: result.payout, jailedMinutes: result.jailedMinutes },
+      }).catch(() => {});
       session.view = "underworld_operations";
       session.underworldBuildingId = null;
       await tell(
@@ -472,6 +521,14 @@ async function handleUnderworldInteraction({
     const reportLine = result.stolenReport
       ? ` ${result.stolenReport.name}: suspicion +${Number(result.stolenReport.suspicionDelta || 0)}.`
       : "";
+    await standingService.adjustStanding({
+      guildId,
+      userId,
+      amount: -4,
+      source: "underworld_operation_complete",
+      reason: "underworld_operation_completed",
+      metadata: { buildingId, modeId, payout: result.payout, raidOutcome: result.raidOutcome?.id || result.raidOutcome?.name },
+    }).catch(() => {});
     await tell(
       interaction,
       `✅ Distribution completed. Payout: $${Number(result.payout || 0).toLocaleString()}.${raidLine}${earlyLine}${reportLine}`

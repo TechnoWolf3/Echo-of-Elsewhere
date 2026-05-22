@@ -26,6 +26,8 @@ const {
 const config = require("./echoWhisperConfig");
 const economy = require("../../utils/economy");
 const engine = require("../../utils/games/echoWhisperEngine");
+const bondService = require("../../utils/community/bonds");
+const { BOND_CONFIG } = require("../../data/community/bondsConfig");
 
 const sessions = new Map();
 
@@ -360,6 +362,14 @@ async function finishWithWin(game, message, ids, voteResult, win, collector, tim
   clearTimeout(timers.discussion);
   clearTimeout(timers.vote);
   patchActive(game.channelId, { state: "ended" });
+  await bondService.awardBondXp({
+    guildId: game.channelGuildId,
+    userIds: game.players.map((player) => player.id),
+    amount: BOND_CONFIG.xp.sharedGroupGame,
+    source: "echo_whisper",
+    activityType: "game",
+    reason: "shared_group_game",
+  }).catch(() => {});
   const payouts = await settlePayouts(game, win);
   await message.edit(revealPayload(game, ids, voteResult, win, payouts)).catch(() => {});
   collector.stop("done");

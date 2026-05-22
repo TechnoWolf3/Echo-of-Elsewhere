@@ -15,6 +15,8 @@ const {
   resultRow,
   returnToFunHub,
 } = require('./funHelpers');
+const bondService = require('../../utils/community/bonds');
+const { BOND_CONFIG } = require('../../data/community/bondsConfig');
 
 const CHOICES = {
   rock: { label: 'Rock', emoji: '🪨' },
@@ -109,6 +111,14 @@ async function startFromHub(interaction, opts = {}) {
     if (reason === 'declined') description = `${mention(players.b)} declined the challenge.`;
     if (reason === 'timeout') description = '⌛ The duel timed out.';
     if (reason === 'done') {
+      await bondService.awardBondXp({
+        guildId: interaction.guildId,
+        userIds: [players.a, players.b],
+        amount: BOND_CONFIG.xp.sharedGroupGame,
+        source: 'rps',
+        activityType: 'game',
+        reason: 'shared_group_game',
+      }).catch(() => {});
       const a = picks.get(players.a);
       const b = picks.get(players.b);
       const w = winner(a, b);

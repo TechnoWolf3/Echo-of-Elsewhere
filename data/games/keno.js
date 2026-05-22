@@ -31,6 +31,8 @@ const { guardNotJailedComponent } = require("../../utils/jail");
 const economy = require("../../utils/economy");
 const { bankPayoutWithEffects, handleTriggeredEffectEvent } = require("../../utils/effectSystem");
 const { recordProgress: recordContractProgress } = require("../../utils/contracts");
+const bondService = require("../../utils/community/bonds");
+const { BOND_CONFIG } = require("../../data/community/bondsConfig");
 
 const ACTIVITY_EFFECTS = {
   effectsApply: true,
@@ -467,6 +469,19 @@ async function processResults(session) {
 
   const winners = [];
   const lossNotices = [];
+  const participantUserIds = [...session.bets.keys()];
+  const minStake = Math.min(...[...session.bets.values()].map((bet) => Number(bet.amount || 0)).filter((bet) => bet > 0));
+  if (participantUserIds.length >= 2 && Number.isFinite(minStake)) {
+    await bondService.awardBondXp({
+      guildId: session.guildId,
+      userIds: participantUserIds,
+      amount: BOND_CONFIG.xp.sharedCasinoGame,
+      source: "keno",
+      activityType: "casino",
+      reason: "shared_casino_game",
+      metadata: { stake: minStake, round: session.round },
+    }).catch(() => {});
+  }
 
   // Resolve each bet
   for (const [userId, bet] of session.bets.entries()) {
@@ -477,7 +492,7 @@ async function processResults(session) {
         const mult = bet.choice === "draw" ? 4 : 2;
         const payout = Math.floor(bet.amount * mult);
         const profit = payout - bet.amount;
-        await bankPayoutWithEffects({
+        const paid = await bankPayoutWithEffects({
           guildId: session.guildId,
           userId,
           amount: payout,
@@ -492,6 +507,29 @@ async function processResults(session) {
           activityEffects: ACTIVITY_EFFECTS,
           awardSource: "keno",
         });
+        if (paid?.ok && profit > 0 && participantUserIds.length >= 2) {
+          const bondBonus = await bondService.getBestBondBonusForGroup(session.guildId, participantUserIds, { userId, context: "casino" }).catch(() => null);
+          const pct = bondBonus?.bonuses?.casinoProfitPct || 0;
+          const bonus = Math.floor(profit * (pct / 100));
+          if (bonus > 0) {
+            await economy.creditUser(session.guildId, userId, bonus, "keno_bond_bonus", {
+              game: "keno",
+              profit,
+              bonus,
+              bondLevel: bondBonus.level,
+              bondCasinoProfitPct: pct,
+            }).catch(() => {});
+          }
+          await bondService.awardBondXp({
+            guildId: session.guildId,
+            userIds: participantUserIds,
+            amount: BOND_CONFIG.xp.sharedCasinoWinBonus,
+            source: "keno",
+            activityType: "casino",
+            reason: "shared_casino_win",
+            metadata: { stake: bet.amount, round: session.round },
+          }).catch(() => {});
+        }
         await recordCasinoContractProgress(session.guildId, userId, { wins: 1, profit: Math.max(0, profit) });
         winners.push({ userId, label: `${bet.choice.toUpperCase()} (x${mult})`, profit });
       } else {
@@ -512,7 +550,7 @@ async function processResults(session) {
       if (mult > 0) {
         const payout = Math.floor(bet.amount * mult);
         const profit = payout - bet.amount;
-        await bankPayoutWithEffects({
+        const paid = await bankPayoutWithEffects({
           guildId: session.guildId,
           userId,
           amount: payout,
@@ -528,6 +566,29 @@ async function processResults(session) {
           activityEffects: ACTIVITY_EFFECTS,
           awardSource: "keno",
         });
+        if (paid?.ok && profit > 0 && participantUserIds.length >= 2) {
+          const bondBonus = await bondService.getBestBondBonusForGroup(session.guildId, participantUserIds, { userId, context: "casino" }).catch(() => null);
+          const pct = bondBonus?.bonuses?.casinoProfitPct || 0;
+          const bonus = Math.floor(profit * (pct / 100));
+          if (bonus > 0) {
+            await economy.creditUser(session.guildId, userId, bonus, "keno_bond_bonus", {
+              game: "keno",
+              profit,
+              bonus,
+              bondLevel: bondBonus.level,
+              bondCasinoProfitPct: pct,
+            }).catch(() => {});
+          }
+          await bondService.awardBondXp({
+            guildId: session.guildId,
+            userIds: participantUserIds,
+            amount: BOND_CONFIG.xp.sharedCasinoWinBonus,
+            source: "keno",
+            activityType: "casino",
+            reason: "shared_casino_win",
+            metadata: { stake: bet.amount, round: session.round },
+          }).catch(() => {});
+        }
         await recordCasinoContractProgress(session.guildId, userId, { wins: 1, profit: Math.max(0, profit) });
         winners.push({ userId, label: `${hits}/${picks} (x${mult})`, profit });
       } else {

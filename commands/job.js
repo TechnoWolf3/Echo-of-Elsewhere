@@ -17,6 +17,9 @@ const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); //
 const { unlockAchievement } = require("../utils/achievementEngine");
 const ui = require("../utils/ui");
 const { recordProgress: recordContractProgress } = require("../utils/contracts");
+const bondService = require("../utils/community/bonds");
+const standingService = require("../utils/community/standing");
+const { BOND_CONFIG } = require("../data/community/bondsConfig");
 
 // ✅ UPDATED: add getCrimeHeatInfo for bar + timer UI
 const { getCrimeHeatInfo } = require("../utils/crimeHeat");
@@ -596,11 +599,33 @@ function scheduleReturnToCategory(delayMs = 5000) {
     async function payUser(amountBase, reason, xpGain, meta = {}, { countJob = true, allowLegendarySpawn = true, activityEffects = null, cooldownKey = "job", cooldownSeconds = JOB_COOLDOWN_SECONDS } = {}) {
       const mult = levelMultiplier(session.level);
       let amount = Math.floor(amountBase * mult);
+      let finalXpGain = Math.max(0, Math.floor(Number(xpGain || 0)));
 
       if (GLOBAL_BONUS_CHANCE > 0 && Math.random() < GLOBAL_BONUS_CHANCE) {
         const bonus = randInt(GLOBAL_BONUS_MIN, GLOBAL_BONUS_MAX);
         amount += bonus;
         meta.globalBonus = bonus;
+      }
+
+      const participantUserIds = Array.isArray(meta.participantUserIds)
+        ? meta.participantUserIds.map(String).filter(Boolean)
+        : [userId];
+      const standingRow = await standingService.getStanding(guildId, userId).catch(() => null);
+      const bondBonus = participantUserIds.length >= 2
+        ? await bondService.getBestBondBonusForGroup(guildId, participantUserIds, { userId, context: "legal_job" }).catch(() => null)
+        : null;
+      const modified = standingService.applyLegalJobModifiers(amount, finalXpGain, standingRow?.standing || 0, {
+        bondPayoutPct: bondBonus?.bonuses?.jobPayoutPct || 0,
+        bondXpPct: bondBonus?.bonuses?.jobXpPct || 0,
+      });
+      amount = modified.amount;
+      finalXpGain = modified.xp;
+      meta.standingModifierPct = modified.payoutPct;
+      meta.standingXpModifierPct = modified.xpPct;
+      if (bondBonus?.level > 0) {
+        meta.bondLevel = bondBonus.level;
+        meta.bondPayoutPct = bondBonus.bonuses.jobPayoutPct || 0;
+        meta.bondXpPct = bondBonus.bonuses.jobXpPct || 0;
       }
 
       const nextClaim = await startCooldown(cooldownKey, cooldownSeconds);
@@ -618,9 +643,28 @@ function scheduleReturnToCategory(delayMs = 5000) {
       await recordContractProgress({ guildId, userId, metric: "job_earnings", amount }).catch(() => {});
       if (countJob) {
         await recordContractProgress({ guildId, userId, metric: "jobs_completed", amount: 1 }).catch(() => {});
+        await standingService.adjustStanding({
+          guildId,
+          userId,
+          amount: 1,
+          source: reason,
+          reason: "legal_job_completion",
+          metadata: meta,
+        }).catch(() => {});
+        if (participantUserIds.length >= 2) {
+          await bondService.awardBondXp({
+            guildId,
+            userIds: participantUserIds,
+            amount: BOND_CONFIG.xp.sharedLegalJob,
+            source: reason,
+            activityType: "job",
+            reason: "shared_legal_job",
+            metadata: meta,
+          }).catch(() => {});
+        }
       }
 
-      const progUpdate = await addXpAndMaybeLevel(guildId, userId, xpGain, countJob);
+      const progUpdate = await addXpAndMaybeLevel(guildId, userId, finalXpGain, countJob);
 
       if (countJob) {
         await handleJobMilestones({

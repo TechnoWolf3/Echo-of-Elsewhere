@@ -32,6 +32,8 @@ const { guardNotJailedComponent } = require("../../utils/jail");
 const { guardGamesComponent } = require("../../utils/echoRift/curseGuard");
 const { recordProgress: recordContractProgress } = require("../../utils/contracts");
 const ui = require("../../utils/ui");
+const bondService = require("../../utils/community/bonds");
+const { BOND_CONFIG } = require("../../data/community/bondsConfig");
 
 const {
   getUserCasinoSecurity,
@@ -627,6 +629,19 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
     const loses = payoutPlan.filter((p) => p.payoutWanted === 0);
 
     const ordered = [...pushes, ...wins, ...loses];
+    const participantUserIds = [...session.players.keys()].filter((id) => !String(id).startsWith("bot:"));
+    const minStake = Math.min(...payoutPlan.map((p) => Number(p.bet || 0)).filter((bet) => bet > 0));
+    if (participantUserIds.length >= 2 && Number.isFinite(minStake)) {
+      await bondService.awardBondXp({
+        guildId,
+        userIds: participantUserIds,
+        amount: BOND_CONFIG.xp.sharedCasinoGame,
+        source: "blackjack",
+        activityType: "casino",
+        reason: "shared_casino_game",
+        metadata: { stake: minStake, gameId: session.gameId },
+      }).catch(() => {});
+    }
 
     for (const p of ordered) {
       const B = Number(p.bet || 0);
@@ -736,6 +751,32 @@ function wireCollectorHandlers({ collector, session, guildId, channelId }) {
             await consumeEffectUse(guildId, p.userId, effectPreview.activeEffect).catch(() => {});
           }
           await maybeAwardEffectFromActivity({ guildId, userId: p.userId, activityEffects: ACTIVITY_EFFECTS, source: 'blackjack' }).catch(() => {});
+          const profit = Math.max(0, paid - B);
+          if (profit > 0 && participantUserIds.length >= 2) {
+            const bondBonus = await bondService.getBestBondBonusForGroup(guildId, participantUserIds, { userId: p.userId, context: "casino" }).catch(() => null);
+            const pct = bondBonus?.bonuses?.casinoProfitPct || 0;
+            const bonus = Math.floor(profit * (pct / 100));
+            if (bonus > 0) {
+              await creditUser(guildId, p.userId, bonus, "blackjack_bond_bonus", {
+                ...meta,
+                userId: p.userId,
+                profit,
+                bonus,
+                bondLevel: bondBonus.level,
+                bondCasinoProfitPct: pct,
+              }).catch(() => {});
+              paid += bonus;
+            }
+            await bondService.awardBondXp({
+              guildId,
+              userIds: participantUserIds,
+              amount: BOND_CONFIG.xp.sharedCasinoWinBonus,
+              source: "blackjack",
+              activityType: "casino",
+              reason: "shared_casino_win",
+              metadata: { stake: B, gameId: session.gameId },
+            }).catch(() => {});
+          }
         }
       }
 

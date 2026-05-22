@@ -5,6 +5,7 @@ const startHeist = require("../../data/work/categories/crime/heist");
 const startScamCall = require("../../data/work/categories/crime/scamCall");
 const startBribeOfficer = require("../../data/work/categories/crime/bribeOfficer");
 const startLayLow = require("../../data/work/categories/crime/layLow");
+const standingService = require("../../utils/community/standing");
 const {
   getCrimeHeat,
   setCrimeHeat,
@@ -46,6 +47,15 @@ async function handleCrimeInteraction({
       onStoreRobberyComplete: async ({ outcome, finalHeat, identified }) => {
         const ttlMins = heatTTLMinutesForOutcome(outcome, { identified });
         await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
+        const success = ["clean", "spotted", "partial"].includes(String(outcome));
+        await standingService.adjustStanding({
+          guildId,
+          userId,
+          amount: success ? -5 : -2,
+          source: "crime_store_robbery",
+          reason: success ? "store_robbery_success" : "store_robbery_attempt",
+          metadata: { outcome, finalHeat, identified },
+        }).catch(() => {});
       },
     });
 
@@ -64,6 +74,15 @@ async function handleCrimeInteraction({
       onScamCallComplete: async ({ outcome, finalHeat, identified }) => {
         const ttlMins = heatTTLMinutesForOutcome(outcome, { identified });
         await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
+        const success = ["clean", "spotted", "partial"].includes(String(outcome));
+        await standingService.adjustStanding({
+          guildId,
+          userId,
+          amount: success ? -5 : -2,
+          source: "crime_scam_call",
+          reason: success ? "scam_call_success" : "scam_call_attempt",
+          metadata: { outcome, finalHeat, identified },
+        }).catch(() => {});
       },
     });
 
@@ -140,6 +159,16 @@ async function startHeistRun({
         mode: completedMode,
       });
       await setCrimeHeat(guildId, userId, finalHeat, ttlMins);
+      const success = ["clean", "spotted", "partial"].includes(String(outcome));
+      const major = completedMode === "major";
+      await standingService.adjustStanding({
+        guildId,
+        userId,
+        amount: success ? (major ? -8 : -5) : -2,
+        source: major ? "crime_major_heist" : "crime_heist",
+        reason: success ? (major ? "major_heist_success" : "heist_success") : "heist_attempt",
+        metadata: { outcome, finalHeat, identified, mode: completedMode },
+      }).catch(() => {});
     },
   });
 
