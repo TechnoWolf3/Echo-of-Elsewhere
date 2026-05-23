@@ -60,6 +60,9 @@ const nineToFiveUi = require("../features/nineToFive/ui");
 const { handleNineToFiveInteraction, cooldownFor: nineToFiveCooldownFor } = require("../features/nineToFive/handlers");
 const nightWalkerUi = require("../features/nightWalker/ui");
 const { handleNightWalkerInteraction, cooldownFor: nightWalkerCooldownFor } = require("../features/nightWalker/handlers");
+const communityContractsUi = require("../features/communityContracts/ui");
+const { handleCommunityContractsInteraction } = require("../features/communityContracts/handlers");
+const communityContracts = require("../utils/communityContracts");
 const nineToFiveIndex = require("../data/work/categories/nineToFive/index");
 const nightWalkerIndex = require("../data/work/categories/nightwalker/index");
 const grindIndex = require("../data/work/categories/grind/index");
@@ -267,6 +270,8 @@ function buildHubEmbed(user, progress, cooldownUnix) {
           ui.entryBlock("🏭 Enterprises", ["Build systems that earn over time."]),
           "",
           ui.entryBlock("🕶️ The Underworld", ["Quiet networks. Loud consequences."]),
+          "",
+          ui.entryBlock("Community Contracts", ["Server-wide projects. Timed tasks. Regional council energy."]),
         ]),
       ].join("\n")
     ), "job", false);
@@ -283,7 +288,8 @@ function buildHubComponents(disabled = false) {
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
         { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
-        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" },
+        { label: "Community Contracts", value: "job_cat:community_contracts", emoji: "🛠️" }
       )
       .setDisabled(disabled)
   );
@@ -325,7 +331,8 @@ function buildEnterprisesComponents(disabled = false) {
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
         { label: "🏭 Enterprises", value: "job_cat:enterprises", emoji: "🏭", default: true },
-        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" }
+        { label: "The Underworld", value: "job_cat:underworld", emoji: "🕶️" },
+        { label: "Community Contracts", value: "job_cat:community_contracts", emoji: "🛠️" }
       )
       .setDisabled(disabled)
   );
@@ -379,7 +386,8 @@ function buildUnderworldComponents(disabled = false) {
         { label: "Grind", value: "job_cat:grind", emoji: "🕒" },
         { label: "Crime", value: "job_cat:crime", emoji: "🕶️" },
         { label: "Enterprises", value: "job_cat:enterprises", emoji: "🏭" },
-        { label: "🕶️ The Underworld", value: "job_cat:underworld", emoji: "🕶️", default: true }
+        { label: "🕶️ The Underworld", value: "job_cat:underworld", emoji: "🕶️", default: true },
+        { label: "Community Contracts", value: "job_cat:community_contracts", emoji: "🛠️" }
       )
       .setDisabled(disabled)
   );
@@ -1057,6 +1065,14 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
 
       // ✅ UPDATED: Crime view includes heat bar + timers
+      if (session.view === "community_contracts") {
+        const snapshot = await communityContracts.snapshot(guildId, userId);
+        return editBoard({
+          embeds: [communityContractsUi.buildMainEmbed(snapshot, interaction.user)],
+          components: communityContractsUi.buildMainComponents(false),
+        }).catch(() => {});
+      }
+
       if (session.view === "crime") {
         const heatInfo = await getCrimeHeatInfo(guildId, userId);
 
@@ -1210,10 +1226,26 @@ function scheduleReturnToCategory(delayMs = 5000) {
           await redraw();
           return;
         }
+        if (actionId === "job_cat:community_contracts") {
+          session.view = "community_contracts";
+          session.lastCategory = "community_contracts";
+          await redraw();
+          return;
+        }
         if (await handleUnderworldInteraction({
           actionId,
           interaction: btn,
           session,
+          guildId,
+          userId,
+          redraw,
+        })) return;
+
+        if (await handleCommunityContractsInteraction({
+          actionId,
+          interaction: btn,
+          session,
+          msg,
           guildId,
           userId,
           redraw,
@@ -1331,7 +1363,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       }
       if (session.returnTimer) return;
       if (refreshInFlight) return;
-      if (["hub", "95", "nw", "grind", "crime", "enterprises", "underworld"].includes(session.view)) {
+      if (["hub", "95", "nw", "grind", "crime", "enterprises", "underworld", "community_contracts"].includes(session.view)) {
         refreshInFlight = true;
         try {
           await redraw();

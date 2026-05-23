@@ -27,6 +27,7 @@ const communityService = require("./utils/community/communityService");
 const communityVoiceTracker = require("./utils/community/voiceTracker");
 const bondService = require("./utils/community/bonds");
 const standingService = require("./utils/community/standing");
+const communityContracts = require("./utils/communityContracts");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -752,6 +753,7 @@ client.once(Events.ClientReady, async () => {
       await communityService.ensureSchema();
       await bondService.ensureSchema();
       await standingService.ensureSchema();
+      await communityContracts.ensureSchema();
       console.log("[ESE] schema ready");
 
       // Start Bot Games AFTER DB tables exist

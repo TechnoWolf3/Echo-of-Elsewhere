@@ -26,7 +26,24 @@ module.exports = {
         "- Select a category\n" +
         "- Pick a job from the list\n" +
         "- Follow the buttons/prompts to complete it\n\n" +
-        "Heads up: **Heat only affects Crime jobs.**",
+        "Heads up: **Heat only affects Crime jobs.**\n\n" +
+        "**Community Contracts:** shared server-wide projects with timed tasks, rally help, contribution payouts, community standing, and bond XP where available.",
+    },
+    {
+      id: "communityContracts",
+      name: "Community Contracts",
+      short: "Server-wide jobs where everyone contributes to the same long-running project.",
+      detail:
+        "**Community Contracts**\n" +
+        "Community Contracts live under **/job** -> **Community Contracts**. They are shared server-wide jobs where everyone sees the same active project and contributes through timed tasks.\n\n" +
+        "**How they work:**\n" +
+        "- Start a timed task from the current project phase\n" +
+        "- Come back after the finish time and collect results\n" +
+        "- Your progress adds to the shared contract and your personal contribution\n" +
+        "- Long and major tasks can be helped by other players through **Help / Rally**\n" +
+        "- Helping early gives better contribution, stronger bond XP, and a bigger timer reduction\n" +
+        "- Top contributors earn better payout bonuses when the contract completes\n\n" +
+        "Community Contracts can improve community standing, award bond XP where available, and visually progress through repairs, routes, zones, facilities, and supply states.",
     },
     {
       id: "farming",

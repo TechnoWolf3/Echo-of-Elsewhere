@@ -28,6 +28,7 @@ const farming = require('./farming/engine');
 const seasonControl = require('./farming/seasonControl');
 const channelPurger = require('./channelPurger');
 const communityService = require('./community/communityService');
+const communityContracts = require('./communityContracts');
 const { pool } = require('./db');
 
 async function hasBotMaster(member) {
@@ -51,6 +52,7 @@ const CATEGORIES = [
   { value: 'ese', label: 'Echo Stock Exchange' },
   { value: 'contracts', label: 'Contracts' },
   { value: 'community', label: 'Community / Resonance' },
+  { value: 'community_contracts', label: 'Community Contracts' },
   { value: 'enterprises', label: 'Enterprises' },
   { value: 'misc', label: 'Misc' },
 ];
@@ -142,6 +144,18 @@ const ACTIONS_BY_CATEGORY = {
   ],
   community: [
     { id: 'community:status', label: 'Status', style: ButtonStyle.Secondary, modal: false },
+  ],
+  community_contracts: [
+    { id: 'community_contracts:status', label: 'View Active', style: ButtonStyle.Secondary, modal: false },
+    { id: 'community_contracts:spawn', label: 'Spawn New', style: ButtonStyle.Primary, modal: true },
+    { id: 'community_contracts:emergency', label: 'Spawn Emergency', style: ButtonStyle.Primary, modal: false },
+    { id: 'community_contracts:force_complete', label: 'Force Complete', style: ButtonStyle.Danger, modal: false },
+    { id: 'community_contracts:cancel', label: 'Cancel Current', style: ButtonStyle.Danger, modal: false },
+    { id: 'community_contracts:reset', label: 'Reset Progress', style: ButtonStyle.Secondary, modal: false },
+    { id: 'community_contracts:adjust', label: 'Adjust Progress', style: ButtonStyle.Secondary, modal: true },
+    { id: 'community_contracts:payout', label: 'Adjust Payout', style: ButtonStyle.Secondary, modal: true },
+    { id: 'community_contracts:toggle_auto', label: 'Toggle Auto', style: ButtonStyle.Secondary, modal: false },
+    { id: 'community_contracts:toggle_events', label: 'Toggle Events', style: ButtonStyle.Secondary, modal: false },
   ],
   enterprises: [
     { id: 'enterprises:season_status', label: 'Season Status', style: ButtonStyle.Secondary, modal: false },
@@ -854,6 +868,32 @@ function buildModal(actionId) {
     }
   }
 
+  if (actionId.startsWith('community_contracts:')) {
+    const sub = actionId.split(':')[1];
+    setTitle(`Community: ${sub}`);
+
+    if (sub === 'spawn') {
+      modal.addComponents(
+        addInput('contract_key', 'Contract key (blank = random)', TextInputStyle.Short, false, 'restore_banksia_bay_surf_club'),
+        addInput('size', 'Size filter (optional)', TextInputStyle.Short, false, 'small / medium / large / emergency'),
+        addInput('category', 'Category filter (optional)', TextInputStyle.Short, false, 'Community Care')
+      );
+      return modal;
+    }
+
+    if (sub === 'adjust') {
+      modal.addComponents(addInput('amount', 'Progress delta', TextInputStyle.Short, true, '250 or -100'));
+      return modal;
+    }
+
+    if (sub === 'payout') {
+      modal.addComponents(addInput('amount', 'Payout pool delta', TextInputStyle.Short, true, '50000 or -10000'));
+      return modal;
+    }
+
+    return null;
+  }
+
   // Rift
   if (actionId.startsWith('rift:')) {
     setTitle(`Rift: ${actionId.split(':')[1]}`);
@@ -1053,6 +1093,96 @@ async function runActionFromId({ interaction, actionId, fields }) {
       '',
       'Full tuning UI is ready to be added here without adding public commands.',
     ].join('\n'));
+  }
+
+  if (actionId.startsWith('community_contracts:')) {
+    const sub = actionId.split(':')[1];
+
+    if (sub === 'status') {
+      const settings = await communityContracts.getSettings(guild.id);
+      const snap = await communityContracts.snapshot(guild.id, interaction.user.id);
+      if (!snap.contract) {
+        return safeReply(`**Community Contracts**\nAuto generate: **${settings.autoGenerate ? 'ON' : 'OFF'}**\nEvents: **${settings.eventsEnabled ? 'ON' : 'OFF'}**\n\nNo active contract.`);
+      }
+      return safeReply([
+        '**Community Contracts**',
+        `Auto generate: **${settings.autoGenerate ? 'ON' : 'OFF'}**`,
+        `Events: **${settings.eventsEnabled ? 'ON' : 'OFF'}**`,
+        '',
+        `Active: **${snap.contract.name}**`,
+        `Category: **${snap.contract.category}** / **${snap.contract.size}**`,
+        `Phase: **${snap.phase?.name || 'Current'}**`,
+        `Progress: **${snap.contract.total_progress}/${snap.contract.total_required}**`,
+        `Payout pool: **$${Number(snap.contract.payout_pool || 0).toLocaleString('en-AU')}**`,
+        `Active tasks: **${snap.activeTasks.length}**`,
+      ].join('\n'));
+    }
+
+    if (sub === 'spawn') {
+      const active = await communityContracts.getActiveContract(guild.id);
+      if (active) return safeReply('⚠️ A Community Contract is already active. Cancel or force-complete it first.');
+      const res = await communityContracts.createContract(guild.id, {
+        key: String(fields.contract_key || '').trim() || null,
+        size: String(fields.size || '').trim() || null,
+        category: String(fields.category || '').trim() || null,
+      });
+      if (!res.ok) return safeReply(`❌ Could not spawn Community Contract: ${res.reason}`);
+      return safeReply(`✅ Spawned **${res.contract.name}**.`);
+    }
+
+    if (sub === 'emergency') {
+      const active = await communityContracts.getActiveContract(guild.id);
+      if (active) return safeReply('⚠️ A Community Contract is already active. Cancel or force-complete it first.');
+      const res = await communityContracts.createContract(guild.id, { emergency: true });
+      if (!res.ok) return safeReply(`❌ Could not spawn emergency contract: ${res.reason}`);
+      return safeReply(`✅ Emergency contract spawned: **${res.contract.name}**.`);
+    }
+
+    if (sub === 'cancel') {
+      const res = await communityContracts.cancelActive(guild.id);
+      if (!res.ok) return safeReply('⚠️ No active Community Contract to cancel.');
+      return safeReply('🛑 Active Community Contract cancelled. No payouts were issued.');
+    }
+
+    if (sub === 'force_complete') {
+      const res = await communityContracts.forceComplete(guild.id);
+      if (!res.ok) return safeReply('⚠️ No active Community Contract to complete.');
+      return safeReply('✅ Active Community Contract force-completed and rewards settled.');
+    }
+
+    if (sub === 'reset') {
+      const res = await communityContracts.resetProgress(guild.id);
+      if (!res.ok) return safeReply('⚠️ No active Community Contract to reset.');
+      return safeReply('✅ Community Contract progress reset.');
+    }
+
+    if (sub === 'adjust') {
+      const amount = parseOptionalNumber(fields.amount, 'amount', { min: -1000000, max: 1000000 }) || 0;
+      const res = await communityContracts.adjustProgress(guild.id, amount);
+      if (!res.ok) return safeReply('⚠️ No active Community Contract to adjust.');
+      return safeReply(`✅ Progress adjusted by **${amount.toLocaleString('en-AU')}**.`);
+    }
+
+    if (sub === 'payout') {
+      const amount = parseOptionalNumber(fields.amount, 'amount', { min: -1000000000, max: 1000000000 }) || 0;
+      const res = await communityContracts.adjustPayoutPool(guild.id, amount);
+      if (!res.ok) return safeReply('⚠️ No active Community Contract to adjust.');
+      return safeReply(`✅ Payout pool adjusted by **$${amount.toLocaleString('en-AU')}**. New pool: **$${Number(res.contract.payout_pool || 0).toLocaleString('en-AU')}**.`);
+    }
+
+    if (sub === 'toggle_auto') {
+      const settings = await communityContracts.getSettings(guild.id);
+      const next = await communityContracts.updateSettings(guild.id, { autoGenerate: !settings.autoGenerate });
+      return safeReply(`✅ Community Contract auto-generate is now **${next.autoGenerate ? 'ON' : 'OFF'}**.`);
+    }
+
+    if (sub === 'toggle_events') {
+      const settings = await communityContracts.getSettings(guild.id);
+      const next = await communityContracts.updateSettings(guild.id, { eventsEnabled: !settings.eventsEnabled });
+      return safeReply(`✅ Community Contract events are now **${next.eventsEnabled ? 'ON' : 'OFF'}**.`);
+    }
+
+    return safeReply('❌ Unknown Community Contracts admin action.');
   }
 
   // CONTRACTS

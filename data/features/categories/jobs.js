@@ -68,6 +68,15 @@ module.exports = {
         "underworld_storage",
       ],
     },
+    {
+      id: "community_contracts",
+      name: "Community Contracts",
+      short: "Shared server-wide projects with timed tasks, rally help, and contribution payouts.",
+      description: "Community Contracts add long-running regional projects to /job, built for solo progress but much faster with teamwork.",
+      itemIds: [
+        "community_contracts_overview",
+      ],
+    },
   ],
 
   items: [
@@ -238,6 +247,20 @@ module.exports = {
         "Storage Houses turn paid runs into stored goods such as counterfeit electronics, designer knockoffs, auto parts, grey-market phones, and luxury watches.\n\n" +
         "Goods have cool-off timers before they are safer to sell. Selling early can reduce payout, add suspicion, increase raid risk, and may trigger a stolen-goods report.\n\n" +
         "Storage buildings have capacity. If storage is full, players need to sell goods before starting another storage run.",
+    },
+    {
+      id: "community_contracts_overview",
+      name: "Community Contracts",
+      short: "Server-wide jobs where players complete timed tasks toward one shared project.",
+      detail:
+        "Community Contracts added:\n\n" +
+        "- New **/job** category for shared server-wide projects.\n" +
+        "- Start timed tasks to progress long-running community jobs.\n" +
+        "- Rally behind other players' major tasks to reduce their timers.\n" +
+        "- Helper rewards scale based on how early they joined.\n" +
+        "- Top contributors earn bonus payouts and stronger bond progress.\n" +
+        "- Contracts visually progress through repairs, routes, zones, facilities, and supplies.\n" +
+        "- Australian-inspired towns and community locations added.",
     },
   ],
 };
