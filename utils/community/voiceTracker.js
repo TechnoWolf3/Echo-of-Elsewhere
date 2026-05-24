@@ -114,6 +114,7 @@ async function processSession(client, row, { removeIfIneligible = true, memberOv
       channel,
       userId: row.user_id,
       level: result.newLevel,
+      oldLevel: result.oldLevel,
       settings,
     });
   }

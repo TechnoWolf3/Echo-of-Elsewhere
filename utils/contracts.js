@@ -68,6 +68,9 @@ function formatMetricLabel(metric) {
     case 'stock_trades': return 'Stock Trades';
     case 'stock_volume': return 'Stock Volume';
     case 'rift_entries': return 'Rift Entries';
+    case 'community_work_progress': return 'Community Work Progress';
+    case 'community_work_actions': return 'Community Work Actions';
+    case 'community_work_helped': return 'Community Task Helps';
     default: return metric || 'Progress';
   }
 }

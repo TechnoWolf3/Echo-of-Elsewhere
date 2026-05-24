@@ -15,7 +15,13 @@ function getLevelTitle(level) {
   return LEVEL_TITLES.find((entry) => safeLevel >= entry.min && safeLevel <= entry.max)?.title || "Freshly Hatched Degenerate";
 }
 
+function getLevelTitleBand(level) {
+  const safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+  return LEVEL_TITLES.find((entry) => safeLevel >= entry.min && safeLevel <= entry.max) || LEVEL_TITLES[0];
+}
+
 module.exports = {
   LEVEL_TITLES,
   getLevelTitle,
+  getLevelTitleBand,
 };

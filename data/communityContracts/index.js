@@ -4,6 +4,9 @@ const contracts = [
   require("./contracts/ironbarkBushfireRecovery"),
   require("./contracts/regionalMedicalDrive"),
   require("./contracts/bluegumHillReplanting"),
+  require("./contracts/murraysBendFreightYard"),
+  require("./contracts/elsewhereExchangeAudit"),
+  require("./contracts/harrowfieldHarvestCoop"),
 ];
 
 const byKey = new Map(contracts.map((contract) => [contract.key, contract]));

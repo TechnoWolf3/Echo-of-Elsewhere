@@ -1,5 +1,6 @@
 const { pool } = require("./db");
 const economy = require("./economy");
+const legacyContracts = require("./contracts");
 const bondService = require("./community/bonds");
 const standingService = require("./community/standing");
 const data = require("../data/communityContracts");
@@ -242,6 +243,29 @@ async function getActiveContract(guildId) {
   return res.rows?.[0] || null;
 }
 
+async function syncActiveContractDefinition(contract) {
+  if (!contract || contract.status !== "active") return contract;
+  const definition = data.getContract(contract.contract_key);
+  if (!definition) return contract;
+
+  const payoutPool = clampInt(definition.payoutPool, 0, 0);
+  const standingReward = clampInt(definition.standingReward, 0, 0);
+  const currentPool = clampInt(contract.payout_pool, 0, 0);
+  const currentStanding = clampInt(contract.standing_reward, 0, 0);
+  if (payoutPool <= currentPool && standingReward <= currentStanding) return contract;
+
+  const res = await pool.query(
+    `UPDATE community_job_contracts
+     SET payout_pool=GREATEST(payout_pool, $2),
+         standing_reward=GREATEST(COALESCE(standing_reward, 0), $3),
+         updated_at=NOW()
+     WHERE id=$1
+     RETURNING *`,
+    [Number(contract.id), payoutPool, standingReward]
+  );
+  return res.rows?.[0] || contract;
+}
+
 async function createContract(guildId, { key = null, size = null, category = null, emergency = false } = {}) {
   await ensureSchema();
   const existing = await getActiveContract(guildId);
@@ -271,7 +295,7 @@ async function createContract(guildId, { key = null, size = null, category = nul
 
 async function ensureActiveContract(guildId) {
   const active = await getActiveContract(guildId);
-  if (active) return active;
+  if (active) return syncActiveContractDefinition(active);
   const settings = await getSettings(guildId);
   if (!settings.autoGenerate) return null;
   const created = await createContract(guildId);
@@ -566,6 +590,16 @@ async function addContribution({ guildId, contractId, userId, amount, role }) {
   );
 }
 
+async function recordLegacyProgress({ guildId, userId, amount, role }) {
+  const progress = clampInt(amount, 0, 0);
+  if (!guildId || !userId || progress <= 0) return;
+  await legacyContracts.recordProgress({ guildId, userId, metric: "community_work_progress", amount: progress }).catch(() => {});
+  await legacyContracts.recordProgress({ guildId, userId, metric: "community_work_actions", amount: 1 }).catch(() => {});
+  if (role === "helper") {
+    await legacyContracts.recordProgress({ guildId, userId, metric: "community_work_helped", amount: 1 }).catch(() => {});
+  }
+}
+
 async function advancePhaseIfNeeded(contractId) {
   const res = await pool.query(`SELECT * FROM community_job_contracts WHERE id=$1`, [Number(contractId)]);
   const contract = res.rows?.[0] || null;
@@ -721,6 +755,7 @@ async function collectReadyTasks({ guildId, userId }) {
       const finalContribution = Math.max(1, Math.floor(Number(helper.estimated_contribution || 0) * outcome.multiplier * progressEventMultiplier));
       helperTotal += finalContribution;
       await addContribution({ guildId, contractId: contract.id, userId: helper.helper_user_id, amount: finalContribution, role: "helper" });
+      await recordLegacyProgress({ guildId, userId: helper.helper_user_id, amount: finalContribution, role: "helper" });
       await pool.query(
         `UPDATE community_job_task_helpers SET final_contribution=$2 WHERE id=$1`,
         [Number(helper.id), finalContribution]
@@ -740,6 +775,7 @@ async function collectReadyTasks({ guildId, userId }) {
     }
     const totalAdded = leadProgress + helperTotal;
     await addContribution({ guildId, contractId: contract.id, userId, amount: leadProgress, role: "lead" });
+    await recordLegacyProgress({ guildId, userId, amount: leadProgress, role: "lead" });
     await pool.query(
       `UPDATE community_job_tasks
        SET status='collected', completed_at=NOW(), collected_at=NOW(), final_progress=$2, updated_at=NOW()

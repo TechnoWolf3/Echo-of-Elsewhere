@@ -3,6 +3,7 @@ const { EmbedBuilder } = require("discord.js");
 const { pool } = require("../db");
 const { COMMUNITY_SYSTEM, DEFAULT_SETTINGS } = require("../../data/community/config");
 const { randomLevelUpLine } = require("../../data/community/levelUpLines");
+const { getLevelTitleBand } = require("../../data/community/levelTitles");
 const { getLevelProgress, levelFromTotalXp } = require("./levelMath");
 const { formatDuration } = require("./renderLevelProfile");
 const standingService = require("./standing");
@@ -116,6 +117,15 @@ async function ensureSchema() {
       level BIGINT NOT NULL,
       announced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (guild_id, user_id, level)
+    );
+
+    CREATE TABLE IF NOT EXISTS community_rank_band_events (
+      guild_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      band_min BIGINT NOT NULL,
+      band_title TEXT NOT NULL,
+      announced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (guild_id, user_id, band_min)
     );
 
     CREATE INDEX IF NOT EXISTS idx_community_levels_rank
@@ -300,6 +310,18 @@ async function markLevelUp(guildId, userId, level) {
   return res.rowCount > 0;
 }
 
+async function markRankBand(guildId, userId, band) {
+  const database = db();
+  if (!database || !band) return false;
+  const res = await database.query(
+    `INSERT INTO community_rank_band_events (guild_id, user_id, band_min, band_title)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (guild_id, user_id, band_min) DO NOTHING`,
+    [String(guildId), String(userId), Math.floor(Number(band.min) || 1), String(band.title || "Unknown Rank")]
+  );
+  return res.rowCount > 0;
+}
+
 async function findLevelUpChannel(guild, fallbackChannel, settings) {
   if (settings.levelupChannelId) {
     const configured = await guild.channels.fetch(settings.levelupChannelId).catch(() => null);
@@ -309,7 +331,7 @@ async function findLevelUpChannel(guild, fallbackChannel, settings) {
   return guild.channels.cache.find((channel) => channel?.isTextBased?.() && channel.permissionsFor(guild.members.me)?.has("SendMessages")) || null;
 }
 
-async function announceLevelUp({ guild, channel, userId, level, settings }) {
+async function announceLevelUp({ guild, channel, userId, level, oldLevel = null, settings }) {
   const isNew = await markLevelUp(guild.id, userId, level);
   if (!isNew) return;
 
@@ -343,6 +365,23 @@ async function announceLevelUp({ guild, channel, userId, level, settings }) {
     .setTimestamp();
 
   await target.send({ content: `<@${userId}>`, embeds: [embed] }).catch(() => {});
+
+  const previousBand = oldLevel ? getLevelTitleBand(oldLevel) : null;
+  const currentBand = getLevelTitleBand(level);
+  const crossedBand = currentBand && (!previousBand || Number(previousBand.min) !== Number(currentBand.min));
+  if (crossedBand && await markRankBand(guild.id, userId, currentBand)) {
+    const rankEmbed = new EmbedBuilder()
+      .setColor(COMMUNITY_SYSTEM.color)
+      .setTitle("New Resonance Rank")
+      .setDescription([
+        `<@${userId}> has become **${currentBand.title}**.`,
+        "",
+        `Rank band: **Level ${Number(currentBand.min).toLocaleString("en-AU")}${Number.isFinite(Number(currentBand.max)) ? `-${Number(currentBand.max).toLocaleString("en-AU")}` : "+"}**`,
+      ].join("\n"))
+      .setFooter({ text: COMMUNITY_SYSTEM.name })
+      .setTimestamp();
+    await target.send({ content: `<@${userId}>`, embeds: [rankEmbed] }).catch(() => {});
+  }
 }
 
 async function handleMessageXp(message) {
@@ -370,6 +409,7 @@ async function handleMessageXp(message) {
         channel: message.channel,
         userId: message.author.id,
         level: result.newLevel,
+        oldLevel: result.oldLevel,
         settings,
       });
     }

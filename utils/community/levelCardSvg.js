@@ -140,6 +140,47 @@ function vectorTextWidth(text, scale, letterSpacing = 1) {
   return Math.max(0, width - letterSpacing * scale);
 }
 
+function fitVectorLine(text, maxWidth, preferredScale, minScale) {
+  const raw = String(text ?? "").trim();
+  const baseWidth = vectorTextWidth(raw, preferredScale);
+  if (baseWidth <= maxWidth) return { text: raw, scale: preferredScale, fitsAtMin: true };
+  const fitted = preferredScale * (maxWidth / Math.max(1, baseWidth));
+  return { text: raw, scale: Math.max(minScale, Math.min(preferredScale, fitted)), fitsAtMin: fitted >= minScale };
+}
+
+function fitVectorTextLines(text, maxWidth, preferredScale, minScale, maxLines = 2) {
+  const raw = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!raw) return [{ text: "", scale: preferredScale }];
+
+  const oneLine = fitVectorLine(raw, maxWidth, preferredScale, minScale);
+  if (oneLine.fitsAtMin || maxLines <= 1) return [oneLine];
+
+  const words = raw.split(" ");
+  const lines = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current && vectorTextWidth(candidate, preferredScale) > maxWidth) {
+      lines.push(current);
+      current = word;
+      if (lines.length >= maxLines - 1) break;
+    } else {
+      current = candidate;
+    }
+  }
+  const usedWords = lines.join(" ").split(/\s+/).filter(Boolean).length;
+  const remainder = words.slice(usedWords).join(" ") || current;
+  if (remainder) lines.push(remainder);
+
+  return lines.slice(0, maxLines).map((line, idx, arr) => {
+    let value = line;
+    if (idx === arr.length - 1 && usedWords + line.split(/\s+/).filter(Boolean).length < words.length) {
+      value = trimText(line, 34);
+    }
+    return fitVectorLine(value, maxWidth, preferredScale, minScale);
+  });
+}
+
 function vectorText({ x, y, text, scale, fill, anchor = "start", opacity = 1, letterSpacing = 1 }) {
   const raw = String(text ?? "");
   const width = vectorTextWidth(raw, scale, letterSpacing);
@@ -180,9 +221,10 @@ function buildStatPill({ x, y, width = 154, label, value }) {
 
 function buildLevelCardSvg(card) {
   const displayNameRaw = truncateForCard(card.displayName || "Unknown Voice", 18);
-  const titleRaw = truncateForCard(card.title || "New Voice", 24);
+  const titleRaw = String(card.title || "New Voice").trim();
+  const titleLines = fitVectorTextLines(titleRaw, 424, 2.25, 1.2, 2);
   const displayName = escapeSvg(displayNameRaw);
-  const title = escapeSvg(titleRaw);
+  const title = escapeSvg(titleLines.map((line) => line.text).join(" "));
   const level = formatCompactNumber(card.level || 1);
   const rank = formatRank(card.rank);
   const currentXp = formatCompactNumber(card.currentXp || 0);
@@ -249,7 +291,7 @@ function buildLevelCardSvg(card) {
   <text x="234" y="135" ${textAttrs({ fill: "#b8d9ea", size: 21, weight: 600 })}>${title}</text>
   ${vectorText({ x: 232, y: 45, text: "Echo Resonance", scale: 2.05, fill: "#8bd5ff" })}
   ${vectorText({ x: 232, y: 77, text: displayNameRaw, scale: 3.65, fill: "#f4fbff" })}
-  ${vectorText({ x: 234, y: 120, text: titleRaw, scale: 2.25, fill: "#b8d9ea" })}
+  ${titleLines.map((line, idx) => vectorText({ x: 234, y: 118 + idx * 16, text: line.text, scale: line.scale, fill: "#b8d9ea" })).join("\n  ")}
 
   <g transform="translate(690 50)">
     <text x="0" y="18" ${textAttrs({ fill: "#9fc3d5", size: 12, weight: 700 })}>LEVEL</text>

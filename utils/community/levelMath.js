@@ -1,4 +1,4 @@
-const { getLevelTitle } = require("../../data/community/levelTitles");
+const { getLevelTitle, getLevelTitleBand } = require("../../data/community/levelTitles");
 
 function toSafeXp(value) {
   const xp = Math.floor(Number(value) || 0);
@@ -44,6 +44,7 @@ function getLevelProgress(totalXp) {
   return {
     level,
     title: getLevelTitle(level),
+    titleBand: getLevelTitleBand(level),
     totalXp: xp,
     currentLevelXp,
     xpForNextLevel,

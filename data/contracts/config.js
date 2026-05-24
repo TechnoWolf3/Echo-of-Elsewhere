@@ -24,8 +24,13 @@ const DEFAULTS = {
 // - stock_trades
 // - stock_volume
 // - rift_entries
+// - community_work_progress
+// - community_work_actions
+// - community_work_helped
 //
 // Add new templates by copying an existing block and changing the numbers/text.
+// Community targets are tuned around roughly 3-4 active users. Ritual earnings
+// assume an engaged daily ritual sweep lands around $85k-$90k per player.
 // target / rewardPool / reward can be a number or { min, max }.
 // standingsRewards should be an array like [first, second, third].
 
@@ -36,8 +41,8 @@ const communityTemplates = [
     metric: 'jobs_completed',
     title: 'Shift Surge',
     description: 'The city is stretched thin. Complete jobs together and keep things moving.',
-    target: { min: 160, max: 260 },
-    rewardPool: { min: 30000, max: 52000 },
+    target: { min: 24, max: 42 },
+    rewardPool: { min: 90000, max: 140000 },
     durationHours: 48,
   },
   {
@@ -46,8 +51,8 @@ const communityTemplates = [
     metric: 'job_earnings',
     title: 'Keep the Lights On',
     description: 'Bring in honest money through jobs and prove the workforce still matters.',
-    target: { min: 400000, max: 800000 },
-    rewardPool: { min: 36000, max: 62000 },
+    target: { min: 90000, max: 180000 },
+    rewardPool: { min: 105000, max: 160000 },
     durationHours: 48,
   },
   {
@@ -56,8 +61,8 @@ const communityTemplates = [
     metric: 'rituals_completed',
     title: 'Festival of Ash',
     description: 'Echo demands participation. The more rituals completed, the stronger the response.',
-    target: { min: 80, max: 140 },
-    rewardPool: { min: 28000, max: 48000 },
+    target: { min: 14, max: 26 },
+    rewardPool: { min: 85000, max: 135000 },
     durationHours: 48,
   },
   {
@@ -66,8 +71,8 @@ const communityTemplates = [
     metric: 'ritual_earnings',
     title: 'Offering Tithe',
     description: 'Channel ritual winnings back into a shared goal and let the whole server feast.',
-    target: { min: 350000, max: 750000 },
-    rewardPool: { min: 32000, max: 56000 },
+    target: { min: 120000, max: 260000 },
+    rewardPool: { min: 130000, max: 220000 },
     durationHours: 48,
   },
   {
@@ -76,8 +81,8 @@ const communityTemplates = [
     metric: 'jobs_completed',
     title: 'Weekend Rush',
     description: 'A sudden wave of work has landed. Everybody doing their part will help clear it.',
-    target: { min: 240, max: 380 },
-    rewardPool: { min: 42000, max: 70000 },
+    target: { min: 40, max: 70 },
+    rewardPool: { min: 130000, max: 210000 },
     durationHours: 72,
   },
   {
@@ -86,8 +91,8 @@ const communityTemplates = [
     metric: 'job_earnings',
     title: 'Wage Drive',
     description: 'Rack up clean earnings from jobs and push the city payroll into overdrive.',
-    target: { min: 750000, max: 1400000 },
-    rewardPool: { min: 48000, max: 82000 },
+    target: { min: 180000, max: 360000 },
+    rewardPool: { min: 150000, max: 240000 },
     durationHours: 72,
   },
   {
@@ -96,8 +101,8 @@ const communityTemplates = [
     metric: 'rituals_completed',
     title: 'Midnight Observance',
     description: 'A quiet pact. Enough ritual attendance will wake something listening.',
-    target: { min: 120, max: 200 },
-    rewardPool: { min: 36000, max: 64000 },
+    target: { min: 24, max: 42 },
+    rewardPool: { min: 120000, max: 190000 },
     durationHours: 72,
   },
   {
@@ -106,8 +111,8 @@ const communityTemplates = [
     metric: 'ritual_earnings',
     title: 'Vow of Coin',
     description: 'Pull wealth from the veil and prove the rituals still pay.',
-    target: { min: 600000, max: 1200000 },
-    rewardPool: { min: 42000, max: 76000 },
+    target: { min: 220000, max: 480000 },
+    rewardPool: { min: 200000, max: 340000 },
     durationHours: 72,
   },
   {
@@ -116,11 +121,11 @@ const communityTemplates = [
     metric: 'jobs_completed',
     title: 'Double Shift Pledge',
     description: 'Opt in if you mean it. If the city misses the mark, only the pledged feel the sting.',
-    target: { min: 300, max: 450 },
-    rewardPool: { min: 56000, max: 90000 },
+    target: { min: 55, max: 90 },
+    rewardPool: { min: 180000, max: 280000 },
     durationHours: 72,
     optIn: true,
-    penaltyAmount: { min: 1500, max: 3000 },
+    penaltyAmount: { min: 1000, max: 2200 },
   },
   {
     id: 'co_op_optin_tithe',
@@ -128,11 +133,11 @@ const communityTemplates = [
     metric: 'ritual_earnings',
     title: 'Tithe of the Veil',
     description: 'Swear yourself to the cause. Rich rewards if it lands, a bloodied wallet if it does not.',
-    target: { min: 800000, max: 1500000 },
-    rewardPool: { min: 62000, max: 98000 },
-    durationHours: 72,
+    target: { min: 280000, max: 620000 },
+    rewardPool: { min: 280000, max: 450000 },
+    durationHours: 120,
     optIn: true,
-    penaltyAmount: { min: 2000, max: 4500 },
+    penaltyAmount: { min: 1500, max: 3000 },
   },
   {
     id: 'co_op_casino_night',
@@ -140,8 +145,8 @@ const communityTemplates = [
     metric: 'casino_games_played',
     title: 'Casino Night',
     description: 'Fill the tables with real wagers from the casino games.',
-    target: { min: 80, max: 150 },
-    rewardPool: { min: 28000, max: 50000 },
+    target: { min: 25, max: 50 },
+    rewardPool: { min: 85000, max: 140000 },
     durationHours: 48,
   },
   {
@@ -150,8 +155,8 @@ const communityTemplates = [
     metric: 'casino_wins',
     title: 'Winner\'s Circle',
     description: 'Stack casino wins together and make the house sweat.',
-    target: { min: 35, max: 70 },
-    rewardPool: { min: 32000, max: 56000 },
+    target: { min: 12, max: 28 },
+    rewardPool: { min: 100000, max: 155000 },
     durationHours: 48,
   },
   {
@@ -160,8 +165,8 @@ const communityTemplates = [
     metric: 'casino_profit',
     title: 'House Pressure',
     description: 'Only net casino profit counts. Take more from the tables than you brought.',
-    target: { min: 250000, max: 700000 },
-    rewardPool: { min: 42000, max: 72000 },
+    target: { min: 80000, max: 240000 },
+    rewardPool: { min: 140000, max: 230000 },
     durationHours: 72,
   },
   {
@@ -170,8 +175,8 @@ const communityTemplates = [
     metric: 'farm_crops_harvested',
     title: 'Harvest Drive',
     description: 'Bring in crops from the fields and fill the server pantry.',
-    target: { min: 350, max: 900 },
-    rewardPool: { min: 32000, max: 56000 },
+    target: { min: 120, max: 300 },
+    rewardPool: { min: 100000, max: 170000 },
     durationHours: 72,
   },
   {
@@ -180,8 +185,8 @@ const communityTemplates = [
     metric: 'farm_fields_planted',
     title: 'Sowing Season',
     description: 'Plant field after field until the whole place smells like rain and soil.',
-    target: { min: 80, max: 180 },
-    rewardPool: { min: 30000, max: 52000 },
+    target: { min: 24, max: 56 },
+    rewardPool: { min: 95000, max: 155000 },
     durationHours: 96,
   },
   {
@@ -190,8 +195,8 @@ const communityTemplates = [
     metric: 'stock_trades',
     title: 'Market Bell',
     description: 'Buy and sell through ESE until the exchange wakes up.',
-    target: { min: 45, max: 100 },
-    rewardPool: { min: 28000, max: 50000 },
+    target: { min: 14, max: 32 },
+    rewardPool: { min: 85000, max: 140000 },
     durationHours: 72,
   },
   {
@@ -200,8 +205,8 @@ const communityTemplates = [
     metric: 'stock_volume',
     title: 'Liquidity Push',
     description: 'Move serious money through stocks. Every buy and sell adds to the volume.',
-    target: { min: 600000, max: 1800000 },
-    rewardPool: { min: 40000, max: 74000 },
+    target: { min: 180000, max: 520000 },
+    rewardPool: { min: 130000, max: 220000 },
     durationHours: 72,
   },
   {
@@ -210,8 +215,58 @@ const communityTemplates = [
     metric: 'rift_entries',
     title: 'Rift Watch',
     description: 'Answer the rift when it opens. This one takes patience across the week.',
-    target: { min: 4, max: 8 },
-    rewardPool: { min: 26000, max: 46000 },
+    target: { min: 2, max: 4 },
+    rewardPool: { min: 85000, max: 150000 },
+    durationHours: 168,
+  },
+  {
+    id: 'co_op_public_works_board',
+    type: 'co_op',
+    metric: 'community_work_progress',
+    title: 'Public Works Board',
+    description: 'Finish timed community project work through /job and push a real local build forward.',
+    target: { min: 4500, max: 8500 },
+    rewardPool: { min: 240000, max: 420000 },
+    durationHours: 168,
+  },
+  {
+    id: 'co_op_helping_hands',
+    type: 'co_op',
+    metric: 'community_work_helped',
+    title: 'Helping Hands',
+    description: 'Join other people\'s community project tasks and make the work finish faster together.',
+    target: { min: 10, max: 22 },
+    rewardPool: { min: 160000, max: 280000 },
+    durationHours: 120,
+  },
+  {
+    id: 'co_op_project_shift',
+    type: 'co_op',
+    metric: 'community_work_actions',
+    title: 'Project Shift',
+    description: 'Lead or help with community project tasks through /job until the worksite has momentum.',
+    target: { min: 24, max: 45 },
+    rewardPool: { min: 170000, max: 300000 },
+    durationHours: 120,
+  },
+  {
+    id: 'co_op_weekly_ritual_treasury',
+    type: 'co_op',
+    metric: 'ritual_earnings',
+    title: 'Weekly Ritual Treasury',
+    description: 'A longer ritual earnings push with a serious pool, paced for several days of offerings.',
+    target: { min: 650000, max: 1200000 },
+    rewardPool: { min: 500000, max: 780000 },
+    durationHours: 168,
+  },
+  {
+    id: 'co_op_weekly_wage_pool',
+    type: 'co_op',
+    metric: 'job_earnings',
+    title: 'Weekly Wage Pool',
+    description: 'A full-week job earnings drive for the regulars who keep clocking in.',
+    target: { min: 520000, max: 950000 },
+    rewardPool: { min: 420000, max: 680000 },
     durationHours: 168,
   },
 
@@ -221,8 +276,8 @@ const communityTemplates = [
     metric: 'jobs_completed',
     title: 'Job Sprint',
     description: 'Who can finish the most jobs before the deadline?',
-    target: { min: 12, max: 20 },
-    standingsRewards: [12000, 7000, 4000],
+    target: { min: 5, max: 9 },
+    standingsRewards: [35000, 22000, 12000],
     durationHours: 48,
   },
   {
@@ -231,8 +286,8 @@ const communityTemplates = [
     metric: 'job_earnings',
     title: 'Payday King',
     description: 'Bring in the biggest clean haul from jobs and own the leaderboard.',
-    target: { min: 22000, max: 45000 },
-    standingsRewards: [15000, 9000, 5000],
+    target: { min: 10000, max: 22000 },
+    standingsRewards: [42000, 26000, 14000],
     durationHours: 48,
   },
   {
@@ -241,8 +296,8 @@ const communityTemplates = [
     metric: 'rituals_completed',
     title: 'Most Devout',
     description: 'The veil is watching. The most dedicated ritualist claims the crown.',
-    target: { min: 5, max: 10 },
-    standingsRewards: [9000, 5000, 2500],
+    target: { min: 3, max: 6 },
+    standingsRewards: [28000, 17000, 9000],
     durationHours: 48,
   },
   {
@@ -251,8 +306,8 @@ const communityTemplates = [
     metric: 'ritual_earnings',
     title: 'Taker of Offerings',
     description: 'Who can pull the most coin from Echo’s rituals before time runs dry?',
-    target: { min: 12000, max: 26000 },
-    standingsRewards: [12000, 7500, 3500],
+    target: { min: 45000, max: 110000 },
+    standingsRewards: [55000, 34000, 18000],
     durationHours: 48,
   },
   {
@@ -261,8 +316,8 @@ const communityTemplates = [
     metric: 'jobs_completed',
     title: 'The Marathon',
     description: 'Long haul. No excuses. Highest job count wins.',
-    target: { min: 18, max: 30 },
-    standingsRewards: [16000, 9500, 5500],
+    target: { min: 8, max: 14 },
+    standingsRewards: [45000, 28000, 15000],
     durationHours: 72,
   },
   {
@@ -271,8 +326,8 @@ const communityTemplates = [
     metric: 'job_earnings',
     title: 'Biggest Wage Packet',
     description: 'Every dollar counts. Climb to first by sheer honest earning power.',
-    target: { min: 35000, max: 70000 },
-    standingsRewards: [18000, 11000, 6000],
+    target: { min: 18000, max: 38000 },
+    standingsRewards: [52000, 32000, 18000],
     durationHours: 72,
   },
   {
@@ -281,8 +336,8 @@ const communityTemplates = [
     metric: 'rituals_completed',
     title: 'Burn Bright',
     description: 'How many rituals can you cram in before Echo loses interest?',
-    target: { min: 8, max: 14 },
-    standingsRewards: [10000, 6000, 3000],
+    target: { min: 5, max: 9 },
+    standingsRewards: [32000, 20000, 11000],
     durationHours: 72,
   },
   {
@@ -291,8 +346,8 @@ const communityTemplates = [
     metric: 'ritual_earnings',
     title: 'Echo’s Favourite',
     description: 'The richest ritual haul wins. Simple. Brutal. Public.',
-    target: { min: 18000, max: 36000 },
-    standingsRewards: [14000, 8500, 4500],
+    target: { min: 70000, max: 160000 },
+    standingsRewards: [70000, 44000, 24000],
     durationHours: 72,
   },
   {
@@ -301,8 +356,8 @@ const communityTemplates = [
     metric: 'casino_wins',
     title: 'Table Shark',
     description: 'Most casino wins takes the crown.',
-    target: { min: 8, max: 18 },
-    standingsRewards: [16000, 9500, 5000],
+    target: { min: 4, max: 10 },
+    standingsRewards: [42000, 26000, 14000],
     durationHours: 48,
   },
   {
@@ -311,8 +366,8 @@ const communityTemplates = [
     metric: 'casino_profit',
     title: 'House Taker',
     description: 'The biggest net casino profit wins.',
-    target: { min: 70000, max: 180000 },
-    standingsRewards: [22000, 13000, 7000],
+    target: { min: 40000, max: 120000 },
+    standingsRewards: [60000, 38000, 20000],
     durationHours: 72,
   },
   {
@@ -321,8 +376,8 @@ const communityTemplates = [
     metric: 'farm_crops_harvested',
     title: 'Biggest Crop Haul',
     description: 'Harvest the most crops before the season closes.',
-    target: { min: 80, max: 180 },
-    standingsRewards: [16000, 9500, 5000],
+    target: { min: 40, max: 100 },
+    standingsRewards: [42000, 26000, 14000],
     durationHours: 72,
   },
   {
@@ -331,9 +386,29 @@ const communityTemplates = [
     metric: 'stock_volume',
     title: 'Market Mover',
     description: 'Move the most money through stock trades.',
-    target: { min: 180000, max: 450000 },
-    standingsRewards: [20000, 12000, 6500],
+    target: { min: 90000, max: 260000 },
+    standingsRewards: [55000, 34000, 18000],
     durationHours: 72,
+  },
+  {
+    id: 'competitive_site_foreman',
+    type: 'competitive',
+    metric: 'community_work_progress',
+    title: 'Site Foreman',
+    description: 'Top community project contributor takes the public credit and the biggest cheque.',
+    target: { min: 900, max: 1800 },
+    standingsRewards: [70000, 44000, 24000],
+    durationHours: 120,
+  },
+  {
+    id: 'competitive_good_neighbour',
+    type: 'competitive',
+    metric: 'community_work_helped',
+    title: 'Good Neighbour',
+    description: 'Most helper commitments on /job community projects wins.',
+    target: { min: 3, max: 8 },
+    standingsRewards: [42000, 26000, 14000],
+    durationHours: 120,
   },
 ];
 
@@ -374,6 +449,10 @@ const personalTemplates = [
   { id: 'p_stock_trade_1', metric: 'stock_trades', title: 'Opening Bell', description: 'Make stock trades through ESE.', target: 4, reward: 2200, durationHours: 24 },
   { id: 'p_stock_trade_2', metric: 'stock_trades', title: 'Active Trader', description: 'Keep buying and selling while the market is open.', target: 8, reward: 4200, durationHours: 24 },
   { id: 'p_stock_volume_1', metric: 'stock_volume', title: 'Moving Money', description: 'Move cash through stock buys and sells.', target: 75000, reward: 4200, durationHours: 24 },
+
+  { id: 'p_community_work_1', metric: 'community_work_actions', title: 'Pitch In', description: 'Complete or help with /job community project tasks.', target: 2, reward: 2600, durationHours: 24 },
+  { id: 'p_community_work_2', metric: 'community_work_progress', title: 'Worksite Regular', description: 'Add progress to an active /job community project.', target: 350, reward: 4200, durationHours: 24 },
+  { id: 'p_community_help_1', metric: 'community_work_helped', title: 'Second Pair of Hands', description: 'Help another player with a community project task.', target: 1, reward: 2200, durationHours: 24 },
 ];
 
 module.exports = {
