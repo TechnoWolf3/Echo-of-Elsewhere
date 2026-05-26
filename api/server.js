@@ -198,15 +198,19 @@ async function handler(req, res) {
       return;
     }
 
-    const blackjackActionMatch = pathname.match(/^\/v1\/casino\/blackjack\/([^/]+)\/(hit|stand)$/);
+    const blackjackActionMatch = pathname.match(/^\/v1\/casino\/blackjack\/([^/]+)\/(hit|stand|double|split)$/);
     if (req.method === "POST" && blackjackActionMatch) {
       const ctx = await authContext(req, res);
       if (!ctx) return;
       const gameId = decodeURIComponent(blackjackActionMatch[1]);
       const action = blackjackActionMatch[2];
-      const result = action === "hit"
-        ? await mobileBlackjack.hit(ctx, gameId)
-        : await mobileBlackjack.stand(ctx, gameId);
+      const handlers = {
+        hit: mobileBlackjack.hit,
+        stand: mobileBlackjack.stand,
+        double: mobileBlackjack.doubleDown,
+        split: mobileBlackjack.split,
+      };
+      const result = await handlers[action](ctx, gameId);
 
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });

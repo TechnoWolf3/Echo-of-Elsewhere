@@ -54,7 +54,7 @@ function cashoutValue(bet, streak) {
 }
 
 function allowedActionsFor(row) {
-  return row?.status === "playing" ? ["higher", "lower", "cashout"] : [];
+  return row?.status === "playing" ? ["higher", "lower", "same", "cashout"] : [];
 }
 
 async function ensureSchema() {
@@ -277,8 +277,8 @@ async function loadActiveGame(client, ctx, gameId) {
 async function guess(ctx, gameId, pickInput) {
   await ensureSchema();
   const pick = String(pickInput || "").trim().toLowerCase();
-  if (!["higher", "lower"].includes(pick)) {
-    return { ok: false, statusCode: 400, message: "Pick must be higher or lower." };
+  if (!["higher", "lower", "same"].includes(pick)) {
+    return { ok: false, statusCode: 400, message: "Pick must be higher, lower, or same." };
   }
 
   const db = requirePool();
@@ -299,7 +299,10 @@ async function guess(ctx, gameId, pickInput) {
     const currentCard = draw(deck);
     const previousValue = rankValue(previousCard);
     const currentValue = rankValue(currentCard);
-    const correct = pick === "higher" ? currentValue > previousValue : currentValue < previousValue;
+    const correct =
+      (pick === "higher" && currentValue > previousValue) ||
+      (pick === "lower" && currentValue < previousValue) ||
+      (pick === "same" && currentValue === previousValue);
 
     if (correct) {
       const nextStreak = Number(row.streak || 0) + 1;
@@ -316,7 +319,9 @@ async function guess(ctx, gameId, pickInput) {
         [row.id, JSON.stringify(deck), JSON.stringify(previousCard), JSON.stringify(currentCard), pick, nextStreak]
       );
       finalRow = updated.rows[0];
-      message = `Correct. Streak ${nextStreak}. The table leans closer.`;
+      if (pick === "higher") message = `Correct. The card climbed. Streak ${nextStreak}.`;
+      else if (pick === "lower") message = `Correct. The card fell. Streak ${nextStreak}.`;
+      else message = `Dead match. Echo blinked first. Streak ${nextStreak}.`;
     } else {
       const profit = -Number(row.bet || 0);
       const updated = await client.query(
