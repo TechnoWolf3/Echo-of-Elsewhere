@@ -5,6 +5,7 @@ const { URL } = require("url");
 const appLinking = require("../utils/appLinking");
 const mobileBlackjack = require("../utils/mobileBlackjack");
 const mobileHigherLower = require("../utils/mobileHigherLower");
+const mobileInsideTrack = require("../utils/mobileInsideTrack");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -251,6 +252,45 @@ async function handler(req, res) {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/v1/casino/inside-track/current") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileInsideTrack.getCurrent(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/casino/inside-track/bet") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileInsideTrack.placeBet(ctx, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const insideTrackRaceMatch = pathname.match(/^\/v1\/casino\/inside-track\/races\/([^/]+)$/);
+    if (req.method === "GET" && insideTrackRaceMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const raceId = decodeURIComponent(insideTrackRaceMatch[1]);
+      const result = await mobileInsideTrack.getRace(ctx, raceId);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
     notFound(res);
   } catch (error) {
     const statusCode = error?.statusCode || 500;
@@ -263,6 +303,7 @@ async function startApiServer({ port = process.env.PORT || DEFAULT_PORT } = {}) 
   await appLinking.ensureSchema();
   await mobileBlackjack.ensureSchema();
   await mobileHigherLower.ensureSchema();
+  await mobileInsideTrack.ensureSchema();
 
   const server = http.createServer((req, res) => {
     handler(req, res).catch((error) => {
