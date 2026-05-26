@@ -4,6 +4,7 @@ const http = require("http");
 const { URL } = require("url");
 const appLinking = require("../utils/appLinking");
 const mobileBlackjack = require("../utils/mobileBlackjack");
+const mobileHigherLower = require("../utils/mobileHigherLower");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -215,6 +216,37 @@ async function handler(req, res) {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/v1/casino/higher-lower/start") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileHigherLower.startGame(ctx, body.bet);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const higherLowerActionMatch = pathname.match(/^\/v1\/casino\/higher-lower\/([^/]+)\/(guess|cashout)$/);
+    if (req.method === "POST" && higherLowerActionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const gameId = decodeURIComponent(higherLowerActionMatch[1]);
+      const action = higherLowerActionMatch[2];
+      const result = action === "guess"
+        ? await mobileHigherLower.guess(ctx, gameId, (await readJson(req)).pick)
+        : await mobileHigherLower.cashout(ctx, gameId);
+
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
     notFound(res);
   } catch (error) {
     const statusCode = error?.statusCode || 500;
@@ -226,6 +258,7 @@ async function handler(req, res) {
 async function startApiServer({ port = process.env.PORT || DEFAULT_PORT } = {}) {
   await appLinking.ensureSchema();
   await mobileBlackjack.ensureSchema();
+  await mobileHigherLower.ensureSchema();
 
   const server = http.createServer((req, res) => {
     handler(req, res).catch((error) => {
