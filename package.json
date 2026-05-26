@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "start:api": "node -e \"require('./api/server').startApiServer()\"",
     "deploy": "node deploy-commands.js"
   },
   "keywords": [],
