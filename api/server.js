@@ -3,6 +3,7 @@ require("dotenv").config();
 const http = require("http");
 const { URL } = require("url");
 const appLinking = require("../utils/appLinking");
+const mobileBlackjack = require("../utils/mobileBlackjack");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -84,6 +85,20 @@ function bearerToken(req) {
   const header = String(req.headers.authorization || "");
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() || null;
+}
+
+async function authContext(req, res) {
+  const token = bearerToken(req);
+  if (!token) {
+    json(res, 401, { message: "Missing bearer token." });
+    return null;
+  }
+  const ctx = await appLinking.getSessionContext(token);
+  if (!ctx) {
+    json(res, 401, { message: "Invalid or expired session token." });
+    return null;
+  }
+  return ctx;
 }
 
 async function handler(req, res) {
@@ -169,6 +184,37 @@ async function handler(req, res) {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/v1/casino/blackjack/start") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileBlackjack.startGame(ctx, body.bet);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const blackjackActionMatch = pathname.match(/^\/v1\/casino\/blackjack\/([^/]+)\/(hit|stand)$/);
+    if (req.method === "POST" && blackjackActionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const gameId = decodeURIComponent(blackjackActionMatch[1]);
+      const action = blackjackActionMatch[2];
+      const result = action === "hit"
+        ? await mobileBlackjack.hit(ctx, gameId)
+        : await mobileBlackjack.stand(ctx, gameId);
+
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
     notFound(res);
   } catch (error) {
     const statusCode = error?.statusCode || 500;
@@ -179,6 +225,7 @@ async function handler(req, res) {
 
 async function startApiServer({ port = process.env.PORT || DEFAULT_PORT } = {}) {
   await appLinking.ensureSchema();
+  await mobileBlackjack.ensureSchema();
 
   const server = http.createServer((req, res) => {
     handler(req, res).catch((error) => {

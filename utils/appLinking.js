@@ -87,6 +87,19 @@ async function ensureSchema() {
       PRIMARY KEY (guild_id, user_id)
     );
 
+    CREATE TABLE IF NOT EXISTS transactions (
+      id BIGSERIAL PRIMARY KEY,
+      guild_id TEXT NOT NULL,
+      user_id TEXT NULL,
+      amount BIGINT NOT NULL,
+      type TEXT NOT NULL,
+      meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_transactions_guild_user_created
+    ON transactions (guild_id, user_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS profiles (
       id TEXT PRIMARY KEY,
       display_name TEXT NOT NULL,
@@ -449,11 +462,39 @@ async function getProfileForSessionToken(token) {
   return buildProfileSnapshot(profileIdValue);
 }
 
+async function getSessionContext(token) {
+  await ensureSchema();
+  const db = requirePool();
+  const tokenHash = hashToken(token);
+  const sessionRes = await db.query(
+    `SELECT s.profile_id, p.primary_guild_id, p.display_name
+     FROM app_sessions s
+     JOIN profiles p ON p.id = s.profile_id
+     WHERE s.token_hash=$1
+       AND s.revoked_at IS NULL
+       AND s.expires_at > NOW()
+     LIMIT 1`,
+    [tokenHash]
+  );
+  const session = sessionRes.rows?.[0];
+  if (!session) return null;
+
+  const discord = await getDiscordIdentity(session.profile_id);
+  return {
+    profileId: session.profile_id,
+    guildId: primaryGuildId(session.primary_guild_id),
+    discordUserId: discord?.provider_user_id || null,
+    displayName: discord?.display_name || session.display_name || "Echo Player",
+  };
+}
+
 module.exports = {
   ensureSchema,
   createLinkCode,
   claimLinkCode,
   getLinkCodeStatus,
   getProfileForSessionToken,
+  getSessionContext,
+  buildProfileSnapshot,
   normalizeCode,
 };
