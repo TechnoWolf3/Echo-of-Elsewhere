@@ -389,29 +389,310 @@ function mistakeLimit(seatCount) {
   return 4;
 }
 
-function simpleArrangementPuzzle() {
-  const scenario = pick(scenarios, scenarios[0]);
-  const seatCount = randInt(5, 10);
-  const names = shuffle(scenario.names).slice(0, seatCount);
-  const answer = shuffle(names);
-  const clues = [];
-  if (answer[0]) clues.push(`${answer[0]} wants a seat on an edge.`);
-  if (answer[answer.length - 1]) clues.push(`${answer[answer.length - 1]} wants one of the end seats.`);
-  for (let i = 0; i < answer.length - 1 && clues.length < Math.min(9, seatCount + 1); i += 1) {
-    clues.push(`${answer[i]} sits somewhere to the left of ${answer[i + 1]}.`);
+function arrangementClueTarget(seatCount) {
+  if (seatCount <= 5) return randInt(4, 5);
+  if (seatCount <= 7) return randInt(5, 7);
+  return randInt(7, 9);
+}
+
+function minimumArrangementClues(seatCount) {
+  if (seatCount <= 5) return 4;
+  if (seatCount <= 7) return 5;
+  return 7;
+}
+
+function maxArrangementClues(seatCount) {
+  if (seatCount <= 5) return 6;
+  if (seatCount <= 7) return 8;
+  return 10;
+}
+
+function maxSameClueType(seatCount) {
+  return seatCount <= 5 ? 2 : 3;
+}
+
+function minimumDistinctClueTypes(seatCount) {
+  return seatCount <= 5 ? 3 : 4;
+}
+
+function formatArrangementClue(scenario, clue) {
+  const templates = scenario.lines?.[clue.type] || [];
+  return pick(templates, "{a} knows where to sit.")
+    .replaceAll("{a}", clue.a)
+    .replaceAll("{b}", clue.b || "")
+    .replaceAll("{c}", clue.c || "")
+    .replaceAll("{pos}", String(Number(clue.pos || 0) + 1));
+}
+
+function arrangementPositions(order) {
+  return new Map(order.map((name, idx) => [name, idx]));
+}
+
+function arrangementClueSatisfied(order, clue) {
+  const pos = arrangementPositions(order);
+  const a = pos.get(clue.a);
+  const b = clue.b ? pos.get(clue.b) : null;
+  const c = clue.c ? pos.get(clue.c) : null;
+  const last = order.length - 1;
+
+  if (clue.type === "edge") return a === 0 || a === last;
+  if (clue.type === "notEdge") return a > 0 && a < last;
+  if (clue.type === "exact") return a === clue.pos;
+  if (clue.type === "leftOf") return a < b;
+  if (clue.type === "rightOf") return a > b;
+  if (clue.type === "adjacent") return Math.abs(a - b) === 1;
+  if (clue.type === "notAdjacent") return Math.abs(a - b) !== 1;
+  if (clue.type === "between") return (b < a && a < c) || (c < a && a < b);
+  if (clue.type === "distance") return Math.abs(a - b) === clue.distance;
+  return true;
+}
+
+function arrangementPartialOk(assign, clue, seatCount) {
+  const a = assign.get(clue.a);
+  const b = clue.b ? assign.get(clue.b) : null;
+  const c = clue.c ? assign.get(clue.c) : null;
+  const last = seatCount - 1;
+
+  if (a != null) {
+    if (clue.type === "edge" && a !== 0 && a !== last) return false;
+    if (clue.type === "notEdge" && (a === 0 || a === last)) return false;
+    if (clue.type === "exact" && a !== clue.pos) return false;
   }
-  if (answer.length >= 5) clues.push(`${answer[2]} sits between ${answer[1]} and ${answer[3]}.`);
-  return {
-    scenario: { id: scenario.id, name: scenario.name, intro: scenario.intro },
-    seatCount,
-    names,
-    answer,
-    clues,
-    mistakesAllowed: mistakeLimit(seatCount),
-    mistakesUsed: 0,
-    lastSubmittedOrder: null,
-    lastFeedback: null,
-  };
+  if (a != null && b != null) {
+    if (clue.type === "leftOf" && !(a < b)) return false;
+    if (clue.type === "rightOf" && !(a > b)) return false;
+    if (clue.type === "adjacent" && Math.abs(a - b) !== 1) return false;
+    if (clue.type === "notAdjacent" && Math.abs(a - b) === 1) return false;
+    if (clue.type === "distance" && Math.abs(a - b) !== clue.distance) return false;
+  }
+  if (a != null && b != null && c != null && clue.type === "between") {
+    if (!((b < a && a < c) || (c < a && a < b))) return false;
+  }
+  return true;
+}
+
+function countArrangementSolutions(names, clues, limit = 2) {
+  const seatCount = names.length;
+  const assignment = new Map();
+  const usedSeats = new Set();
+  const domains = new Map(names.map((name) => [name, Array.from({ length: seatCount }, (_, idx) => idx)]));
+
+  for (const clue of clues) {
+    if (clue.type === "exact") domains.set(clue.a, [clue.pos]);
+    if (clue.type === "edge") domains.set(clue.a, domains.get(clue.a).filter((idx) => idx === 0 || idx === seatCount - 1));
+    if (clue.type === "notEdge") domains.set(clue.a, domains.get(clue.a).filter((idx) => idx > 0 && idx < seatCount - 1));
+  }
+
+  const orderedNames = [...names].sort((a, b) => domains.get(a).length - domains.get(b).length);
+  let found = 0;
+
+  function search(depth) {
+    if (found >= limit) return;
+    if (depth >= orderedNames.length) {
+      const order = new Array(seatCount);
+      for (const [name, seat] of assignment.entries()) order[seat] = name;
+      if (clues.every((clue) => arrangementClueSatisfied(order, clue))) found += 1;
+      return;
+    }
+
+    const name = orderedNames[depth];
+    for (const seat of domains.get(name)) {
+      if (usedSeats.has(seat)) continue;
+      assignment.set(name, seat);
+      usedSeats.add(seat);
+      if (clues.every((clue) => arrangementPartialOk(assignment, clue, seatCount))) search(depth + 1);
+      usedSeats.delete(seat);
+      assignment.delete(name);
+      if (found >= limit) return;
+    }
+  }
+
+  search(0);
+  return found;
+}
+
+function arrangementClueKey(clue) {
+  return [clue.type, clue.a, clue.b || "", clue.c || "", clue.pos ?? "", clue.distance ?? ""].join(":");
+}
+
+function arrangementClueFamily(clue) {
+  if (clue.type === "leftOf" || clue.type === "rightOf") return "order";
+  if (clue.type === "edge" || clue.type === "notEdge" || clue.type === "exact") return "position";
+  if (clue.type === "adjacent" || clue.type === "notAdjacent" || clue.type === "distance") return "near";
+  if (clue.type === "between") return "between";
+  return clue.type;
+}
+
+function clueTypeCounts(clues) {
+  const counts = new Map();
+  for (const clue of clues) counts.set(clue.type, (counts.get(clue.type) || 0) + 1);
+  return counts;
+}
+
+function distinctClueTypes(clues) {
+  return new Set(clues.map((clue) => clue.type)).size;
+}
+
+function arrangementClueWeight(clue, seatCount, chosen = []) {
+  const counts = clueTypeCounts(chosen);
+  let weight = 4;
+  if (clue.type === "between" || clue.type === "distance") weight = seatCount >= 8 ? 11 : 9;
+  else if (clue.type === "adjacent" || clue.type === "notAdjacent") weight = 8;
+  else if (clue.type === "edge" || clue.type === "notEdge") weight = 7;
+  else if (clue.type === "exact") weight = seatCount <= 5 ? 5 : 3;
+  else if (clue.type === "leftOf" || clue.type === "rightOf") weight = 2;
+
+  if (!counts.has(clue.type)) weight += 8;
+  if (arrangementClueFamily(clue) !== "order") weight += 2;
+  weight -= (counts.get(clue.type) || 0) * 5;
+  return weight + randInt(-2, 2);
+}
+
+function makeArrangementCandidateClues(answer) {
+  const clues = [];
+  const pos = arrangementPositions(answer);
+  const n = answer.length;
+
+  for (const name of answer) {
+    const idx = pos.get(name);
+    clues.push(idx === 0 || idx === n - 1 ? { type: "edge", a: name } : { type: "notEdge", a: name });
+    clues.push({ type: "exact", a: name, pos: idx });
+  }
+
+  for (let i = 0; i < n; i += 1) {
+    for (let j = 0; j < n; j += 1) {
+      if (i === j) continue;
+      const a = answer[i];
+      const b = answer[j];
+      if (i < j) clues.push({ type: "leftOf", a, b });
+      if (i > j) clues.push({ type: "rightOf", a, b });
+      if (Math.abs(i - j) === 1) clues.push({ type: "adjacent", a, b });
+      else clues.push({ type: "notAdjacent", a, b });
+      const distance = Math.abs(i - j);
+      if (distance === 2 || (n >= 8 && distance === 3)) clues.push({ type: "distance", a, b, distance });
+    }
+  }
+
+  for (let i = 1; i < n - 1; i += 1) {
+    for (let left = 0; left < i; left += 1) {
+      for (let right = i + 1; right < n; right += 1) {
+        clues.push({ type: "between", a: answer[i], b: answer[left], c: answer[right] });
+      }
+    }
+  }
+
+  return shuffle(clues);
+}
+
+function wouldCreateOrderChain(chosen, clue) {
+  if (clue.type !== "leftOf" && clue.type !== "rightOf") return false;
+  const directOrder = chosen.filter((entry) => entry.type === "leftOf" || entry.type === "rightOf");
+  if (directOrder.length >= 2) return true;
+
+  const edges = new Map();
+  for (const entry of [...directOrder, clue]) {
+    const left = entry.type === "leftOf" ? entry.a : entry.b;
+    const right = entry.type === "leftOf" ? entry.b : entry.a;
+    if (!edges.has(left)) edges.set(left, new Set());
+    edges.get(left).add(right);
+  }
+
+  function longestFrom(name, seen = new Set()) {
+    if (seen.has(name)) return 0;
+    seen.add(name);
+    let best = 0;
+    for (const next of edges.get(name) || []) {
+      best = Math.max(best, 1 + longestFrom(next, new Set(seen)));
+    }
+    return best;
+  }
+
+  for (const name of edges.keys()) {
+    if (longestFrom(name) >= 2) return true;
+  }
+  return false;
+}
+
+function canUseArrangementClue(chosen, clue, seatCount, target) {
+  const counts = clueTypeCounts(chosen);
+  if ((counts.get(clue.type) || 0) >= maxSameClueType(seatCount)) return false;
+  if (wouldCreateOrderChain(chosen, clue)) return false;
+  const family = arrangementClueFamily(clue);
+  const familyCount = chosen.filter((entry) => arrangementClueFamily(entry) === family).length;
+  if (family === "order" && familyCount >= 2) return false;
+  if (familyCount >= Math.max(2, Math.ceil(target / 2))) return false;
+  if (clue.type === "exact" && counts.get("exact") >= (seatCount <= 5 ? 1 : 2)) return false;
+  return true;
+}
+
+function pruneArrangementClues(names, clues, seatCount) {
+  let current = [...clues];
+  const minClues = minimumArrangementClues(seatCount);
+  const minTypes = Math.min(minimumDistinctClueTypes(seatCount), distinctClueTypes(current));
+
+  for (const clue of shuffle(current)) {
+    if (current.length <= minClues) break;
+    const next = current.filter((entry) => entry !== clue);
+    if (distinctClueTypes(next) < minTypes) continue;
+    if (countArrangementSolutions(names, next, 2) === 1) current = next;
+  }
+
+  return current;
+}
+
+function buildArrangementPuzzle() {
+  for (let attempt = 0; attempt < 220; attempt += 1) {
+    const scenario = pick(scenarios, scenarios[0]);
+    const seatCount = randInt(5, 10);
+    const names = shuffle(scenario.names).slice(0, seatCount);
+    const answer = shuffle(names);
+    const target = arrangementClueTarget(seatCount);
+    const maxClues = maxArrangementClues(seatCount);
+    const minTypes = minimumDistinctClueTypes(seatCount);
+    const candidates = makeArrangementCandidateClues(answer);
+    const chosen = [];
+    const used = new Set();
+
+    for (let round = 0; round < maxClues * 3 && chosen.length < maxClues; round += 1) {
+      const sorted = candidates
+        .filter((clue) => !used.has(arrangementClueKey(clue)) && canUseArrangementClue(chosen, clue, seatCount, target))
+        .sort((a, b) => arrangementClueWeight(b, seatCount, chosen) - arrangementClueWeight(a, seatCount, chosen));
+
+      const clue = sorted[0];
+      if (!clue) break;
+      used.add(arrangementClueKey(clue));
+      const next = [...chosen, clue];
+      if (!next.every((entry) => arrangementClueSatisfied(answer, entry))) continue;
+      chosen.push(clue);
+
+      const hasEnough =
+        chosen.length >= minimumArrangementClues(seatCount) &&
+        distinctClueTypes(chosen) >= Math.min(minTypes, chosen.length);
+      if (hasEnough && countArrangementSolutions(names, chosen, 2) === 1) {
+        const pruned = pruneArrangementClues(names, chosen, seatCount);
+        if (distinctClueTypes(pruned) < Math.min(minTypes, pruned.length)) continue;
+        const finalClues = shuffle(pruned);
+        return {
+          scenario: { id: scenario.id, name: scenario.name, intro: scenario.intro },
+          seatCount,
+          names,
+          answer,
+          clueData: finalClues,
+          clues: finalClues.map((entry) => formatArrangementClue(scenario, entry)),
+          mistakesAllowed: mistakeLimit(seatCount),
+          mistakesUsed: 0,
+          lastSubmittedOrder: null,
+          lastFeedback: null,
+        };
+      }
+    }
+  }
+
+  throw Object.assign(new Error("Echo failed to generate a unique seating chart. Try again."), { statusCode: 503 });
+}
+
+function simpleArrangementPuzzle() {
+  return buildArrangementPuzzle();
 }
 
 function normalizeName(value) {
