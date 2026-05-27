@@ -14,6 +14,7 @@ const ritualsRegistry = require("../data/rituals");
 const { getPrimaryRituals, getOtherRituals, getRitual } = ritualsRegistry;
 const { getRitualStatus, claimRitual, buildStatusLine } = require("../utils/rituals");
 const railwayApi = require("../utils/railwayApiClient");
+const railwayRitualBridge = require("../utils/railwayRitualDiscordBridge");
 
 const BTN_PREFIX = "rituals:claim:";
 const SELECT_ID = "rituals:other";
@@ -139,6 +140,10 @@ module.exports = {
   async handleInteraction(interaction) {
     const cid = String(interaction.customId || "");
 
+    if (railwayApi.canUseRailwayApi() && railwayRitualBridge.isRailwayRitualInteraction(interaction)) {
+      return !!(await railwayRitualBridge.handleInteraction(interaction, { buildHubPayload }));
+    }
+
     for (const ritual of ritualsRegistry.rituals || []) {
       if (typeof ritual.handleInteraction === "function") {
         try {
@@ -198,6 +203,9 @@ module.exports = {
       if (await guardNotJailed(interaction)) return true;
 
       if (ritual.interactive && typeof ritual.begin === "function") {
+        if (railwayApi.canUseRailwayApi()) {
+          return !!(await railwayRitualBridge.startSession(interaction, ritual.id));
+        }
         return !!(await ritual.begin(interaction, { buildHubPayload }));
       }
 

@@ -11,6 +11,7 @@ const mobileCasinoTables = require("../utils/mobileCasinoTables");
 const railwayCasinoDiscordBridge = require("../utils/railwayCasinoDiscordBridge");
 const gameConfig = require("../utils/gameConfig");
 const mobileRituals = require("../utils/mobileRituals");
+const mobileInteractiveRituals = require("../utils/mobileInteractiveRituals");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -337,6 +338,46 @@ async function handler(req, res) {
       return;
     }
 
+    const ritualStartMatch = pathname.match(/^\/v1\/rituals\/([^/]+)\/start$/);
+    if (req.method === "POST" && ritualStartMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileInteractiveRituals.start(ctx, decodeURIComponent(ritualStartMatch[1]));
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const ritualSessionMatch = pathname.match(/^\/v1\/rituals\/sessions\/([^/]+)$/);
+    if (req.method === "GET" && ritualSessionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileInteractiveRituals.get(ctx, decodeURIComponent(ritualSessionMatch[1]));
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const ritualSessionActionMatch = pathname.match(/^\/v1\/rituals\/sessions\/([^/]+)\/action$/);
+    if (req.method === "POST" && ritualSessionActionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileInteractiveRituals.action(ctx, decodeURIComponent(ritualSessionActionMatch[1]), body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/v1/casino/tables/open") {
       const ctx = await authContext(req, res);
       if (!ctx) return;
@@ -557,6 +598,7 @@ async function handler(req, res) {
 async function startApiServer({ port = process.env.PORT || DEFAULT_PORT, client = null } = {}) {
   discordClient = client;
   await appLinking.ensureSchema();
+  await mobileInteractiveRituals.ensureSchema();
   await mobileBlackjack.ensureSchema();
   await mobileHigherLower.ensureSchema();
   await mobileInsideTrack.ensureSchema();

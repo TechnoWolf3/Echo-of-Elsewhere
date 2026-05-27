@@ -106,6 +106,23 @@ function claimRitual(source, ritualId) {
   });
 }
 
+function startRitualSession(source, ritualId) {
+  return discordRequest(source, `/v1/rituals/${encodeURIComponent(String(ritualId))}/start`, {
+    method: "POST",
+  });
+}
+
+function getRitualSession(source, sessionId) {
+  return discordRequest(source, `/v1/rituals/sessions/${encodeURIComponent(String(sessionId))}`);
+}
+
+function ritualSessionAction(source, sessionId, body = {}) {
+  return discordRequest(source, `/v1/rituals/sessions/${encodeURIComponent(String(sessionId))}/action`, {
+    method: "POST",
+    body,
+  });
+}
+
 function getGameConfig(source) {
   if (source) return discordRequest(source, "/v1/game-config");
   const baseUrl = apiBaseUrl();
@@ -126,5 +143,8 @@ module.exports = {
   discordRequest,
   listRituals,
   claimRitual,
+  startRitualSession,
+  getRitualSession,
+  ritualSessionAction,
   getGameConfig,
 };
