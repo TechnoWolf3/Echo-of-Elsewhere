@@ -8,10 +8,12 @@ const mobileHigherLower = require("../utils/mobileHigherLower");
 const mobileInsideTrack = require("../utils/mobileInsideTrack");
 const mobileBank = require("../utils/mobileBank");
 const mobileCasinoTables = require("../utils/mobileCasinoTables");
+const railwayCasinoDiscordBridge = require("../utils/railwayCasinoDiscordBridge");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
 const rateBuckets = new Map();
+let discordClient = null;
 
 function json(res, statusCode, body) {
   const payload = JSON.stringify(body);
@@ -103,6 +105,30 @@ async function authContext(req, res) {
     return null;
   }
   return ctx;
+}
+
+async function tableCreateResponse(ctx, tableResult, announceToDiscord) {
+  let discordAnnouncement = { posted: false };
+  let table = tableResult.body;
+  if (announceToDiscord && discordClient) {
+    discordAnnouncement = await railwayCasinoDiscordBridge.announceTable(discordClient, table, ctx).catch((error) => {
+      console.error("[API] failed to announce Discord table:", error);
+      return { posted: false, reason: "Discord announcement failed." };
+    });
+    if (discordAnnouncement.posted) {
+      const refreshed = await mobileCasinoTables.getTable(ctx, table.gameType, table.tableId);
+      if (refreshed.ok) table = refreshed.body;
+    }
+  }
+  return { ...table, table, discordAnnouncement };
+}
+
+async function maybeUpdateDiscordTable(table, notice = null) {
+  if (discordClient && table?.discordChannelId && table?.discordMessageId) {
+    await railwayCasinoDiscordBridge.updateTableMessage(discordClient, table, notice).catch((error) => {
+      console.error("[API] failed to update Discord table message:", error);
+    });
+  }
 }
 
 async function handler(req, res) {
@@ -251,6 +277,14 @@ async function handler(req, res) {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/v1/casino/tables/open") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCasinoTables.listOpenTables(ctx);
+      json(res, 200, result.body);
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/v1/casino/blackjack/start") {
       const ctx = await authContext(req, res);
       if (!ctx) return;
@@ -275,12 +309,13 @@ async function handler(req, res) {
     if (blackjackTablesBase && req.method === "POST") {
       const ctx = await authContext(req, res);
       if (!ctx) return;
-      const result = await mobileCasinoTables.createTable(ctx, "blackjack");
+      const body = await readJson(req);
+      const result = await mobileCasinoTables.createTable(ctx, "blackjack", { source: body.source || "app" });
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
       }
-      json(res, 200, result.body);
+      json(res, 200, await tableCreateResponse(ctx, result, Boolean(body.announceToDiscord)));
       return;
     }
 
@@ -306,6 +341,7 @@ async function handler(req, res) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
       }
+      if (req.method === "POST") await maybeUpdateDiscordTable(result.body, action);
       json(res, 200, result.body);
       return;
     }
@@ -356,12 +392,13 @@ async function handler(req, res) {
     if (higherLowerTablesBase && req.method === "POST") {
       const ctx = await authContext(req, res);
       if (!ctx) return;
-      const result = await mobileCasinoTables.createTable(ctx, "higher_lower");
+      const body = await readJson(req);
+      const result = await mobileCasinoTables.createTable(ctx, "higher_lower", { source: body.source || "app" });
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
       }
-      json(res, 200, result.body);
+      json(res, 200, await tableCreateResponse(ctx, result, Boolean(body.announceToDiscord)));
       return;
     }
 
@@ -387,6 +424,7 @@ async function handler(req, res) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
       }
+      if (req.method === "POST") await maybeUpdateDiscordTable(result.body, action);
       json(res, 200, result.body);
       return;
     }
@@ -456,7 +494,8 @@ async function handler(req, res) {
   }
 }
 
-async function startApiServer({ port = process.env.PORT || DEFAULT_PORT } = {}) {
+async function startApiServer({ port = process.env.PORT || DEFAULT_PORT, client = null } = {}) {
+  discordClient = client;
   await appLinking.ensureSchema();
   await mobileBlackjack.ensureSchema();
   await mobileHigherLower.ensureSchema();

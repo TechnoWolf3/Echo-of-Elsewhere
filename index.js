@@ -29,6 +29,7 @@ const bondService = require("./utils/community/bonds");
 const standingService = require("./utils/community/standing");
 const communityContracts = require("./utils/communityContracts");
 const { startApiServer } = require("./api/server");
+const railwayCasinoDiscordBridge = require("./utils/railwayCasinoDiscordBridge");
 
 // 📈 Echo Stock Exchange
 const { tickMarket, ensureSchema: ensureEseSchema } = require("./utils/ese/engine");
@@ -758,7 +759,7 @@ client.once(Events.ClientReady, async () => {
       await standingService.ensureSchema();
       await communityContracts.ensureSchema();
       if (!apiServerStarted && process.env.ECHO_API_DISABLED !== "true") {
-        await startApiServer();
+        await startApiServer({ client });
         apiServerStarted = true;
       }
       console.log("[ESE] schema ready");
@@ -873,6 +874,20 @@ if (!strongMoves.length && !(result.dividendAnnouncements || []).length) {
    - slash commands
 -------------------------------- */
 client.on(Events.InteractionCreate, async (interaction) => {
+  try {
+    const handled = await railwayCasinoDiscordBridge.handleInteraction(interaction);
+    if (handled) return;
+  } catch (e) {
+    console.error("[railcasino] handler failed:", e);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.followUp({ content: "Railway table action failed.", flags: MessageFlags.Ephemeral });
+      } else {
+        await interaction.reply({ content: "Railway table action failed.", flags: MessageFlags.Ephemeral });
+      }
+    } catch (_) {}
+    return;
+  }
 
   // ✅ Let /help handle its own dropdowns/buttons via its collector
   // Prevents the global games UI router from consuming help interactions.

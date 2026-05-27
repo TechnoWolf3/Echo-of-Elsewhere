@@ -13,8 +13,8 @@ module.exports = {
       emoji: "🔼",
       description: "Chase the next card and guard your streak.",
       run: async (interaction, ctx = {}) => {
-        const hol = require("../higherLower");
-        return hol.startFromHub(interaction, ctx);
+        const bridge = require("../../../utils/railwayCasinoDiscordBridge");
+        return bridge.startTableFromDiscord(interaction, "higher_lower", ctx);
       },
     },
 
@@ -24,8 +24,8 @@ module.exports = {
       emoji: "🃏",
       description: "Beat the dealer before the table eats you.",
       run: async (interaction, ctx = {}) => {
-        const bj = require("../blackjack");
-        return bj.startFromHub(interaction, ctx);
+        const bridge = require("../../../utils/railwayCasinoDiscordBridge");
+        return bridge.startTableFromDiscord(interaction, "blackjack", ctx);
       },
     },
 

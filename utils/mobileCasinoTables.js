@@ -93,7 +93,11 @@ async function ensureSchema() {
       guild_id TEXT NOT NULL,
       host_profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
       host_user_id TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'app',
+      discord_channel_id TEXT NULL,
+      discord_message_id TEXT NULL,
       status TEXT NOT NULL,
+      min_players INT NOT NULL DEFAULT 1,
       max_players INT NOT NULL DEFAULT 10,
       host_security_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       state_json JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -136,6 +140,10 @@ async function ensureSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'app'`);
+  await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS discord_channel_id TEXT NULL`);
+  await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS discord_message_id TEXT NULL`);
+  await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS min_players INT NOT NULL DEFAULT 1`);
 }
 
 async function expireOldTables(client = requirePool()) {
@@ -299,9 +307,13 @@ function publicHigherLower(table, players, profile = null) {
     tableId: table.id,
     gameType: "higher_lower",
     status: table.status,
+    source: table.source || "app",
+    discordChannelId: table.discord_channel_id || null,
+    discordMessageId: table.discord_message_id || null,
     hostUserId: table.host_user_id,
     hostProfileId: table.host_profile_id,
     hostDisplayName: players.find((p) => p.profile_id === table.host_profile_id)?.display_name || null,
+    minPlayers: Number(table.min_players || 1),
     maxPlayers: Number(table.max_players || MAX_PLAYERS),
     currentCard: state.currentCard || null,
     previousCard: state.previousCard || null,
@@ -351,8 +363,13 @@ function publicBlackjack(table, players, profile = null, currentProfileId = null
     tableId: table.id,
     gameType: "blackjack",
     status: table.status,
+    source: table.source || "app",
+    discordChannelId: table.discord_channel_id || null,
+    discordMessageId: table.discord_message_id || null,
     hostUserId: table.host_user_id,
     hostProfileId: table.host_profile_id,
+    hostDisplayName: players.find((p) => p.profile_id === table.host_profile_id)?.display_name || null,
+    minPlayers: Number(table.min_players || 1),
     maxPlayers: Number(table.max_players || MAX_PLAYERS),
     dealer: {
       visibleCards: reveal ? dealerCards : dealerCards.slice(0, 1),
@@ -408,6 +425,26 @@ async function listTables(ctx, gameType) {
   return { ok: true, body: { tables } };
 }
 
+async function listOpenTables(ctx) {
+  await ensureSchema();
+  const db = requirePool();
+  await expireOldTables(db);
+  const res = await db.query(
+    `SELECT * FROM casino_tables
+     WHERE status IN ('lobby','playing')
+     ORDER BY created_at DESC
+     LIMIT 50`
+  );
+  const tables = [];
+  for (const table of res.rows || []) {
+    const players = await playersFor(db, table.id);
+    tables.push(table.game_type === "higher_lower"
+      ? publicHigherLower(table, players)
+      : publicBlackjack(table, players, null, ctx?.profileId));
+  }
+  return { ok: true, body: { tables } };
+}
+
 async function reconcileBlackjackTimeout(tableId) {
   const db = requirePool();
   const client = await db.connect();
@@ -459,7 +496,7 @@ async function getTable(ctx, gameType, tableId) {
   return { ok: true, body: await renderTable(db, table, ctx, true) };
 }
 
-async function createTable(ctx, gameType) {
+async function createTable(ctx, gameType, options = {}) {
   await ensureSchema();
   const db = requirePool();
   const client = await db.connect();
@@ -478,12 +515,14 @@ async function createTable(ctx, gameType) {
     const state = gameType === "higher_lower"
       ? { deck: [], currentCard: null, previousCard: null, lastResult: null }
       : { deck: [], dealerCards: [], turnOrder: [], turnIndex: 0, turnUserId: null, turnExpiresAt: null, resultSummary: [] };
+    const source = options.source === "discord" ? "discord" : "app";
+    const minPlayers = Math.max(1, Number(options.minPlayers || 1));
     const inserted = await client.query(
       `INSERT INTO casino_tables
-       (id, game_type, guild_id, host_profile_id, host_user_id, status, max_players, host_security_json, state_json, expires_at)
-       VALUES ($1,$2,$3,$4,$5,'lobby',$6,$7::jsonb,$8::jsonb,$9)
+       (id, game_type, guild_id, host_profile_id, host_user_id, source, status, min_players, max_players, host_security_json, state_json, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,'lobby',$7,$8,$9::jsonb,$10::jsonb,$11)
        RETURNING *`,
-      [tableId, gameType, ctx.guildId, ctx.profileId, ctx.discordUserId, MAX_PLAYERS, JSON.stringify(hostSecurity), JSON.stringify(state), new Date(Date.now() + TABLE_TTL_MS)]
+      [tableId, gameType, ctx.guildId, ctx.profileId, ctx.discordUserId, source, minPlayers, MAX_PLAYERS, JSON.stringify(hostSecurity), JSON.stringify(state), new Date(Date.now() + TABLE_TTL_MS)]
     );
     table = inserted.rows[0];
     await client.query(
@@ -492,7 +531,7 @@ async function createTable(ctx, gameType) {
        VALUES ($1,$2,$3,$4,$5,0,'joined',$6::jsonb)`,
       [id("ctp"), tableId, ctx.profileId, ctx.discordUserId, ctx.displayName, gameType === "higher_lower" ? JSON.stringify({ alive: false, streak: 0 }) : JSON.stringify({ hands: [] })]
     );
-    await event(client, tableId, "create", ctx.profileId, { gameType });
+    await event(client, tableId, "create", ctx.profileId, { gameType, source });
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -501,6 +540,19 @@ async function createTable(ctx, gameType) {
     client.release();
   }
   return { ok: true, body: await renderTable(db, table, ctx, true) };
+}
+
+async function setDiscordMessage(tableId, channelId, messageId) {
+  await ensureSchema();
+  const db = requirePool();
+  const res = await db.query(
+    `UPDATE casino_tables
+     SET discord_channel_id=$2, discord_message_id=$3, updated_at=NOW()
+     WHERE id=$1
+     RETURNING *`,
+    [String(tableId), String(channelId || ""), String(messageId || "")]
+  );
+  return res.rows?.[0] || null;
 }
 
 async function joinTable(ctx, gameType, tableId) {
@@ -706,6 +758,10 @@ async function startHigherLower(ctx, tableId) {
       return { ok: false, statusCode: 409, message: "This table has already started." };
     }
     const players = await playersFor(client, table.id, true);
+    if (players.length < Number(table.min_players || 1)) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: `This table needs ${Number(table.min_players || 1)} player(s) to start.` };
+    }
     if (!players.length || players.some((p) => !p.paid || !p.bet)) {
       await client.query("ROLLBACK");
       return { ok: false, statusCode: 409, message: "All joined players must pay before starting." };
@@ -892,6 +948,10 @@ async function startBlackjack(ctx, tableId) {
       return { ok: false, statusCode: 409, message: "This table has already started." };
     }
     const players = await playersFor(client, table.id, true);
+    if (players.length < Number(table.min_players || 1)) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: `This table needs ${Number(table.min_players || 1)} player(s) to start.` };
+    }
     if (!players.length || players.some((p) => !p.paid || !p.bet)) {
       await client.query("ROLLBACK");
       return { ok: false, statusCode: 409, message: "All joined players must pay before starting." };
@@ -992,7 +1052,7 @@ async function resolveBlackjack(ctx, tableId, clientArg = null, tableArg = null)
   } finally {
     if (own) client.release();
   }
-  return { ok: true, body: await renderTable(db, table, ctx, true) };
+  return { ok: true, table, body: await renderTable(db, table, ctx, true) };
 }
 
 async function advanceBj(client, table, player, state, hands, startFromTurnIndex) {
@@ -1093,8 +1153,10 @@ async function bjAction(ctx, tableId, action) {
 module.exports = {
   ensureSchema,
   listTables,
+  listOpenTables,
   getTable,
   createTable,
+  setDiscordMessage,
   joinTable,
   leaveTable,
   setTableBet,

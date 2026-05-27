@@ -492,6 +492,32 @@ async function getSessionContext(token) {
   };
 }
 
+async function getOrCreateDiscordContext({ discordUserId, displayName, guildId = null }) {
+  await ensureSchema();
+  const db = requirePool();
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    const profile = await findOrCreateDiscordProfile(client, {
+      discordUserId,
+      displayName,
+      guildId,
+    });
+    await client.query("COMMIT");
+    return {
+      profileId: profile.id,
+      guildId: primaryGuildId(profile.guildId || guildId),
+      discordUserId: String(discordUserId),
+      displayName: profile.displayName || displayName || "Echo Player",
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   ensureSchema,
   createLinkCode,
@@ -499,6 +525,7 @@ module.exports = {
   getLinkCodeStatus,
   getProfileForSessionToken,
   getSessionContext,
+  getOrCreateDiscordContext,
   buildProfileSnapshot,
   normalizeCode,
 };
