@@ -16,9 +16,7 @@ module.exports = {
       .setTitle("Echo of Elsewhere")
       .setDescription(
         [
-          "A server companion for The Place, built around economy, jobs, games, progression, and strange little Echo-flavoured systems.",
-          "",
-          "Edit this command later in `commands/info.js` to replace this placeholder text with your final server info.",
+          "Echo is a funny little thing, explore and interact with Echo to discover its secrets.",
         ].join("\n")
       )
       .addFields(
@@ -39,6 +37,14 @@ module.exports = {
             "`/bank` - open The Echo Reserve",
             "`/job` - open work and enterprise systems",
             "`/games` - open the games hub",
+          ].join("\n"),
+          inline: false,
+        },
+        {
+          name: "Echo's Tale",
+          value: [
+            "For the website version of Echo's story, see [here](https://echos-tale.vercel.app/).",
+            "Echo's Tale is a web based companion for Echo of Elsewhere, providing a cleaner interface for Echo's trials and games, as well as a more detailed interaction."
           ].join("\n"),
           inline: false,
         },

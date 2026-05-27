@@ -138,7 +138,7 @@ async function dashboard(ctx) {
       ...snapshot,
       loan: publicLoan(loan),
       recurringDeposit: publicRecurring(recurringDeposit),
-      profile,
+      profile: profile ? { ...profile, serverBankBalance: 0 } : null,
     },
   };
 }

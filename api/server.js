@@ -7,6 +7,7 @@ const mobileBlackjack = require("../utils/mobileBlackjack");
 const mobileHigherLower = require("../utils/mobileHigherLower");
 const mobileInsideTrack = require("../utils/mobileInsideTrack");
 const mobileBank = require("../utils/mobileBank");
+const mobileCasinoTables = require("../utils/mobileCasinoTables");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -263,6 +264,52 @@ async function handler(req, res) {
       return;
     }
 
+    const blackjackTablesBase = pathname === "/v1/casino/blackjack/tables";
+    if (blackjackTablesBase && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCasinoTables.listTables(ctx, "blackjack");
+      json(res, 200, result.body);
+      return;
+    }
+    if (blackjackTablesBase && req.method === "POST") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCasinoTables.createTable(ctx, "blackjack");
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const blackjackTableMatch = pathname.match(/^\/v1\/casino\/blackjack\/tables\/([^/]+)(?:\/([^/]+))?$/);
+    if (blackjackTableMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const tableId = decodeURIComponent(blackjackTableMatch[1]);
+      const action = blackjackTableMatch[2] ? decodeURIComponent(blackjackTableMatch[2]) : null;
+      let result = null;
+      if (req.method === "GET" && !action) result = await mobileCasinoTables.getTable(ctx, "blackjack", tableId);
+      else if (req.method === "POST" && action === "join") result = await mobileCasinoTables.joinTable(ctx, "blackjack", tableId);
+      else if (req.method === "POST" && action === "leave") result = await mobileCasinoTables.leaveTable(ctx, "blackjack", tableId);
+      else if (req.method === "POST" && action === "bet") result = await mobileCasinoTables.setTableBet(ctx, "blackjack", tableId, (await readJson(req)).amount);
+      else if (req.method === "POST" && action === "clear-bet") result = await mobileCasinoTables.clearBlackjackBet(ctx, tableId);
+      else if (req.method === "POST" && action === "start") result = await mobileCasinoTables.startBlackjack(ctx, tableId);
+      else if (req.method === "POST" && ["hit", "stand", "double", "split"].includes(action)) result = await mobileCasinoTables.bjAction(ctx, tableId, action);
+      else {
+        notFound(res);
+        return;
+      }
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
     const blackjackActionMatch = pathname.match(/^\/v1\/casino\/blackjack\/([^/]+)\/(hit|stand|double|split)$/);
     if (req.method === "POST" && blackjackActionMatch) {
       const ctx = await authContext(req, res);
@@ -290,6 +337,52 @@ async function handler(req, res) {
       if (!ctx) return;
       const body = await readJson(req);
       const result = await mobileHigherLower.startGame(ctx, body.bet);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const higherLowerTablesBase = pathname === "/v1/casino/higher-lower/tables";
+    if (higherLowerTablesBase && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCasinoTables.listTables(ctx, "higher_lower");
+      json(res, 200, result.body);
+      return;
+    }
+    if (higherLowerTablesBase && req.method === "POST") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCasinoTables.createTable(ctx, "higher_lower");
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const higherLowerTableMatch = pathname.match(/^\/v1\/casino\/higher-lower\/tables\/([^/]+)(?:\/([^/]+))?$/);
+    if (higherLowerTableMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const tableId = decodeURIComponent(higherLowerTableMatch[1]);
+      const action = higherLowerTableMatch[2] ? decodeURIComponent(higherLowerTableMatch[2]) : null;
+      let result = null;
+      if (req.method === "GET" && !action) result = await mobileCasinoTables.getTable(ctx, "higher_lower", tableId);
+      else if (req.method === "POST" && action === "join") result = await mobileCasinoTables.joinTable(ctx, "higher_lower", tableId);
+      else if (req.method === "POST" && action === "leave") result = await mobileCasinoTables.leaveTable(ctx, "higher_lower", tableId);
+      else if (req.method === "POST" && action === "bet") result = await mobileCasinoTables.setTableBet(ctx, "higher_lower", tableId, (await readJson(req)).amount);
+      else if (req.method === "POST" && action === "start") result = await mobileCasinoTables.startHigherLower(ctx, tableId);
+      else if (req.method === "POST" && action === "guess") result = await mobileCasinoTables.guessHigherLower(ctx, tableId, (await readJson(req)).pick);
+      else if (req.method === "POST" && action === "cashout") result = await mobileCasinoTables.cashoutHigherLower(ctx, tableId);
+      else {
+        notFound(res);
+        return;
+      }
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
@@ -369,6 +462,7 @@ async function startApiServer({ port = process.env.PORT || DEFAULT_PORT } = {}) 
   await mobileHigherLower.ensureSchema();
   await mobileInsideTrack.ensureSchema();
   await mobileBank.ensureSchema();
+  await mobileCasinoTables.ensureSchema();
 
   const server = http.createServer((req, res) => {
     handler(req, res).catch((error) => {

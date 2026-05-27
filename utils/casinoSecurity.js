@@ -32,7 +32,7 @@ const CASINO_SECURITY = Object.freeze({
   windowHours: 24,
 
   // ✅ Match your current economy transaction type names:
-  typePrefixes: ["blackjack_", "roulette_", "bullshit_", "inside_track_"],
+  typePrefixes: ["blackjack_", "roulette_", "bullshit_", "inside_track_", "higherlower_"],
 
   // Placeholders — edit freely
   // Rule: pick the highest tier whose minNetProfit <= netProfit24h
