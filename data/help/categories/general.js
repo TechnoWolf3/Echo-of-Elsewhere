@@ -17,6 +17,15 @@ module.exports = {
         "**Tip:** if commands feel like they are not working, try **/ping** and see if the bot responds.",
     },
     {
+      id: "info",
+      name: "/info",
+      short: "Show general Echo information.",
+      detail:
+        "**/info**\n" +
+        "Shows a basic general information embed for Echo of Elsewhere.\n\n" +
+        "This is designed as an easy-to-edit server info panel. Update **commands/info.js** whenever the copy needs to change.",
+    },
+    {
       id: "inventory",
       name: "/inventory",
       short: "See what you have in your pockets.",

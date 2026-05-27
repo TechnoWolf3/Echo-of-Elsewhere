@@ -338,17 +338,16 @@ async function buildProfileSnapshot(profileIdValue) {
   let walletBalance = 0;
   let bankBalance = 0;
   let serverBankBalance = 0;
+  let accountNumber = null;
   let jobLevel = 1;
   let jobXp = 0;
   let heat = 0;
   let jailedUntil = null;
 
   if (guildId && discordUserId) {
-    await economy.ensureUser(guildId, discordUserId).catch(() => {});
-
     const [balanceRes, serverRes, jobRes, heatRes, jailRes] = await Promise.all([
       db.query(
-        `SELECT balance, bank_balance
+        `SELECT balance, bank_balance, account_number
          FROM user_balances
          WHERE guild_id=$1 AND user_id=$2`,
         [guildId, discordUserId]
@@ -381,6 +380,9 @@ async function buildProfileSnapshot(profileIdValue) {
 
     walletBalance = Number(balanceRes.rows?.[0]?.balance || 0);
     bankBalance = Number(balanceRes.rows?.[0]?.bank_balance || 0);
+    accountNumber = balanceRes.rows?.[0]?.account_number
+      ? String(balanceRes.rows[0].account_number)
+      : null;
     serverBankBalance = Number(serverRes.rows?.[0]?.bank_balance || 0);
     jobLevel = Number(jobRes.rows?.[0]?.level || 1);
     jobXp = Number(jobRes.rows?.[0]?.xp || 0);
@@ -397,6 +399,8 @@ async function buildProfileSnapshot(profileIdValue) {
     walletBalance,
     bankBalance,
     serverBankBalance,
+    accountNumber,
+    account_number: accountNumber,
     jobLevel,
     jobXp,
     heat,
