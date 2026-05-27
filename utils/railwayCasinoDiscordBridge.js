@@ -35,7 +35,8 @@ function money(n) {
 
 function cardLabel(card) {
   if (!card) return "None";
-  return `${card.rank}${card.suit ? ` of ${card.suit}` : ""}`;
+  const suits = { Spades: "♠", Hearts: "♥", Diamonds: "♦", Clubs: "♣" };
+  return `${card.rank}${suits[card.suit] || (card.suit ? ` ${card.suit}` : "")}`;
 }
 
 function playerLine(player, gameType) {
@@ -51,7 +52,7 @@ function playerLine(player, gameType) {
 
 function tableEmbed(table, notice = null) {
   const isHl = table.gameType === "higher_lower";
-  const title = `${gameName(table.gameType)} Table`;
+  const title = isHl ? "🔼🔽 Higher or Lower" : `${gameName(table.gameType)} Table`;
   const lines = [
     `Host: ${table.hostDisplayName || table.hostUserId || "Unknown"}`,
     `Status: ${table.status}`,
@@ -73,13 +74,18 @@ function tableEmbed(table, notice = null) {
   const embed = new EmbedBuilder()
     .setColor(table.status === "resolved" ? 0x6f8f72 : 0x7b61ff)
     .setTitle(title)
-    .setDescription(lines.join("\n"))
-    .addFields({
-      name: "Players",
-      value: (table.players || []).map((p) => playerLine(p, table.gameType)).join("\n").slice(0, 1024) || "No players yet.",
-    })
+    .setDescription(isHl && table.status === "playing"
+      ? higherLowerRoundDescription(table)
+      : lines.join("\n"))
     .setFooter({ text: `Railway table ${table.tableId}` })
     .setTimestamp();
+
+  if (!(isHl && table.status === "playing")) {
+    embed.addFields({
+      name: "Players",
+      value: (table.players || []).map((p) => playerLine(p, table.gameType)).join("\n").slice(0, 1024) || "No players yet.",
+    });
+  }
 
   if (notice) embed.addFields({ name: "Update", value: String(notice).slice(0, 1024) });
   if (table.resultSummary?.length) {
@@ -89,6 +95,39 @@ function tableEmbed(table, notice = null) {
     });
   }
   return embed;
+}
+
+function higherLowerRoundDescription(table) {
+  const previous = table.previousCard || table.lastResult?.fromCard || null;
+  const current = table.currentCard || table.lastResult?.toCard || null;
+  const blocks = (table.players || []).map((player) => {
+    const status = player.alive ? (player.pick ? `Locked: ${player.pick}` : "Choosing") : player.status;
+    return [
+      `<@${player.userId}>`,
+      "------------",
+      `New Card: ${cardLabel(current)}`,
+      `Last Card: ${cardLabel(previous)}`,
+      `Streak: ${player.streak || 0}`,
+      `Status: ${status}`,
+    ].join("\n");
+  });
+
+  const result = table.lastResult?.resolvedPlayers?.length
+    ? [
+      "Last Draw",
+      "------------",
+      `${cardLabel(table.lastResult.fromCard)} -> ${cardLabel(table.lastResult.toCard)}`,
+      ...table.lastResult.resolvedPlayers.map((p) => `${p.displayName}: ${p.pick} - ${p.result}`),
+    ].join("\n")
+    : null;
+
+  return [
+    "The next card has opinions.",
+    "",
+    blocks.join("\n\n") || "_Nobody alive._",
+    result ? "" : null,
+    result,
+  ].filter(Boolean).join("\n").slice(0, 4096);
 }
 
 function actionRows(table) {
@@ -207,20 +246,19 @@ async function dispatch(ctx, gameType, tableId, action) {
 async function handleInteraction(interaction) {
   if (!interaction.isButton?.() || !String(interaction.customId || "").startsWith(`${PREFIX}:`)) return false;
   const [, action, gameType, tableId] = String(interaction.customId).split(":");
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferUpdate();
   try {
     const ctx = await discordCtx(interaction);
     const result = await dispatch(ctx, gameType, tableId, action);
     if (!result.ok) {
-      await interaction.editReply({ content: result.message || "That table action failed." });
+      await interaction.followUp({ content: result.message || "That table action failed.", ephemeral: true }).catch(() => {});
       return true;
     }
     await updateTableMessage(interaction.client, result.body, `${interaction.member?.displayName || interaction.user.username}: ${action}`);
-    await interaction.editReply({ content: "Railway table updated." });
     return true;
   } catch (error) {
     console.error("[railcasino] interaction failed:", error);
-    await interaction.editReply({ content: "Railway could not handle that table action." }).catch(() => {});
+    await interaction.followUp({ content: "Railway could not handle that table action.", ephemeral: true }).catch(() => {});
     return true;
   }
 }
