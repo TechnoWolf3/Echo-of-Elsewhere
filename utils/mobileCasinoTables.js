@@ -3,12 +3,12 @@ const { pool } = require("./db");
 const appLinking = require("./appLinking");
 const contracts = require("./contracts");
 const casinoSecurity = require("./casinoSecurity");
+const gameConfig = require("./gameConfig");
 
-const MIN_BET = 500;
-const MAX_BET = 250000;
-const MAX_PLAYERS = 10;
-const TABLE_TTL_MS = 2 * 60 * 60 * 1000;
-const TURN_MS = 60 * 1000;
+const { minBet: MIN_BET, maxBet: MAX_BET } = gameConfig.getCasinoBetLimits("higherLower");
+const MAX_PLAYERS = gameConfig.CONFIG.casino.higherLower.maxPlayers;
+const TABLE_TTL_MS = gameConfig.CONFIG.casino.higherLower.tableTtlSeconds * 1000;
+const TURN_MS = gameConfig.CONFIG.casino.blackjack.turnTimeoutSeconds * 1000;
 const SUITS = ["Clubs", "Diamonds", "Hearts", "Spades"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 
@@ -76,7 +76,7 @@ function canSplitCards(cards) {
 }
 
 function cashoutValue(bet, streak) {
-  return Math.floor(Number(bet || 0) * Math.min(10, 1 + Number(streak || 0) * 0.5));
+  return gameConfig.higherLowerCashoutValue(bet, streak);
 }
 
 function iso(value) {
@@ -304,6 +304,7 @@ function basePlayer(row) {
 function publicHigherLower(table, players, profile = null) {
   const state = table.state_json || {};
   return {
+    configVersion: gameConfig.CONFIG_VERSION,
     tableId: table.id,
     gameType: "higher_lower",
     status: table.status,
@@ -360,6 +361,7 @@ function publicBlackjack(table, players, profile = null, currentProfileId = null
   const currentPlayer = players.find((p) => p.user_id === state.turnUserId) || null;
   const me = players.find((p) => p.profile_id === currentProfileId) || null;
   return {
+    configVersion: gameConfig.CONFIG_VERSION,
     tableId: table.id,
     gameType: "blackjack",
     status: table.status,
@@ -885,7 +887,7 @@ async function cashoutHigherLower(ctx, tableId) {
       return { ok: false, statusCode: 409, message: "You are not alive at this table." };
     }
     const payout = cashoutValue(player.bet, r.streak);
-    const paid = await payPlayer(client, table, player, payout, "higherlower_table_payout", { streak: r.streak, multiplier: Math.min(10, 1 + Number(r.streak || 0) * 0.5) });
+    const paid = await payPlayer(client, table, player, payout, "higherlower_table_payout", { streak: r.streak, multiplier: gameConfig.higherLowerMultiplier(r.streak) });
     if (!paid.ok && paid.paid <= 0) {
       const refund = await refundStake(client, table, player, "higherlower_table_refund", { reason: "payout_failed" });
       await client.query(
@@ -1000,10 +1002,7 @@ function settleBj(hand, dealerCards) {
 }
 
 function bjPayout(result, bet) {
-  if (result === "push") return bet;
-  if (result === "win") return bet * 2;
-  if (result === "blackjack") return Math.floor(bet * 2.5);
-  return 0;
+  return gameConfig.blackjackPayout(result, bet);
 }
 
 async function resolveBlackjack(ctx, tableId, clientArg = null, tableArg = null) {

@@ -2,10 +2,10 @@ const crypto = require("crypto");
 const { pool } = require("./db");
 const appLinking = require("./appLinking");
 const contracts = require("./contracts");
+const gameConfig = require("./gameConfig");
 
-const MIN_BET = 500;
-const MAX_BET = 250000;
-const GAME_TTL_MS = 15 * 60 * 1000;
+const { minBet: MIN_BET, maxBet: MAX_BET } = gameConfig.getCasinoBetLimits("blackjack");
+const GAME_TTL_MS = gameConfig.CONFIG.casino.blackjack.ttlSeconds * 1000;
 
 const SUITS = ["Clubs", "Diamonds", "Hearts", "Spades"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -209,6 +209,7 @@ async function hydrateResponse(row, message, revealDealer = false) {
   const hands = publicHands(row);
   const activeIndex = activeHandIndex(row, normalizeHands(row));
   return {
+    configVersion: gameConfig.CONFIG_VERSION,
     gameId: row.id,
     status: row.status,
     result: row.status === "resolved" ? row.result : undefined,
@@ -360,10 +361,7 @@ function settleHandResult(hand, dealerCards) {
 }
 
 function payoutFor(result, bet) {
-  if (result === "push") return bet;
-  if (result === "win") return bet * 2;
-  if (result === "blackjack") return Math.floor(bet * 2.5);
-  return 0;
+  return gameConfig.blackjackPayout(result, bet);
 }
 
 async function resolveAllHands(client, row, hands, deck, dealerCards, fallbackMessage = "") {

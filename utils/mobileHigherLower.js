@@ -2,10 +2,10 @@ const crypto = require("crypto");
 const { pool } = require("./db");
 const appLinking = require("./appLinking");
 const contracts = require("./contracts");
+const gameConfig = require("./gameConfig");
 
-const MIN_BET = 500;
-const MAX_BET = 250000;
-const GAME_TTL_MS = 15 * 60 * 1000;
+const { minBet: MIN_BET, maxBet: MAX_BET } = gameConfig.getCasinoBetLimits("higherLower");
+const GAME_TTL_MS = gameConfig.CONFIG.casino.higherLower.ttlSeconds * 1000;
 
 const SUITS = ["Clubs", "Diamonds", "Hearts", "Spades"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
@@ -49,8 +49,7 @@ function rankValue(card) {
 }
 
 function cashoutValue(bet, streak) {
-  const multiplier = Math.min(10, 1 + Number(streak || 0) * 0.5);
-  return Math.floor(Number(bet || 0) * multiplier);
+  return gameConfig.higherLowerCashoutValue(bet, streak);
 }
 
 function allowedActionsFor(row) {
@@ -140,6 +139,7 @@ async function hydrateResponse(row, message) {
   const payout = Number(row.payout || 0);
   const profit = Number(row.profit || 0);
   return {
+    configVersion: gameConfig.CONFIG_VERSION,
     gameId: row.id,
     status,
     result: status === "playing" ? null : row.result,
@@ -386,7 +386,7 @@ async function cashout(ctx, gameId) {
 
     const bet = Number(row.bet || 0);
     const streak = Number(row.streak || 0);
-    const multiplier = Math.min(10, 1 + streak * 0.5);
+    const multiplier = gameConfig.higherLowerMultiplier(streak);
     const payoutWanted = Math.floor(bet * multiplier);
 
     const bank = await client.query(`SELECT bank_balance FROM guilds WHERE guild_id=$1 FOR UPDATE`, [row.guild_id]);

@@ -9,6 +9,8 @@ const mobileInsideTrack = require("../utils/mobileInsideTrack");
 const mobileBank = require("../utils/mobileBank");
 const mobileCasinoTables = require("../utils/mobileCasinoTables");
 const railwayCasinoDiscordBridge = require("../utils/railwayCasinoDiscordBridge");
+const gameConfig = require("../utils/gameConfig");
+const mobileRituals = require("../utils/mobileRituals");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -22,7 +24,7 @@ function json(res, statusCode, body) {
     "Content-Length": Buffer.byteLength(payload),
     "Access-Control-Allow-Origin": process.env.ECHO_API_CORS_ORIGIN || "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Echo-Guild-Id,X-Echo-Discord-User-Id,X-Echo-Display-Name",
   });
   res.end(payload);
 }
@@ -93,6 +95,14 @@ function bearerToken(req) {
   return match?.[1]?.trim() || null;
 }
 
+function internalApiToken() {
+  return String(process.env.ECHO_INTERNAL_API_TOKEN || process.env.ECHO_API_INTERNAL_TOKEN || "").trim();
+}
+
+function headerValue(req, name) {
+  return String(req.headers[String(name).toLowerCase()] || "").trim();
+}
+
 async function authContext(req, res) {
   const token = bearerToken(req);
   if (!token) {
@@ -100,11 +110,31 @@ async function authContext(req, res) {
     return null;
   }
   const ctx = await appLinking.getSessionContext(token);
-  if (!ctx) {
-    json(res, 401, { message: "Invalid or expired session token." });
-    return null;
+  if (ctx) {
+    return { ...ctx, source: "app" };
   }
-  return ctx;
+
+  const internalToken = internalApiToken();
+  if (internalToken && token === internalToken) {
+    const guildId = headerValue(req, "x-echo-guild-id");
+    const discordUserId = headerValue(req, "x-echo-discord-user-id");
+    const displayName = headerValue(req, "x-echo-display-name") || "Echo Player";
+
+    if (!guildId || !discordUserId) {
+      json(res, 400, { message: "Discord API calls require X-Echo-Guild-Id and X-Echo-Discord-User-Id." });
+      return null;
+    }
+
+    const discordCtx = await appLinking.getOrCreateDiscordContext({
+      discordUserId,
+      displayName,
+      guildId,
+    });
+    return { ...discordCtx, source: "discord" };
+  }
+
+  json(res, 401, { message: "Invalid or expired session token." });
+  return null;
 }
 
 async function tableCreateResponse(ctx, tableResult, announceToDiscord) {
@@ -145,6 +175,11 @@ async function handler(req, res) {
   try {
     if (req.method === "GET" && pathname === "/health") {
       json(res, 200, { ok: true });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/v1/game-config") {
+      json(res, 200, gameConfig.getPublicGameConfig());
       return;
     }
 
@@ -271,6 +306,31 @@ async function handler(req, res) {
       const result = await mobileBank.transactions(ctx, url.searchParams.get("limit") || 10);
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/v1/rituals") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileRituals.list(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const ritualClaimMatch = pathname.match(/^\/v1\/rituals\/([^/]+)\/claim$/);
+    if (req.method === "POST" && ritualClaimMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileRituals.claim(ctx, decodeURIComponent(ritualClaimMatch[1]));
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
         return;
       }
       json(res, 200, result.body);

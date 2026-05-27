@@ -4,11 +4,12 @@ const appLinking = require("./appLinking");
 const contracts = require("./contracts");
 const config = require("../data/games/casino/insideTrackConfig");
 const engine = require("./games/insideTrackEngine");
+const gameConfig = require("./gameConfig");
 
-const BETTING_MS = 120 * 1000;
-const RACING_MS = 45 * 1000;
-const RESULTS_MS = 15 * 1000;
-const RACE_TICK_MS = 5 * 1000;
+const BETTING_MS = gameConfig.CONFIG.casino.insideTrack.mobileTimingSeconds.betting * 1000;
+const RACING_MS = gameConfig.CONFIG.casino.insideTrack.mobileTimingSeconds.racing * 1000;
+const RESULTS_MS = gameConfig.CONFIG.casino.insideTrack.mobileTimingSeconds.results * 1000;
+const RACE_TICK_MS = gameConfig.CONFIG.casino.insideTrack.mobileTimingSeconds.tick * 1000;
 
 function requirePool() {
   if (!pool || typeof pool.query !== "function") {
@@ -78,6 +79,7 @@ function publicRace(row, { ticket = null, profile = null } = {}) {
   }));
 
   const body = {
+    configVersion: gameConfig.CONFIG_VERSION,
     raceId: row.id,
     raceNumber: Number(row.race_number || 0),
     phase: row.phase,
@@ -634,6 +636,7 @@ async function placeBet(ctx, body) {
   return {
     ok: true,
     body: {
+      configVersion: gameConfig.CONFIG_VERSION,
       status: "accepted",
       ticket: publicTicket(ticket),
       profile: await appLinking.buildProfileSnapshot(ctx.profileId),

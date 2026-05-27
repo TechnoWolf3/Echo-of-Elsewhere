@@ -13,6 +13,7 @@ const ui = require("../utils/ui");
 const ritualsRegistry = require("../data/rituals");
 const { getPrimaryRituals, getOtherRituals, getRitual } = ritualsRegistry;
 const { getRitualStatus, claimRitual, buildStatusLine } = require("../utils/rituals");
+const railwayApi = require("../utils/railwayApiClient");
 
 const BTN_PREFIX = "rituals:claim:";
 const SELECT_ID = "rituals:other";
@@ -202,13 +203,24 @@ module.exports = {
 
       await interaction.deferUpdate().catch(() => {});
 
-      const result = await claimRitual({
-        guildId: interaction.guildId,
-        userId: interaction.user.id,
-        ritual,
-      });
+      let latestMessage = null;
+      if (railwayApi.canUseRailwayApi()) {
+        try {
+          const result = await railwayApi.claimRitual(interaction, ritual.id);
+          latestMessage = result.message || "Ritual claimed through the Railway ledger.";
+        } catch (error) {
+          latestMessage = error.message || "Railway could not settle that ritual.";
+        }
+      } else {
+        const result = await claimRitual({
+          guildId: interaction.guildId,
+          userId: interaction.user.id,
+          ritual,
+        });
+        latestMessage = result.message;
+      }
 
-      const refreshed = await buildHubPayload(interaction.guildId, interaction.user.id, result.message);
+      const refreshed = await buildHubPayload(interaction.guildId, interaction.user.id, latestMessage);
       await interaction.editReply(refreshed).catch(() => {});
       return true;
     } catch (err) {
