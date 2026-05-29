@@ -279,15 +279,15 @@ const CONFIG = Object.freeze({
   },
 
   rituals: {
-    daily: { payout: daily.payout, reset: "sydney_midnight" },
-    weekly: { payout: weekly.payout, reset: "sydney_monday_midnight" },
-    monthly: { payout: monthly.payout, reset: "sydney_month_start" },
+    daily: { payout: daily.payout, reset: "Midnight_Daily" },
+    weekly: { payout: weekly.payout, reset: "Midnight_Mondays" },
+    monthly: { payout: monthly.payout, reset: "Midnight_Monthly" },
     echoWheel: {
       cost: 10000,
-      reset: "sydney_midnight",
+      reset: "Midnight",
       displayOutcomes: [
-        { id: "cash_10000", amount: 10000 },
-        { id: "cash_25000", amount: 25000 },
+        { id: "cash_10000", amount: 30000 },
+        { id: "cash_25000", amount: 50000 },
         { id: "jackpot", amount: 125000 },
         { id: "bank_error", bankAmount: 175000 },
         { id: "server_bank_blessing", amount: 250000 },
