@@ -12,6 +12,7 @@ const railwayCasinoDiscordBridge = require("../utils/railwayCasinoDiscordBridge"
 const gameConfig = require("../utils/gameConfig");
 const mobileRituals = require("../utils/mobileRituals");
 const mobileInteractiveRituals = require("../utils/mobileInteractiveRituals");
+const mobileFarming = require("../utils/mobileFarming");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -305,6 +306,170 @@ async function handler(req, res) {
       const ctx = await authContext(req, res);
       if (!ctx) return;
       const result = await mobileBank.transactions(ctx, url.searchParams.get("limit") || 10);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/enterprises/farming" && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileFarming.overview(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/enterprises/farming/config" && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileFarming.config(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/enterprises/farming/fields" && req.method === "POST") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileFarming.buyField(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const farmingFieldMatch = pathname.match(/^\/v1\/enterprises\/farming\/fields\/([^/]+)\/([^/]+)$/);
+    if (req.method === "POST" && farmingFieldMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const fieldIndex = decodeURIComponent(farmingFieldMatch[1]);
+      const action = decodeURIComponent(farmingFieldMatch[2]);
+      const body = ["plant", "fertilise", "convert-barn"].includes(action) ? await readJson(req) : {};
+      const handlers = {
+        cultivate: () => mobileFarming.cultivateField(ctx, fieldIndex),
+        rest: () => mobileFarming.restField(ctx, fieldIndex),
+        plant: () => mobileFarming.plantField(ctx, fieldIndex, body.cropId),
+        harvest: () => mobileFarming.harvestField(ctx, fieldIndex),
+        fertilise: () => mobileFarming.fertiliseField(ctx, fieldIndex, body.fertiliserId),
+        upgrade: () => mobileFarming.upgradeField(ctx, fieldIndex),
+        "convert-barn": () => mobileFarming.convertBarn(ctx, fieldIndex, body.livestockType),
+      };
+      const run = handlers[action];
+      if (!run) {
+        notFound(res);
+        return;
+      }
+      const result = await run();
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const farmingBarnMatch = pathname.match(/^\/v1\/enterprises\/farming\/barns\/([^/]+)\/([^/]+)$/);
+    if (req.method === "POST" && farmingBarnMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const action = decodeURIComponent(farmingBarnMatch[2]);
+      const body = action === "breed" ? await readJson(req) : {};
+      const allowed = new Set(["collect", "slaughter", "slaughter-elderly", "restock", "upgrade", "demolish", "breed"]);
+      if (!allowed.has(action)) {
+        notFound(res);
+        return;
+      }
+      const result = await mobileFarming.barnAction(ctx, decodeURIComponent(farmingBarnMatch[1]), action, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/enterprises/farming/store" && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileFarming.store(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if ((pathname === "/v1/enterprises/farming/store/fertiliser" || pathname === "/v1/enterprises/farming/store/husbandry") && req.method === "POST") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = pathname.endsWith("/fertiliser")
+        ? await mobileFarming.buyFertiliser(ctx, body.fertiliserId, body.qty)
+        : await mobileFarming.buyHusbandry(ctx, body.itemId, body.qty);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/enterprises/farming/machines" && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileFarming.machines(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const farmingMachineMatch = pathname.match(/^\/v1\/enterprises\/farming\/machines\/(buy|rent|sell)$/);
+    if (req.method === "POST" && farmingMachineMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileFarming.machineAction(ctx, decodeURIComponent(farmingMachineMatch[1]), body.machineId);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/enterprises/farming/market" && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileFarming.marketView(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/enterprises/farming/market/sell" && req.method === "POST") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileFarming.sellMarketItem(ctx, body.itemId);
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
         return;

@@ -80,6 +80,25 @@ async function sellCrop(guildId, userId, itemId) {
 
   await pool.query(
     `
+    INSERT INTO transactions (guild_id, user_id, amount, type, meta)
+    VALUES ($1, $2, $3, 'farming_market_sale', $4)
+    `,
+    [
+      guildId,
+      userId,
+      item.totalValue,
+      {
+        enterprise: "farming",
+        itemId,
+        itemName: item.name,
+        qty: item.qty,
+        unitPrice: item.unitPrice,
+      },
+    ]
+  );
+
+  await pool.query(
+    `
     DELETE FROM user_inventory
     WHERE guild_id = $1
       AND user_id = $2
