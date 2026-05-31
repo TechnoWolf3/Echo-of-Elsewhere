@@ -231,8 +231,36 @@ async function startFieldTask(ctx, fieldIndex, taskKey, extra = {}, message = "F
     return bad(result.reasonText || "That field task could not be started.");
   }
 
+  const persistedFarm = await farming.ensureFarm(guildId, userId);
+  const persistedTask = persistedFarm.fields?.[index]?.task || null;
+  if (!persistedTask || persistedTask.key !== taskKey) {
+    await machineEngine.releaseMachinesForTask(guildId, userId, index, taskKey);
+    return bad("Field task did not persist. No farming action was started.", 500);
+  }
+
+  const persistedMachines = await machineEngine.ensureMachineState(guildId, userId);
+  const persistedReservation = (persistedMachines.activeTasks || []).find((task) => {
+    return Number(task.fieldIndex) === Number(index)
+      && task.taskKey === taskKey
+      && Array.isArray(task.machineIds)
+      && task.machineIds.length > 0;
+  });
+  if (!persistedReservation) {
+    await farming.clearFieldTask(guildId, userId, persistedFarm, index).catch(() => {});
+    return bad("Machine reservation did not persist. No farming action was started.", 500);
+  }
+
   const endsAt = result.task?.endsAt ? new Date(Number(result.task.endsAt)).toISOString() : null;
-  return loadNormalizedState(ctx, endsAt ? `${message} Ready at ${endsAt}.` : message);
+  const snapshot = await loadNormalizedState(ctx, endsAt ? `${message} Ready at ${endsAt}.` : message);
+  if (snapshot.ok) {
+    snapshot.body.startedTask = {
+      fieldIndex: index,
+      fieldNumber: index + 1,
+      task: persistedTask,
+      machineIds: persistedReservation.machineIds,
+    };
+  }
+  return snapshot;
 }
 
 async function overview(ctx) {
