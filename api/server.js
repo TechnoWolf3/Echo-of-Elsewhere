@@ -26,8 +26,9 @@ function json(res, statusCode, body) {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(payload),
     "Access-Control-Allow-Origin": process.env.ECHO_API_CORS_ORIGIN || "*",
-    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type,Authorization,X-Echo-Guild-Id,X-Echo-Discord-User-Id,X-Echo-Display-Name",
+    "Access-Control-Allow-Methods": "GET,POST,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization,Content-Type,Accept,X-Echo-Dev-Password,X-Echo-Guild-Id,X-Echo-Discord-User-Id,X-Echo-Display-Name",
+    "Access-Control-Max-Age": "86400",
   });
   res.end(payload);
 }
@@ -194,6 +195,20 @@ async function handler(req, res) {
       const ctx = await authContext(req, res);
       if (!ctx) return;
       const result = await mobileAdminPanel.list(ctx, devPassword(req), discordClient);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/adminpanel") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const password = String(body.devPassword || body.password || "").trim() || devPassword(req);
+      const result = await mobileAdminPanel.list(ctx, password, discordClient);
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
