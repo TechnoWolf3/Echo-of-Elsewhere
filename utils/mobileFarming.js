@@ -139,6 +139,81 @@ function formatSeason(summary) {
   };
 }
 
+const RESTORABLE_MACHINE_TASKS = new Set(["cultivate", "harvest"]);
+
+async function repairFarmMachineTaskState(guildId, userId, farm, machines) {
+  if (!farm || !machines) return { repaired: false, repairs: [] };
+  if (!Array.isArray(farm.fields)) farm.fields = [];
+  if (!Array.isArray(machines.activeTasks)) machines.activeTasks = [];
+
+  const now = Date.now();
+  let farmChanged = false;
+  let machinesChanged = false;
+  const repairs = [];
+  const keptTasks = [];
+
+  for (const machineTask of machines.activeTasks) {
+    const index = fieldIndexValue(machineTask?.fieldIndex);
+    const taskKey = String(machineTask?.taskKey || machineTask?.key || "").trim();
+    const endsAt = Number(machineTask?.endsAt || 0);
+    const startedAt = Number(machineTask?.startedAt || 0) || now;
+    const field = index === null ? null : farm.fields[index];
+
+    if (!taskKey || index === null || !field) {
+      machinesChanged = true;
+      repairs.push({ type: "released_invalid_machine_task", fieldIndex: index, taskKey: taskKey || null });
+      continue;
+    }
+
+    if (!endsAt || endsAt <= now) {
+      machinesChanged = true;
+      repairs.push({ type: "released_expired_machine_task", fieldIndex: index, taskKey });
+      continue;
+    }
+
+    const fieldTask = field.task || null;
+    if (fieldTask?.key) {
+      if (fieldTask.key === taskKey) {
+        keptTasks.push(machineTask);
+      } else {
+        machinesChanged = true;
+        repairs.push({
+          type: "released_mismatched_machine_task",
+          fieldIndex: index,
+          taskKey,
+          fieldTaskKey: fieldTask.key,
+        });
+      }
+      continue;
+    }
+
+    if (!RESTORABLE_MACHINE_TASKS.has(taskKey)) {
+      machinesChanged = true;
+      repairs.push({ type: "released_unrestorable_machine_task", fieldIndex: index, taskKey });
+      continue;
+    }
+
+    field.task = {
+      key: taskKey,
+      startedAt,
+      endsAt,
+    };
+    farmChanged = true;
+    keptTasks.push(machineTask);
+    repairs.push({ type: "restored_field_task_from_machine", fieldIndex: index, taskKey });
+  }
+
+  if (machinesChanged) {
+    machines.activeTasks = keptTasks;
+    await machineEngine.saveMachineState(guildId, userId, machines);
+  }
+  if (farmChanged) {
+    await farming.saveFarm(guildId, userId, farm);
+  }
+
+  return { repaired: farmChanged || machinesChanged, repairs };
+}
+
 async function loadNormalizedState(ctx, message = "Farm state loaded.") {
   const auth = requireDiscordContext(ctx);
   if (!auth.ok) return auth;
@@ -148,9 +223,7 @@ async function loadNormalizedState(ctx, message = "Farm state loaded.") {
   const weatherState = await farmWeather.ensureDailyWeatherState(guildId);
   const farm = await farming.ensureFarm(guildId, userId);
   const machines = await machineEngine.ensureMachineState(guildId, userId);
-  if (machineEngine.reconcileActiveTasksWithFarm(machines, farm)) {
-    await machineEngine.saveMachineState(guildId, userId, machines);
-  }
+  await repairFarmMachineTaskState(guildId, userId, farm, machines);
 
   const sellableInventory = await market.getSellableFarmItems(guildId, userId);
   const profile = await appLinking.buildProfileSnapshot(ctx.profileId);
@@ -184,6 +257,8 @@ async function withFarm(ctx) {
   await economy.ensureUser(auth.guildId, auth.userId);
   await farmWeather.ensureDailyWeatherState(auth.guildId);
   const farm = await farming.ensureFarm(auth.guildId, auth.userId);
+  const machines = await machineEngine.ensureMachineState(auth.guildId, auth.userId);
+  await repairFarmMachineTaskState(auth.guildId, auth.userId, farm, machines);
   return { ok: true, ...auth, farm };
 }
 
