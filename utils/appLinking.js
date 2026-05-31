@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { pool } = require("./db");
 const economy = require("./economy");
+const profileIllusions = require("./profileIllusions");
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_DAYS = 90;
@@ -405,6 +406,7 @@ async function buildProfileSnapshot(profileIdValue) {
     jobXp,
     heat,
     jailedUntil,
+    illusion: await profileIllusions.getActiveIllusion(profile.id),
   };
 }
 

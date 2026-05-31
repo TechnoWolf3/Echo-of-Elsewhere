@@ -13,6 +13,7 @@ const gameConfig = require("../utils/gameConfig");
 const mobileRituals = require("../utils/mobileRituals");
 const mobileInteractiveRituals = require("../utils/mobileInteractiveRituals");
 const mobileFarming = require("../utils/mobileFarming");
+const mobileAdminPanel = require("../utils/mobileAdminPanel");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -105,6 +106,10 @@ function headerValue(req, name) {
   return String(req.headers[String(name).toLowerCase()] || "").trim();
 }
 
+function devPassword(req) {
+  return headerValue(req, "x-echo-dev-password");
+}
+
 async function authContext(req, res) {
   const token = bearerToken(req);
   if (!token) {
@@ -182,6 +187,51 @@ async function handler(req, res) {
 
     if (req.method === "GET" && pathname === "/v1/game-config") {
       json(res, 200, gameConfig.getPublicGameConfig());
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/v1/adminpanel") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileAdminPanel.list(ctx, devPassword(req), discordClient);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/adminpanel/failed-unlock") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      await readJson(req);
+      const result = await mobileAdminPanel.failedUnlock(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const adminActionMatch = pathname.match(/^\/v1\/adminpanel\/actions\/(.+)$/);
+    if (req.method === "POST" && adminActionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileAdminPanel.run(
+        ctx,
+        devPassword(req),
+        discordClient,
+        decodeURIComponent(adminActionMatch[1]),
+        body.fields || {}
+      );
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
       return;
     }
 
