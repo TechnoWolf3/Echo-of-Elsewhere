@@ -141,6 +141,17 @@ function formatSeason(summary) {
 
 const RESTORABLE_MACHINE_TASKS = new Set(["cultivate", "harvest"]);
 
+function canRestoreMachineTaskToField(field, taskKey) {
+  if (!field) return false;
+  if (taskKey === "cultivate") {
+    return !field.cropId && field.state !== "growing" && field.state !== "ready";
+  }
+  if (taskKey === "harvest") {
+    return Boolean(field.cropId && field.state === "ready");
+  }
+  return false;
+}
+
 async function repairFarmMachineTaskState(guildId, userId, farm, machines) {
   if (!farm || !machines) return { repaired: false, repairs: [] };
   if (!Array.isArray(farm.fields)) farm.fields = [];
@@ -190,6 +201,12 @@ async function repairFarmMachineTaskState(guildId, userId, farm, machines) {
     if (!RESTORABLE_MACHINE_TASKS.has(taskKey)) {
       machinesChanged = true;
       repairs.push({ type: "released_unrestorable_machine_task", fieldIndex: index, taskKey });
+      continue;
+    }
+
+    if (!canRestoreMachineTaskToField(field, taskKey)) {
+      machinesChanged = true;
+      repairs.push({ type: "released_invalid_field_state_machine_task", fieldIndex: index, taskKey });
       continue;
     }
 
