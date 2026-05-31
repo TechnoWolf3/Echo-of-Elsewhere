@@ -41,10 +41,32 @@ function money(value) {
   return `$${Math.max(0, Number(value || 0)).toLocaleString()}`;
 }
 
+function machineMetadata(machine) {
+  const speedMultiplier = Number(machine?.taskSpeedMult || 1);
+  return {
+    id: machine.id,
+    name: machine.name,
+    category: machine.type || "other",
+    tier: Number(machine.tier || 1),
+    horsepower: machine.horsepower ?? null,
+    requiredHorsepower: machine.minHorsepower ?? null,
+    buyPrice: Number(machine.buyPrice || 0),
+    rentPrice: Number(machine.rentPrice || 0),
+    sellPrice: machineEngine.getSellValue(machine),
+    speedBonus: Math.max(0, Math.round((1 - speedMultiplier) * 100)),
+    speedMultiplier,
+    tasks: Array.isArray(machine.requiredFor) ? machine.requiredFor : [],
+  };
+}
+
+function machineList() {
+  return Object.values(machineCatalog).map(machineMetadata);
+}
+
 function groupMachinesByType() {
   const grouped = {};
-  for (const machine of Object.values(machineCatalog)) {
-    const type = machine.type || "other";
+  for (const machine of machineList()) {
+    const type = machine.category || "other";
     if (!grouped[type]) grouped[type] = [];
     grouped[type].push(machine);
   }
@@ -188,7 +210,7 @@ async function config(ctx) {
       livestock,
       husbandryItems: animalHusbandry,
       machineCategories: groupMachinesByType(),
-      machines: Object.values(machineCatalog),
+      machines: machineList(),
       marketPrices,
       season: seasonControl.getSeasonStateSummary(auth.guildId),
     },
@@ -403,6 +425,7 @@ async function machines(ctx) {
     body: {
       ...result.body,
       machineCatalog: Object.values(machineCatalog),
+      machines: machineList(),
       machineCategories: groupMachinesByType(),
     },
   };
