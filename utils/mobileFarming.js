@@ -73,6 +73,44 @@ function groupMachinesByType() {
   return grouped;
 }
 
+function weatherDayKey(state) {
+  const numericDay = Number(state?.dayKey);
+  if (Number.isFinite(numericDay) && numericDay > 0) {
+    return new Date(numericDay * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+  return state?.dayKey ? String(state.dayKey) : null;
+}
+
+function formatWeather(state, now = Date.now()) {
+  const channel = farmWeather.buildWeatherChannel(state, now);
+  const activeNow = farmWeather.isEventActive(state, now);
+  return {
+    dayKey: weatherDayKey(state),
+    rawDayKey: state?.dayKey || null,
+    season: state?.season || null,
+    baseWeather: state?.baseWeather || "clear",
+    headline: channel.headline || "Clear skies",
+    forecast: channel.forecast || "Stable conditions across the farms.",
+    impact: channel.impact || "No active crop or field modifiers.",
+    activeNow,
+    eventName: channel.eventName || state?.event?.name || null,
+    event: state?.event || null,
+    rolledAt: state?.rolledAt || null,
+    report: channel.report || null,
+  };
+}
+
+function formatSeason(summary) {
+  return {
+    current: summary?.season || null,
+    next: summary?.nextSeason || null,
+    nextSeasonAt: summary?.nextWeekStartUtcMs || null,
+    weekStartAt: summary?.weekStartUtcMs || null,
+    manualOffsetWeeks: Number(summary?.manualOffsetWeeks || 0),
+    lastAdvancedAt: summary?.lastAdvancedAt || null,
+  };
+}
+
 async function loadNormalizedState(ctx, message = "Farm state loaded.") {
   const auth = requireDiscordContext(ctx);
   if (!auth.ok) return auth;
@@ -91,17 +129,19 @@ async function loadNormalizedState(ctx, message = "Farm state loaded.") {
   const nextFieldCost = Array.isArray(farm.fields) && farm.fields.length < farmConfig.MAX_FIELDS
     ? farming.getNextFieldCost(farm.fields.length)
     : null;
+  const seasonSummary = seasonControl.getSeasonStateSummary(guildId);
 
   return {
     ok: true,
     body: {
       farm,
       machines,
-      weather: {
-        state: weatherState,
+      weather: formatWeather(weatherState),
+      farmWeather: {
+        data: weatherState,
         channel: farmWeather.buildWeatherChannel(weatherState),
       },
-      season: seasonControl.getSeasonStateSummary(guildId),
+      season: formatSeason(seasonSummary),
       sellableInventory,
       nextFieldCost,
       profile,
