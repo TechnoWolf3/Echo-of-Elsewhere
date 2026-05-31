@@ -63,6 +63,34 @@ function machineList() {
   return Object.values(machineCatalog).map(machineMetadata);
 }
 
+function normalizeSeasons(crop) {
+  const raw = crop?.seasons || crop?.validSeasons || crop?.plantingSeasons || crop?.allowedSeasons || [];
+  return Array.isArray(raw)
+    ? raw.map((season) => String(season || "").toLowerCase()).filter(Boolean)
+    : [];
+}
+
+function cropList() {
+  return Object.values(crops).map((crop) => {
+    const seasons = normalizeSeasons(crop);
+    return {
+      id: crop.id,
+      name: crop.name,
+      level: Number(crop.level || 1),
+      growthHours: Number(crop.growthHours || 0),
+      regrowHours: crop.regrowHours == null ? null : Number(crop.regrowHours),
+      yield: Array.isArray(crop.yield) ? crop.yield.map((value) => Number(value || 0)) : [0, 0],
+      seasons,
+      validSeasons: seasons,
+      plantingSeasons: seasons,
+      allowedSeasons: seasons,
+      regrow: Boolean(crop.regrow),
+      debrisChance: Number(crop.debrisChance ?? 0),
+      family: farming.getCropFamily(crop.id),
+    };
+  });
+}
+
 function groupMachinesByType() {
   const grouped = {};
   for (const machine of machineList()) {
@@ -244,7 +272,7 @@ async function config(ctx) {
         upgradeDurationMs: farmConfig.BARN_UPGRADE_DURATION_MS,
         capacityLevelMultipliers: farmConfig.BARN_CAPACITY_LEVEL_MULTIPLIERS,
       },
-      crops,
+      crops: cropList(),
       seasons: farmConfig.SEASONS,
       fertilisers,
       livestock,
