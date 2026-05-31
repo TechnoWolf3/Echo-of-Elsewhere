@@ -1,5 +1,6 @@
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const { getEconomySnapshot } = require("../utils/economy");
+const { getDisplayEconomySnapshot } = require("../utils/displayProfile");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -10,7 +11,8 @@ module.exports = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     if (!interaction.inGuild()) return interaction.editReply("❌ Server only.");
 
-    const snap = await getEconomySnapshot(interaction.guildId, interaction.user.id);
+    const realSnap = await getEconomySnapshot(interaction.guildId, interaction.user.id);
+    const snap = await getDisplayEconomySnapshot(interaction.guildId, interaction.user.id, realSnap);
     return interaction.editReply(
       `💵 Wallet: **$${snap.wallet.toLocaleString()}**
 ` +

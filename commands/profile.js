@@ -9,6 +9,7 @@ const {
 const { pool } = require('../utils/db');
 const economy = require('../utils/economy');
 const effectSystem = require('../utils/effectSystem');
+const { getDisplayProfileForUser } = require('../utils/displayProfile');
 
 function n0(v) {
   const x = Number(v);
@@ -138,6 +139,21 @@ module.exports = {
     } catch (_) {}
 
     const profit = n0(earned) - n0(spent) - n0(feesPaid);
+    const displayProfile = await getDisplayProfileForUser(guildId, user.id, {
+      walletBalance: snapshot.wallet,
+      bankBalance: snapshot.bank,
+      accountNumber: snapshot.accountNumber,
+      jobLevel,
+      jobXp: jobXP,
+    });
+    const displaySnapshot = {
+      wallet: displayProfile.walletBalance ?? snapshot.wallet,
+      bank: displayProfile.bankBalance ?? snapshot.bank,
+      total: n0(displayProfile.walletBalance ?? snapshot.wallet) + n0(displayProfile.bankBalance ?? snapshot.bank),
+      accountNumber: displayProfile.accountNumber ?? snapshot.accountNumber,
+    };
+    const displayJobLevel = displayProfile.jobLevel ?? jobLevel;
+    const displayJobXP = displayProfile.jobXp ?? jobXP;
 
     // --- Embed builders (hub + tabs) ---
     const buildOverview = () => {
@@ -146,15 +162,15 @@ module.exports = {
         .setThumbnail(avatarUrl)
         .setDescription(echoLine({ profit, totalJobs, rouletteWins, messages }))
         .addFields(
-          { name: 'Wallet', value: money(snapshot.wallet), inline: true },
-          { name: 'Bank', value: money(snapshot.bank), inline: true },
-          { name: 'Wealth', value: money(snapshot.total), inline: true },
+          { name: 'Wallet', value: money(displaySnapshot.wallet), inline: true },
+          { name: 'Bank', value: money(displaySnapshot.bank), inline: true },
+          { name: 'Wealth', value: money(displaySnapshot.total), inline: true },
           { name: 'Lifetime Profit', value: moneySigned(profit), inline: true },
           { name: 'Achievements', value: fmtInt(achievementCount), inline: true },
           { name: 'Active Effect', value: effectSystem.formatActiveEffectLine(activeEffect), inline: false },
           {
             name: 'Jobs',
-            value: `Completed: **${fmtInt(totalJobs)}**\nLevel: **${fmtInt(jobLevel)}** (XP: ${fmtInt(jobXP)})`,
+            value: `Completed: **${fmtInt(totalJobs)}**\nLevel: **${fmtInt(displayJobLevel)}** (XP: ${fmtInt(displayJobXP)})`,
             inline: true,
           },
           { name: 'Casino (Quick)', value: `Roulette wins: **${fmtInt(rouletteWins)}**`, inline: true },
@@ -172,9 +188,9 @@ module.exports = {
         .setAuthor({ name: `${user.username} • Economy`, iconURL: avatarUrl })
         .setThumbnail(avatarUrl)
         .addFields(
-          { name: 'Wallet', value: money(snapshot.wallet), inline: true },
-          { name: 'Bank', value: money(snapshot.bank), inline: true },
-          { name: 'Wealth', value: money(snapshot.total), inline: true },
+          { name: 'Wallet', value: money(displaySnapshot.wallet), inline: true },
+          { name: 'Bank', value: money(displaySnapshot.bank), inline: true },
+          { name: 'Wealth', value: money(displaySnapshot.total), inline: true },
           { name: 'Lifetime Profit', value: moneySigned(profit), inline: true },
           { name: 'Fees Paid', value: money(feesPaid), inline: true },
           { name: 'Totals', value: `Earned: **${money(earned)}**\nSpent: **${money(spent)}**`, inline: false }
@@ -190,7 +206,7 @@ module.exports = {
         .addFields(
           { name: 'Roulette Wins', value: fmtInt(rouletteWins), inline: true },
           { name: 'Lifetime Profit', value: moneySigned(profit), inline: true },
-          { name: 'Wallet', value: money(snapshot.wallet), inline: true }
+          { name: 'Wallet', value: money(displaySnapshot.wallet), inline: true }
         )
         .setFooter({ text: 'Casino • This tab will expand as more game stats are tracked' });
     };
@@ -201,8 +217,8 @@ module.exports = {
         .setThumbnail(avatarUrl)
         .addFields(
           { name: 'Completed Jobs', value: fmtInt(totalJobs), inline: true },
-          { name: 'Level', value: fmtInt(jobLevel), inline: true },
-          { name: 'XP', value: fmtInt(jobXP), inline: true }
+          { name: 'Level', value: fmtInt(displayJobLevel), inline: true },
+          { name: 'XP', value: fmtInt(displayJobXP), inline: true }
         )
         .setFooter({ text: 'Jobs • More insights can be layered in (best payout, favourite category, etc.)' });
     };

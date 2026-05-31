@@ -1,5 +1,6 @@
 // commands/pay.js
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
+const { getDisplayProfileForUser } = require("../utils/displayProfile");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -159,12 +160,16 @@ module.exports = {
 
       const fromBal = Number(debitRes.rows?.[0]?.balance ?? 0);
       const toBal = Number(creditRes.rows?.[0]?.balance ?? 0);
+      const fromDisplay = await getDisplayProfileForUser(guildId, fromId, { walletBalance: fromBal }).catch(() => ({ walletBalance: fromBal }));
+      const toDisplay = await getDisplayProfileForUser(guildId, toId, { walletBalance: toBal }).catch(() => ({ walletBalance: toBal }));
+      const fromShown = Number(fromDisplay.walletBalance ?? fromBal);
+      const toShown = Number(toDisplay.walletBalance ?? toBal);
 
       return interaction
         .editReply(
           `✅ Paid **$${amount.toLocaleString()}** to **${target.username}**.\n` +
-            `Your balance: **$${fromBal.toLocaleString()}**\n` +
-            `${target.username}'s balance: **$${toBal.toLocaleString()}**`
+            `Your balance: **$${fromShown.toLocaleString()}**\n` +
+            `${target.username}'s balance: **$${toShown.toLocaleString()}**`
         )
         .catch(() => {});
     } catch (e) {

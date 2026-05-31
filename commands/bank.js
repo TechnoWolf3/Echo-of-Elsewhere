@@ -13,6 +13,7 @@ const economy = require("../utils/economy");
 const bankLoans = require("../utils/bankLoans");
 const recurringDeposits = require("../utils/bankRecurringDeposits");
 const { guardNotJailed } = require("../utils/jail");
+const { getDisplayEconomySnapshot } = require("../utils/displayProfile");
 
 const BRAND_NAME = "The Echo Reserve";
 const BRAND_COLOR = 0x0875AF;
@@ -141,7 +142,8 @@ function txLine(tx) {
 
 async function buildLoansHome(user, guildId) {
   await bankLoans.sweepRecoverableBalances(guildId, user.id).catch(() => {});
-  const snapshot = await economy.getEconomySnapshot(guildId, user.id);
+  const realSnapshot = await economy.getEconomySnapshot(guildId, user.id);
+  const snapshot = await getDisplayEconomySnapshot(guildId, user.id, realSnapshot);
   const loan = await bankLoans.getActiveLoan(guildId, user.id);
   const history = await bankLoans.getLoanHistory(guildId, user.id, 3);
 
@@ -185,7 +187,8 @@ async function buildLoansHome(user, guildId) {
 
 async function sendHome(interaction, user) {
   await bankLoans.sweepRecoverableBalances(interaction.guildId, user.id).catch(() => {});
-  const snapshot = await economy.getEconomySnapshot(interaction.guildId, user.id);
+  const realSnapshot = await economy.getEconomySnapshot(interaction.guildId, user.id);
+  const snapshot = await getDisplayEconomySnapshot(interaction.guildId, user.id, realSnapshot);
   const loan = await bankLoans.getActiveLoan(interaction.guildId, user.id);
   const recurringDeposit = await recurringDeposits.getRecurringDeposit(interaction.guildId, user.id).catch(() => null);
   const payload = {
@@ -370,7 +373,7 @@ module.exports = {
           }
           await interaction.editReply({
             content: `✅ Loan approved. **${money(result.loan.principal)}** has been deposited into your bank account. You owe **${money(result.loan.total_due)}** by ${formatTs(result.loan.due_at, "F")}.`,
-            embeds: [buildHomeEmbed(interaction.user, result.snapshot, result.loan)],
+            embeds: [buildHomeEmbed(interaction.user, await getDisplayEconomySnapshot(interaction.guildId, interaction.user.id, result.snapshot), result.loan)],
             components: buildHomeComponents(),
           });
           return true;
@@ -432,7 +435,7 @@ module.exports = {
           }
           await interaction.editReply({
             content: `✅ Deposited **${money(amount)}** into your ${BRAND_NAME} account.`,
-            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank }, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id), recurringDeposit)],
+            embeds: [buildHomeEmbed(interaction.user, await getDisplayEconomySnapshot(interaction.guildId, interaction.user.id, { ...moved, total: moved.wallet + moved.bank }), await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id), recurringDeposit)],
             components: buildHomeComponents(),
           });
           return true;
@@ -456,7 +459,7 @@ module.exports = {
           }
           await interaction.editReply({
             content: `✅ Withdrew **${money(amount)}** into your wallet.`,
-            embeds: [buildHomeEmbed(interaction.user, { ...moved, total: moved.wallet + moved.bank }, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
+            embeds: [buildHomeEmbed(interaction.user, await getDisplayEconomySnapshot(interaction.guildId, interaction.user.id, { ...moved, total: moved.wallet + moved.bank }), await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
             components: buildHomeComponents(),
           });
           return true;
@@ -491,7 +494,7 @@ module.exports = {
           const snap = await economy.getEconomySnapshot(interaction.guildId, interaction.user.id);
           await interaction.editReply({
             content: `✅ Sent **${money(amount)}** to account \`${accountNumber}\`.`,
-            embeds: [buildHomeEmbed(interaction.user, snap, await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
+            embeds: [buildHomeEmbed(interaction.user, await getDisplayEconomySnapshot(interaction.guildId, interaction.user.id, snap), await bankLoans.getActiveLoan(interaction.guildId, interaction.user.id))],
             components: buildHomeComponents(),
           });
           return true;
@@ -520,7 +523,7 @@ module.exports = {
           }
           await interaction.editReply({
             content: `✅ Paid **${money(result.paid)}** toward your Reserve obligation.${result.loan.status === bankLoans.STATUS.PAID ? " Loan cleared." : ` Remaining due: **${money(result.loan.remaining_due)}**.`}`,
-            embeds: [buildHomeEmbed(interaction.user, result.snapshot, result.loan.status === bankLoans.STATUS.PAID ? null : result.loan)],
+            embeds: [buildHomeEmbed(interaction.user, await getDisplayEconomySnapshot(interaction.guildId, interaction.user.id, result.snapshot), result.loan.status === bankLoans.STATUS.PAID ? null : result.loan)],
             components: buildHomeComponents(),
           });
           return true;

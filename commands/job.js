@@ -17,6 +17,7 @@ const { guardNotJailed, guardNotJailedComponent } = require("../utils/jail"); //
 const { unlockAchievement } = require("../utils/achievementEngine");
 const ui = require("../utils/ui");
 const { recordProgress: recordContractProgress } = require("../utils/contracts");
+const { getDisplayProfileForUser } = require("../utils/displayProfile");
 const bondService = require("../utils/community/bonds");
 const standingService = require("../utils/community/standing");
 const { BOND_CONFIG } = require("../data/community/bondsConfig");
@@ -277,6 +278,19 @@ function buildHubEmbed(user, progress, cooldownUnix) {
     ), "job", false);
 }
 
+async function displayJobProgress(guildId, userId, progress) {
+  const display = await getDisplayProfileForUser(guildId, userId, {
+    jobLevel: progress?.level ?? 1,
+    jobXp: progress?.xp ?? 0,
+  }).catch(() => null);
+  if (!display?.illusion?.active) return progress;
+  return {
+    ...progress,
+    level: display.jobLevel ?? 0,
+    xp: display.jobXp ?? 0,
+  };
+}
+
 function buildHubComponents(disabled = false) {
   const catRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
@@ -434,8 +448,9 @@ module.exports = {
     const prog = await getJobProgress(guildId, userId);
     const cdUnix = await getCooldownUnixIfActive(guildId, userId, "job");
 
+    const displayProg = await displayJobProgress(guildId, userId, prog);
     const msg = await interaction.channel.send({
-      embeds: [buildHubEmbed(interaction.user, prog, cdUnix)],
+      embeds: [buildHubEmbed(interaction.user, displayProg, cdUnix)],
       components: buildHubComponents(false),
     });
 
@@ -705,6 +720,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       const p = await getJobProgress(guildId, userId);
       if (collector.ended || renderVersion !== session.uiVersion) return null;
       session.level = p.level;
+      const displayP = await displayJobProgress(guildId, userId, p);
 
       if (session.legendaryAvailable && Date.now() > session.legendaryExpiresAt) {
         session.legendaryAvailable = false;
@@ -714,7 +730,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "hub") {
         return editBoard({
-            embeds: [buildHubEmbed(interaction.user, p, cd)],
+            embeds: [buildHubEmbed(interaction.user, displayP, cd)],
             components: buildHubComponents(false),
           })
           .catch(() => {});
@@ -723,7 +739,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       if (session.view === "95") {
         const cooldowns = await getNineToFiveCooldowns();
         return editBoard({
-            embeds: [nineToFiveUi.buildNineToFiveEmbed(interaction.user, p, cooldowns)],
+            embeds: [nineToFiveUi.buildNineToFiveEmbed(interaction.user, displayP, cooldowns)],
             components: nineToFiveUi.buildNineToFiveComponents({ disabled: false, legendary: session.legendaryAvailable }),
           })
           .catch(() => {});
@@ -732,7 +748,7 @@ function scheduleReturnToCategory(delayMs = 5000) {
       if (session.view === "nw") {
         const cooldowns = await getNightWalkerCooldowns();
         return editBoard({
-            embeds: [nightWalkerUi.buildNightWalkerEmbed(interaction.user, p, cooldowns)],
+            embeds: [nightWalkerUi.buildNightWalkerEmbed(interaction.user, displayP, cooldowns)],
             components: nightWalkerUi.buildNightWalkerComponents(false),
           })
           .catch(() => {});
@@ -1075,6 +1091,13 @@ function scheduleReturnToCategory(delayMs = 5000) {
 
       if (session.view === "crime") {
         const heatInfo = await getCrimeHeatInfo(guildId, userId);
+        const displayProfile = await getDisplayProfileForUser(guildId, userId, {
+          heat: heatInfo?.heat ?? heatInfo?.value ?? 0,
+        }).catch(() => null);
+        if (displayProfile?.illusion?.active && heatInfo) {
+          heatInfo.heat = displayProfile.heat ?? 0;
+          if ("value" in heatInfo) heatInfo.value = displayProfile.heat ?? 0;
+        }
 
         const cooldowns = {
           crimeGlobal: await getCooldownUnixIfActive(guildId, userId, CRIME_GLOBAL_KEY),

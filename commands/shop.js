@@ -20,6 +20,7 @@ const {
 } = require("../utils/store");
 
 const { guardNotJailed } = require("../utils/jail");
+const { getDisplayProfileForUser } = require("../utils/displayProfile");
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
@@ -336,8 +337,10 @@ module.exports = {
 
         if (!res.ok) {
           if (res.reason === "not_found") return submitted.editReply("❌ That item doesn’t exist (or is not for sale).").catch(() => {});
-          if (res.reason === "insufficient_funds")
-            return submitted.editReply(`❌ Not enough balance. Your balance is **${money(res.balance)}**.`).catch(() => {});
+          if (res.reason === "insufficient_funds") {
+            const displayProfile = await getDisplayProfileForUser(guildId, userId, { bankBalance: res.balance }).catch(() => ({ bankBalance: res.balance }));
+            return submitted.editReply(`❌ Not enough balance. Your balance is **${money(displayProfile.bankBalance ?? res.balance)}**.`).catch(() => {});
+          }
           if (res.reason === "max_owned") return submitted.editReply("❌ You already have the maximum allowed amount.").catch(() => {});
           if (res.reason === "max_purchase_ever") return submitted.editReply("❌ That item is a one-time purchase, already bought.").catch(() => {});
           if (res.reason === "cooldown") return submitted.editReply(`⏳ Try again in **${res.retryAfterSec}s**.`).catch(() => {});

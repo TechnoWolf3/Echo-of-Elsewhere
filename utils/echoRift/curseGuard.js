@@ -4,6 +4,7 @@
 const { MessageFlags } = require("discord.js");
 const { pool } = require("../db");
 const economy = require("../economy");
+const { getDisplayProfileForUser } = require("../displayProfile");
 
 async function getCurse(guildId, userId) {
   const res = await pool.query(
@@ -61,8 +62,9 @@ async function guardGamesCommand(interaction) {
     const pay = await tryPayIfOwed(interaction.guildId, interaction.user.id, curse);
 
     if (!pay.ok) {
+      const displayProfile = await getDisplayProfileForUser(interaction.guildId, interaction.user.id, { walletBalance: pay.balance ?? 0 }).catch(() => ({ walletBalance: pay.balance ?? 0 }));
       const msg = `🩸 **${label(curse.kind)} owed:** **$${curse.value.toLocaleString()}**\n` +
-        `Your balance: **$${(pay.balance ?? 0).toLocaleString()}**\n\n` +
+        `Your balance: **$${Number(displayProfile.walletBalance ?? pay.balance ?? 0).toLocaleString()}**\n\n` +
         `Echo refuses you until the debt is paid.`;
 
       try {

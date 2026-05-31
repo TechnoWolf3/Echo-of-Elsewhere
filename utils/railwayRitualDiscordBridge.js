@@ -11,6 +11,7 @@ const {
 
 const railwayApi = require("./railwayApiClient");
 const ui = require("./ui");
+const { getDisplayProfile } = require("./displayProfile");
 
 const PREFIX = "rr";
 
@@ -54,8 +55,9 @@ function addLatest(embed, message) {
 
 function profileLine(profile) {
   if (!profile) return null;
-  const wallet = profile.walletBalance ?? profile.balance;
-  const bank = profile.bankBalance;
+  const displayProfile = getDisplayProfile(profile);
+  const wallet = displayProfile.walletBalance ?? displayProfile.balance;
+  const bank = displayProfile.bankBalance;
   if (wallet == null && bank == null) return null;
   return `Wallet: **${money(wallet)}**${bank == null ? "" : ` | Bank: **${money(bank)}**`}`;
 }
