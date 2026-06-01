@@ -14,6 +14,7 @@ const mobileRituals = require("../utils/mobileRituals");
 const mobileInteractiveRituals = require("../utils/mobileInteractiveRituals");
 const mobileFarming = require("../utils/mobileFarming");
 const mobileAdminPanel = require("../utils/mobileAdminPanel");
+const mobileCrime = require("../utils/mobileCrime");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -383,6 +384,58 @@ async function handler(req, res) {
       const ctx = await authContext(req, res);
       if (!ctx) return;
       const result = await mobileFarming.overview(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/jobs/crime" && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCrime.overview(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const crimeStartMatch = pathname.match(/^\/v1\/jobs\/crime\/([^/]+)\/start$/);
+    if (req.method === "POST" && crimeStartMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCrime.start(ctx, decodeURIComponent(crimeStartMatch[1]));
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const crimeSessionMatch = pathname.match(/^\/v1\/jobs\/crime\/sessions\/([^/]+)$/);
+    if (req.method === "GET" && crimeSessionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCrime.getSession(ctx, decodeURIComponent(crimeSessionMatch[1]));
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const crimeActionMatch = pathname.match(/^\/v1\/jobs\/crime\/sessions\/([^/]+)\/action$/);
+    if (req.method === "POST" && crimeActionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileCrime.action(ctx, decodeURIComponent(crimeActionMatch[1]), body);
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
