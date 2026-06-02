@@ -39,6 +39,23 @@ const targetOptions = [
   { label: "Bank", value: "bank" },
 ];
 
+const cooldownOptions = [
+  { label: "All Cooldowns", value: "" },
+  { label: "Daily Ritual", value: "daily" },
+  { label: "Weekly Ritual", value: "weekly" },
+  { label: "Monthly Ritual", value: "monthly" },
+  { label: "Echo Wheel", value: "echo_wheel" },
+  { label: "Store Robbery", value: "store_robbery" },
+  { label: "Scam Call", value: "scam_call" },
+  { label: "Heist", value: "heist" },
+  { label: "Store Clerk", value: "store_clerk" },
+  { label: "Transport Contract", value: "transport_contract" },
+  { label: "Skill Check", value: "skill_check" },
+  { label: "Email Sorter", value: "email_sorter" },
+  { label: "Shift", value: "shift" },
+  { label: "Trucker", value: "trucker" },
+];
+
 const ACTIONS = [
   {
     id: "configure:overview",
@@ -165,7 +182,10 @@ const ACTIONS = [
     requiresConfirmation: true,
     fields: [
       field("user_id", "User ID", "text", true),
-      field("key", "Cooldown Key", "text", false),
+      {
+        ...field("key", "Cooldown", "cooldown", false, cooldownOptions),
+        placeholder: "Leave blank for all cooldowns",
+      },
     ],
     run: clearCooldowns,
   },
