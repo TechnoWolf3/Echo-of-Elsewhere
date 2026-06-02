@@ -231,6 +231,32 @@ async function handler(req, res) {
       return;
     }
 
+    if (req.method === "GET" && pathname === "/v1/adminpanel/users") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileAdminPanel.users(ctx, devPassword(req), discordClient);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/adminpanel/users") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const password = String(body.devPassword || body.password || "").trim() || devPassword(req);
+      const result = await mobileAdminPanel.users(ctx, password, discordClient);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
     const adminActionMatch = pathname.match(/^\/v1\/adminpanel\/actions\/(.+)$/);
     if (req.method === "POST" && adminActionMatch) {
       const ctx = await authContext(req, res);

@@ -27,7 +27,6 @@ const ACTIVITY_EFFECTS = {
   },
 };
 
-const GLOBAL_LOCKOUT_KEY = "crime_global";
 const CRIME_KEY = "crime_scam";
 const RESULTS_LINGER_MS = 18_000;
 const GO_BUTTON_ID = "go_for_it";
@@ -123,7 +122,6 @@ async function setCooldownMinutes(guildId, userId, key, minutes) {
 }
 
 async function applyCooldowns(guildId, userId) {
-  await setCooldownMinutes(guildId, userId, GLOBAL_LOCKOUT_KEY, content.settings.globalCooldownMinutes);
   await setCooldownMinutes(guildId, userId, CRIME_KEY, content.settings.scamCooldownMinutes);
 }
 

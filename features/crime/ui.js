@@ -41,27 +41,19 @@ function buildCrimeEmbed({ heatInfo, cooldowns } = {}) {
           `🔥 Heat: ${heat} / 100`,
           `${heatBar(heat)}`,
           `Status: Cooling <t:${heatUnix}:R>`,
-          cooldowns?.crimeGlobal ? `Lockout: <t:${cooldowns.crimeGlobal}:R>` : "Lockout: Clear",
         ].join("\n")
       : [
           "🔥 Heat: 0 / 100",
           `${heatBar(0)}`,
           "Status: Quiet",
-          cooldowns?.crimeGlobal ? `Lockout: <t:${cooldowns.crimeGlobal}:R>` : "Lockout: Clear",
         ].join("\n");
 
-  const effectiveCooldown = (jobCd, globalCd) => {
-    if (!globalCd) return jobCd;
-    if (!jobCd) return globalCd;
-    return Math.max(jobCd, globalCd);
-  };
-
-  const effStore = effectiveCooldown(cooldowns?.store, cooldowns?.crimeGlobal);
-  const effChase = effectiveCooldown(cooldowns?.chase, cooldowns?.crimeGlobal);
-  const effDrugs = effectiveCooldown(cooldowns?.drugs, cooldowns?.crimeGlobal);
-  const effHeist = effectiveCooldown(cooldowns?.heist, cooldowns?.crimeGlobal);
-  const effMajor = effectiveCooldown(cooldowns?.major, cooldowns?.crimeGlobal);
-  const effScam = effectiveCooldown(cooldowns?.scam, cooldowns?.crimeGlobal);
+  const effStore = cooldowns?.store;
+  const effChase = cooldowns?.chase;
+  const effDrugs = cooldowns?.drugs;
+  const effHeist = cooldowns?.heist;
+  const effMajor = cooldowns?.major;
+  const effScam = cooldowns?.scam;
 
   const jobLines = [
     cdLine("Store Robbery", effStore),

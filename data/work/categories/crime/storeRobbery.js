@@ -20,7 +20,6 @@ const MIN_STEPS = 3;
 const MAX_STEPS = 5;
 
 // Cooldowns (minutes)
-const GLOBAL_LOCKOUT_MINUTES = 15;
 const STORE_COOLDOWN_MINUTES = 15;
 
 // Heat tiers => outcomes
@@ -183,7 +182,6 @@ async function setCooldown(guildId, userId, key, minutes) {
 }
 
 async function applyCooldowns(guildId, userId) {
-  await setCooldown(guildId, userId, "crime_global", GLOBAL_LOCKOUT_MINUTES);
   await setCooldown(guildId, userId, "crime_store", STORE_COOLDOWN_MINUTES);
 }
 

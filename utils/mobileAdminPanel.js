@@ -26,6 +26,14 @@ function field(id, label, type = "text", required = false, options = null) {
   return out;
 }
 
+function appField(fieldDef) {
+  if (!fieldDef || typeof fieldDef !== "object") return fieldDef;
+  if ((fieldDef.id === "user_id" || fieldDef.id === "discord_user_id") && fieldDef.type === "text") {
+    return { ...fieldDef, label: "User", type: "user" };
+  }
+  return fieldDef;
+}
+
 const targetOptions = [
   { label: "Wallet", value: "wallet" },
   { label: "Bank", value: "bank" },
@@ -390,8 +398,8 @@ function categoriesBody() {
       description: action.description,
       requiresConfirmation: Boolean(action.requiresConfirmation),
       fields: action.requiresConfirmation
-        ? [...action.fields, field("confirmation", "Type CONFIRM", "text", true)]
-        : action.fields,
+        ? [...action.fields.map(appField), field("confirmation", "Type CONFIRM", "text", true)]
+        : action.fields.map(appField),
     })),
   })).filter((category) => category.actions.length > 0);
 }
@@ -407,6 +415,89 @@ async function list(ctx, password) {
       categories: categoriesBody(),
     },
   };
+}
+
+function discordAvatarUrl(user) {
+  if (!user?.id || !user?.avatar) return null;
+  const extension = String(user.avatar).startsWith("a_") ? "gif" : "png";
+  return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.${extension}?size=128`;
+}
+
+async function resolveDiscordUser(discordClient, userId) {
+  if (!discordClient?.users || !userId) return null;
+  try {
+    return discordClient.users.cache?.get?.(userId) || await discordClient.users.fetch(userId);
+  } catch {
+    return null;
+  }
+}
+
+async function users(ctx, password, discordClient = null) {
+  const access = await assertAdminAccess(ctx, password);
+  if (!access.ok) return access;
+  await profileIllusions.clearAdminUnlockFailures(ctx.profileId);
+
+  const res = await pool.query(
+    `WITH known_users AS (
+       SELECT ub.user_id
+       FROM user_balances ub
+       WHERE ub.guild_id=$1
+       UNION
+       SELECT li.provider_user_id AS user_id
+       FROM linked_identities li
+       JOIN profiles p ON p.id = li.profile_id
+       WHERE li.provider='discord'
+         AND COALESCE(NULLIF(p.primary_guild_id, ''), $1)=$1
+     )
+     SELECT
+       ku.user_id,
+       p.id AS profile_id,
+       COALESCE(li.display_name, p.display_name) AS display_name,
+       ub.account_number
+     FROM known_users ku
+     LEFT JOIN linked_identities li
+       ON li.provider='discord'
+      AND li.provider_user_id=ku.user_id
+     LEFT JOIN profiles p
+       ON p.id=li.profile_id
+     LEFT JOIN user_balances ub
+       ON ub.guild_id=$1
+      AND ub.user_id=ku.user_id
+     ORDER BY LOWER(COALESCE(li.display_name, p.display_name, ku.user_id)) ASC
+     LIMIT 500`,
+    [ctx.guildId]
+  );
+
+  const rows = res.rows || [];
+  const out = [];
+  for (const row of rows) {
+    const discordUserId = String(row.user_id || "");
+    if (!discordUserId) continue;
+    const discordUser = await resolveDiscordUser(discordClient, discordUserId);
+    const displayName = String(row.display_name || discordUser?.globalName || discordUser?.username || discordUserId);
+    const username = discordUser?.username || null;
+    const avatarUrl = discordUser?.displayAvatarURL
+      ? discordUser.displayAvatarURL({ extension: "png", size: 128 })
+      : discordAvatarUrl(discordUser);
+    const accountNumber = row.account_number ? String(row.account_number) : null;
+    const profileId = row.profile_id || null;
+
+    out.push({
+      profileId,
+      profile_id: profileId,
+      discordUserId,
+      discord_user_id: discordUserId,
+      displayName,
+      display_name: displayName,
+      username,
+      avatarUrl,
+      avatar_url: avatarUrl,
+      accountNumber,
+      account_number: accountNumber,
+    });
+  }
+
+  return { ok: true, body: { users: out } };
 }
 
 async function run(ctx, password, _discordClient, actionId, fields = {}) {
@@ -734,6 +825,7 @@ async function ping() {
 
 module.exports = {
   list,
+  users,
   run,
   failedUnlock,
 };

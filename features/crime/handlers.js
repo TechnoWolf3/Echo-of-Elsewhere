@@ -12,7 +12,6 @@ const {
   heatTTLMinutesForOutcome,
 } = require("../../utils/crimeHeat");
 const {
-  CRIME_GLOBAL_KEY,
   CRIME_KEYS,
   heatTTLMinutesForHeistOutcome,
 } = require("./constants");
@@ -103,7 +102,7 @@ async function handleCrimeInteraction({
   }
 
   if (key === "bribe") {
-    if (await checkCrimeCooldownOrTell({ interaction, pool, guildId, userId, jobKey: CRIME_KEYS.bribe, jobLabel: "Bribe The Officer", skipGlobal: true })) return true;
+    if (await checkCrimeCooldownOrTell({ interaction, pool, guildId, userId, jobKey: CRIME_KEYS.bribe, jobLabel: "Bribe The Officer" })) return true;
     const lingeringHeat = await getCrimeHeat(guildId, userId);
     session.view = "crime_run";
     await startBribeOfficer(boardAdapter, { lingeringHeat });
@@ -112,7 +111,7 @@ async function handleCrimeInteraction({
   }
 
   if (key === "laylow") {
-    if (await checkCrimeCooldownOrTell({ interaction, pool, guildId, userId, jobKey: CRIME_KEYS.layLow, jobLabel: "Lay Low", skipGlobal: true })) return true;
+    if (await checkCrimeCooldownOrTell({ interaction, pool, guildId, userId, jobKey: CRIME_KEYS.layLow, jobLabel: "Lay Low" })) return true;
     const lingeringHeat = await getCrimeHeat(guildId, userId);
     session.view = "crime_run";
     await startLayLow(boardAdapter, { lingeringHeat });
@@ -182,20 +181,8 @@ async function checkCrimeCooldownOrTell({
   userId,
   jobKey,
   jobLabel,
-  skipGlobal = false,
 }) {
   const now = new Date();
-
-  const globalNext = skipGlobal ? null : await getCooldown(pool, guildId, userId, CRIME_GLOBAL_KEY);
-  if (!skipGlobal && globalNext && now < globalNext) {
-    await interaction
-      .followUp({
-        content: `⏳ Crime lockout active. Try again <t:${toUnix(globalNext)}:R>.`,
-        flags: MessageFlags.Ephemeral,
-      })
-      .catch(() => {});
-    return true;
-  }
 
   const jobNext = await getCooldown(pool, guildId, userId, jobKey);
   if (jobNext && now < jobNext) {

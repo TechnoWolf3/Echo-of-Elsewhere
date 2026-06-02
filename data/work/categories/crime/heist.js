@@ -18,9 +18,6 @@ const scenarios = require("./heist.scenarios");
 // CONFIG (all tuning lives here)
 // ============================================================
 
-const GLOBAL_LOCKOUT_KEY = "crime_global";
-const GLOBAL_LOCKOUT_MINUTES = 15;
-
 const MODES = {
   heist: {
     label: "🏦 Heist",
@@ -231,12 +228,6 @@ async function setCooldownMinutes(guildId, userId, key, minutes) {
 }
 
 async function applyCooldowns(guildId, userId, modeCfg) {
-  await setCooldownMinutes(
-    guildId,
-    userId,
-    GLOBAL_LOCKOUT_KEY,
-    GLOBAL_LOCKOUT_MINUTES
-  );
   await setCooldownMinutes(
     guildId,
     userId,
@@ -617,7 +608,7 @@ module.exports = function startHeist(interaction, context = {}) {
         .setTitle(`${modeCfg.label} — Results`)
         .setDescription([...resultLines, ...(extraLines.length ? ["", ...extraLines] : [])].join("\n"))
         .addFields({ name: "🔥 Heat (lingering)", value: `**${finalHeat}** / 100`, inline: true })
-        .setFooter({ text: "Cooldowns applied: crime_global + heist cooldown." });
+        .setFooter({ text: "Cooldown applied to this heist type only." });
 
       await interaction.editReply({ embeds: [embed], components: [] }).catch(() => {});
 

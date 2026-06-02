@@ -54,7 +54,7 @@ const { handleUnderworldInteraction } = require("../features/underworld/handlers
 const { renderEnterpriseView } = require("../features/job/enterpriseViews");
 const crimeUi = require("../features/crime/ui");
 const { handleCrimeInteraction } = require("../features/crime/handlers");
-const { CRIME_GLOBAL_KEY, CRIME_KEYS } = require("../features/crime/constants");
+const { CRIME_KEYS } = require("../features/crime/constants");
 const grindUi = require("../features/grind/ui");
 const { handleGrindInteraction, cooldownFor: grindCooldownFor } = require("../features/grind/handlers");
 const nineToFiveUi = require("../features/nineToFive/ui");
@@ -1100,7 +1100,6 @@ function scheduleReturnToCategory(delayMs = 5000) {
         }
 
         const cooldowns = {
-          crimeGlobal: await getCooldownUnixIfActive(guildId, userId, CRIME_GLOBAL_KEY),
           store: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.store),
           chase: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.chase),
           drugs: await getCooldownUnixIfActive(guildId, userId, CRIME_KEYS.drugs),

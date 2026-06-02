@@ -21,7 +21,6 @@ const SESSION_TTL_MS = {
   lay_low: 2 * 60 * 1000,
 };
 
-const CRIME_GLOBAL_KEY = "crime_global";
 const CRIME_KEYS = {
   store_robbery: "crime_store",
   scam_call: "crime_scam",
@@ -213,7 +212,7 @@ async function setCooldown(guildId, userId, key, minutes) {
 }
 
 async function cooldowns(ctx) {
-  const keys = { crimeGlobal: CRIME_GLOBAL_KEY, store: CRIME_KEYS.store_robbery, scam: CRIME_KEYS.scam_call, heist: CRIME_KEYS.heist, major: CRIME_KEYS.major_heist, bribe: CRIME_KEYS.bribe_officer, layLow: CRIME_KEYS.lay_low, chase: CRIME_KEYS.crime_chase, drugs: CRIME_KEYS.crime_drugs };
+  const keys = { store: CRIME_KEYS.store_robbery, scam: CRIME_KEYS.scam_call, heist: CRIME_KEYS.heist, major: CRIME_KEYS.major_heist, bribe: CRIME_KEYS.bribe_officer, layLow: CRIME_KEYS.lay_low, chase: CRIME_KEYS.crime_chase, drugs: CRIME_KEYS.crime_drugs };
   const out = {};
   for (const [name, key] of Object.entries(keys)) {
     out[name] = iso(await getCooldown(ctx.guildId, ctx.userId, key));
@@ -305,7 +304,6 @@ async function overview(ctx) {
   await ensureSchema();
   const [p, h, cds, jailedUntil] = await Promise.all([profile(ctx), heatInfo(ctx), cooldowns(ctx), jailed(ctx)]);
   const now = Date.now();
-  const globalUntil = cds.crimeGlobal ? new Date(cds.crimeGlobal).getTime() : 0;
   const actionCooldown = {
     store_robbery: cds.store,
     scam_call: cds.scam,
@@ -324,9 +322,7 @@ async function overview(ctx) {
       cooldowns: cds,
       actions: ACTIONS.map((action) => {
         const own = actionCooldown[action.id];
-        const ownUntil = own ? new Date(own).getTime() : 0;
-        const usesGlobal = !["bribe_officer", "lay_low"].includes(action.id);
-        const blockedUntil = Math.max(usesGlobal ? globalUntil : 0, ownUntil);
+        const blockedUntil = own ? new Date(own).getTime() : 0;
         const available = action.playable && !jailedUntil && (!blockedUntil || blockedUntil <= now);
         return {
           ...action,
@@ -408,6 +404,8 @@ function renderSession(row) {
     currentHeat: Number(state.heat ?? state.currentHeat ?? 0),
     heat: Number(state.heat ?? state.currentHeat ?? 0),
     state: {
+      currentHeat: Number(state.heat ?? state.currentHeat ?? 0),
+      heat: Number(state.heat ?? state.currentHeat ?? 0),
       persuasion: state.persuasion,
       suspicion: state.suspicion,
       turn: state.turn,
@@ -443,8 +441,6 @@ async function validateStart(ctx, crimeId) {
   const jailUntil = await jailed(ctx);
   if (jailUntil) return { ok: false, statusCode: 403, message: "You cannot start crime jobs while jailed." };
   const cds = await cooldowns(ctx);
-  const usesGlobal = !["bribe_officer", "lay_low"].includes(crimeId);
-  if (usesGlobal && cds.crimeGlobal) return { ok: false, statusCode: 429, message: "Crime lockout active." };
   const ownMap = { store_robbery: cds.store, scam_call: cds.scam, heist: cds.heist, major_heist: cds.major, bribe_officer: cds.bribe, lay_low: cds.layLow };
   if (ownMap[crimeId]) return { ok: false, statusCode: 429, message: "That crime action is on cooldown." };
   const active = await db().query(`SELECT id FROM crime_sessions WHERE guild_id=$1 AND user_id=$2 AND status='active' AND expires_at > NOW() LIMIT 1`, [ctx.guildId, ctx.userId]);
@@ -550,37 +546,49 @@ async function updateSession(row, state, result = null, status = "active") {
 async function action(ctx, sessionId, body = {}) {
   ctx = normalizeCtx(ctx);
   await ensureSchema();
-  const client = await db().connect();
-  try {
-    await client.query("BEGIN");
-    const loaded = await loadSession(ctx, sessionId, true);
-    if (!loaded.ok) {
-      await client.query("ROLLBACK");
-      return loaded;
-    }
-    let row = loaded.row;
-    if (row.status !== "active") {
-      await client.query("COMMIT");
-      return { ok: true, body: { session: renderSession(row), result: row.result_json, profile: await profile(ctx), heatInfo: await heatInfo(ctx), cooldowns: await cooldowns(ctx), message: "Crime session is no longer active." } };
-    }
-    const state = row.state_json || {};
-    let result;
-    if (state.kind === "store") result = await actionStore(ctx, state, body);
-    else if (state.kind === "heist") result = await actionHeist(ctx, row.crime_id, state, body);
-    else if (state.kind === "scam") result = await actionScam(ctx, state, body);
-    else if (state.kind === "bribe") result = await actionBribe(ctx, state, body);
-    else if (state.kind === "lay_low") result = await actionLayLow(ctx, state, body);
-    else result = { state, message: "Unknown crime session." };
+  const loaded = await loadSession(ctx, sessionId);
+  if (!loaded.ok) return loaded;
 
-    row = await updateSession(row, result.state, result.result || null, result.status || "active");
-    await client.query("COMMIT");
-    return { ok: true, body: { session: renderSession(row), result: result.result || null, profile: await profile(ctx), heatInfo: await heatInfo(ctx), cooldowns: await cooldowns(ctx), message: result.message || null } };
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
+  let row = loaded.row;
+  if (row.status !== "active") {
+    return {
+      ok: true,
+      body: {
+        session: renderSession(row),
+        result: row.result_json,
+        message: "Crime session is no longer active.",
+      },
+    };
   }
+
+  const state = row.state_json || {};
+  let result;
+  if (state.kind === "store") result = await actionStore(ctx, state, body);
+  else if (state.kind === "heist") result = await actionHeist(ctx, row.crime_id, state, body);
+  else if (state.kind === "scam") result = await actionScam(ctx, state, body);
+  else if (state.kind === "bribe") result = await actionBribe(ctx, state, body);
+  else if (state.kind === "lay_low") result = await actionLayLow(ctx, state, body);
+  else result = { state, message: "Unknown crime session." };
+
+  row = await updateSession(row, result.state, result.result || null, result.status || "active");
+  const bodyOut = {
+    session: renderSession(row),
+    result: result.result || null,
+    message: result.message || null,
+  };
+
+  if (row.status !== "active" || result.includeProfile) {
+    const [nextProfile, nextHeatInfo, nextCooldowns] = await Promise.all([
+      profile(ctx),
+      heatInfo(ctx),
+      cooldowns(ctx),
+    ]);
+    bodyOut.profile = nextProfile;
+    bodyOut.heatInfo = nextHeatInfo;
+    bodyOut.cooldowns = nextCooldowns;
+  }
+
+  return { ok: true, body: bodyOut };
 }
 
 function applyChoiceFlags(state, choice, mode = "normal") {
@@ -629,7 +637,6 @@ function storeIdentified(flags) {
 }
 
 async function resolveStore(ctx, state) {
-  await setCooldown(ctx.guildId, ctx.userId, CRIME_GLOBAL_KEY, STORE.globalCooldownMinutes);
   await setCooldown(ctx.guildId, ctx.userId, CRIME_KEYS.store_robbery, STORE.cooldownMinutes);
   await consumeTheftKit(ctx, state);
   let outcome = storeOutcome(state.heat);
@@ -691,7 +698,6 @@ function heistIdentified(flags) {
 
 async function resolveHeist(ctx, crimeId, state) {
   const cfg = HEIST[crimeId];
-  await setCooldown(ctx.guildId, ctx.userId, CRIME_GLOBAL_KEY, 15);
   await setCooldown(ctx.guildId, ctx.userId, cfg.crimeKey, cfg.cooldownMinutes);
   await consumeTheftKit(ctx, state);
   let outcome = heistOutcome(state.heat, cfg.heatTiers);
@@ -771,7 +777,6 @@ async function actionScam(ctx, state, body) {
 }
 
 async function resolveScam(ctx, state, reason) {
-  await setCooldown(ctx.guildId, ctx.userId, CRIME_GLOBAL_KEY, Number(scamData.settings.globalCooldownMinutes || 15));
   await setCooldown(ctx.guildId, ctx.userId, CRIME_KEYS.scam_call, Number(scamData.settings.scamCooldownMinutes || 45));
   const target = state.target;
   let outcome = "spotted";
