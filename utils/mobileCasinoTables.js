@@ -11,6 +11,8 @@ const TABLE_TTL_MS = gameConfig.CONFIG.casino.higherLower.tableTtlSeconds * 1000
 const TURN_MS = gameConfig.CONFIG.casino.blackjack.turnTimeoutSeconds * 1000;
 const SUITS = ["Clubs", "Diamonds", "Hearts", "Spades"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+const ROULETTE_WHEEL_ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
+const ROULETTE_REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
 
 function requirePool() {
   if (!pool || typeof pool.query !== "function") throw new Error("DATABASE_URL is not configured.");
@@ -81,6 +83,41 @@ function cashoutValue(bet, streak) {
 
 function iso(value) {
   return value ? new Date(value).toISOString() : null;
+}
+
+function rouletteColor(n) {
+  if (Number(n) === 0) return "green";
+  return ROULETTE_REDS.has(Number(n)) ? "red" : "black";
+}
+
+function rouletteMultiplier(type) {
+  return type === "number" ? Number(gameConfig.CONFIG.casino.roulette.payouts.number || 36) : Number(gameConfig.CONFIG.casino.roulette.payouts.evenMoney || 2);
+}
+
+function validateRouletteBet(betType, betValue) {
+  const type = String(betType || "").toLowerCase();
+  if (!["red", "black", "odd", "even", "low", "high", "number"].includes(type)) {
+    return { ok: false, message: "Invalid Roulette bet type." };
+  }
+  if (type === "number") {
+    const n = Math.floor(Number(betValue));
+    if (!Number.isFinite(n) || n < 0 || n > 36) return { ok: false, message: "Number bet must be 0-36." };
+    return { ok: true, betType: type, betValue: n };
+  }
+  return { ok: true, betType: type, betValue: null };
+}
+
+function rouletteWins(betType, betValue, pocket) {
+  const n = Number(pocket);
+  const color = rouletteColor(n);
+  if (betType === "red") return color === "red";
+  if (betType === "black") return color === "black";
+  if (betType === "odd") return n !== 0 && n % 2 === 1;
+  if (betType === "even") return n !== 0 && n % 2 === 0;
+  if (betType === "low") return n >= 1 && n <= 18;
+  if (betType === "high") return n >= 19 && n <= 36;
+  if (betType === "number") return n === Number(betValue);
+  return false;
 }
 
 async function ensureSchema() {
@@ -301,6 +338,31 @@ function basePlayer(row) {
   };
 }
 
+function roulettePlayer(row) {
+  const r = row.result_json || {};
+  const lastBet = r.lastBet || null;
+  const betType = r.betType || null;
+  const betValue = r.betValue ?? null;
+  return {
+    profileId: row.profile_id,
+    userId: row.user_id,
+    displayName: row.display_name,
+    seatIndex: Number(row.seat_index || 0),
+    status: row.status,
+    bet: row.bet == null ? null : Number(row.bet || 0),
+    betAmount: row.bet == null ? null : Number(row.bet || 0),
+    betType,
+    betValue,
+    feeAmount: Number(row.fee_amount || 0),
+    totalCharge: row.bet == null ? null : Number(row.bet || 0) + Number(row.fee_amount || 0),
+    paid: Boolean(row.paid),
+    lastBet,
+    payout: Number(r.payout || 0),
+    profit: Number(r.profit || 0),
+    result: r.result || null,
+  };
+}
+
 function publicHigherLower(table, players, profile = null) {
   const state = table.state_json || {};
   return {
@@ -400,12 +462,59 @@ function publicBlackjack(table, players, profile = null, currentProfileId = null
   };
 }
 
+function publicRoulette(table, players, profile = null, currentProfileId = null) {
+  const state = table.state_json || {};
+  const me = players.find((p) => p.profile_id === currentProfileId) || null;
+  const readyToSpin = players.length > 0 && players.every((p) => p.paid && p.bet && p.result_json?.betType);
+  const allowedActions = [];
+  if (table.status === "lobby") {
+    if (!me) allowedActions.push("join");
+    if (me) {
+      allowedActions.push("leave", "bet");
+      if (me.result_json?.lastBet) allowedActions.push("last_bet");
+      if (me.paid) allowedActions.push("clear_bet");
+    }
+    if (readyToSpin) allowedActions.push("spin");
+    if (table.host_profile_id === currentProfileId) allowedActions.push("end");
+  }
+  return {
+    configVersion: gameConfig.CONFIG_VERSION,
+    tableId: table.id,
+    gameType: "roulette",
+    status: table.status,
+    source: table.source || "app",
+    discordChannelId: table.discord_channel_id || null,
+    discordMessageId: table.discord_message_id || null,
+    hostUserId: table.host_user_id,
+    hostProfileId: table.host_profile_id,
+    hostDisplayName: players.find((p) => p.profile_id === table.host_profile_id)?.display_name || null,
+    minPlayers: Number(table.min_players || 1),
+    maxPlayers: Number(table.max_players || MAX_PLAYERS),
+    minBet: MIN_BET,
+    maxBet: MAX_BET,
+    wheel: {
+      type: "european",
+      numbers: Array.from({ length: 37 }, (_, i) => i),
+      order: ROULETTE_WHEEL_ORDER,
+      redNumbers: [...ROULETTE_REDS],
+      hasDoubleZero: false,
+    },
+    players: players.map(roulettePlayer),
+    readyToSpin,
+    allowedActions,
+    lastResult: state.lastResult || null,
+    spin: state.spin || null,
+    timestamps: { createdAt: iso(table.created_at), updatedAt: iso(table.updated_at), expiresAt: iso(table.expires_at) },
+    profile,
+  };
+}
+
 async function renderTable(client, table, ctx = null, includeProfile = false) {
   const players = await playersFor(client, table.id);
   const profile = includeProfile && ctx ? await appLinking.buildProfileSnapshot(ctx.profileId) : undefined;
-  return table.game_type === "higher_lower"
-    ? publicHigherLower(table, players, profile)
-    : publicBlackjack(table, players, profile, ctx?.profileId);
+  if (table.game_type === "higher_lower") return publicHigherLower(table, players, profile);
+  if (table.game_type === "roulette") return publicRoulette(table, players, profile, ctx?.profileId);
+  return publicBlackjack(table, players, profile, ctx?.profileId);
 }
 
 async function listTables(ctx, gameType) {
@@ -422,7 +531,9 @@ async function listTables(ctx, gameType) {
   const tables = [];
   for (const table of res.rows || []) {
     const players = await playersFor(db, table.id);
-    tables.push(gameType === "higher_lower" ? publicHigherLower(table, players) : publicBlackjack(table, players, null, ctx?.profileId));
+    if (gameType === "higher_lower") tables.push(publicHigherLower(table, players));
+    else if (gameType === "roulette") tables.push(publicRoulette(table, players, null, ctx?.profileId));
+    else tables.push(publicBlackjack(table, players, null, ctx?.profileId));
   }
   return { ok: true, body: { tables } };
 }
@@ -440,9 +551,9 @@ async function listOpenTables(ctx) {
   const tables = [];
   for (const table of res.rows || []) {
     const players = await playersFor(db, table.id);
-    tables.push(table.game_type === "higher_lower"
-      ? publicHigherLower(table, players)
-      : publicBlackjack(table, players, null, ctx?.profileId));
+    if (table.game_type === "higher_lower") tables.push(publicHigherLower(table, players));
+    else if (table.game_type === "roulette") tables.push(publicRoulette(table, players, null, ctx?.profileId));
+    else tables.push(publicBlackjack(table, players, null, ctx?.profileId));
   }
   return { ok: true, body: { tables } };
 }
@@ -513,10 +624,12 @@ async function createTable(ctx, gameType, options = {}) {
     }
     await client.query(`INSERT INTO guilds (guild_id) VALUES ($1) ON CONFLICT (guild_id) DO NOTHING`, [ctx.guildId]);
     const hostSecurity = await lockHostSecurity(ctx);
-    const tableId = id(gameType === "higher_lower" ? "hlt" : "bjt");
+    const tableId = id(gameType === "higher_lower" ? "hlt" : gameType === "roulette" ? "rou" : "bjt");
     const state = gameType === "higher_lower"
       ? { deck: [], currentCard: null, previousCard: null, lastResult: null }
-      : { deck: [], dealerCards: [], turnOrder: [], turnIndex: 0, turnUserId: null, turnExpiresAt: null, resultSummary: [] };
+      : gameType === "roulette"
+        ? { wheelType: "european", lastResult: null, spin: null }
+        : { deck: [], dealerCards: [], turnOrder: [], turnIndex: 0, turnUserId: null, turnExpiresAt: null, resultSummary: [] };
     const source = options.source === "discord" ? "discord" : "app";
     const minPlayers = Math.max(1, Number(options.minPlayers || 1));
     const inserted = await client.query(
@@ -531,7 +644,7 @@ async function createTable(ctx, gameType, options = {}) {
       `INSERT INTO casino_table_players
        (id, table_id, profile_id, user_id, display_name, seat_index, status, result_json)
        VALUES ($1,$2,$3,$4,$5,0,'joined',$6::jsonb)`,
-      [id("ctp"), tableId, ctx.profileId, ctx.discordUserId, ctx.displayName, gameType === "higher_lower" ? JSON.stringify({ alive: false, streak: 0 }) : JSON.stringify({ hands: [] })]
+      [id("ctp"), tableId, ctx.profileId, ctx.discordUserId, ctx.displayName, gameType === "higher_lower" ? JSON.stringify({ alive: false, streak: 0 }) : gameType === "roulette" ? JSON.stringify({}) : JSON.stringify({ hands: [] })]
     );
     await event(client, tableId, "create", ctx.profileId, { gameType, source });
     await client.query("COMMIT");
@@ -591,7 +704,7 @@ async function joinTable(ctx, gameType, tableId) {
       `INSERT INTO casino_table_players
        (id, table_id, profile_id, user_id, display_name, seat_index, status, result_json)
        VALUES ($1,$2,$3,$4,$5,$6,'joined',$7::jsonb)`,
-      [id("ctp"), table.id, ctx.profileId, ctx.discordUserId, ctx.displayName, players.length, gameType === "higher_lower" ? JSON.stringify({ alive: false, streak: 0 }) : JSON.stringify({ hands: [] })]
+      [id("ctp"), table.id, ctx.profileId, ctx.discordUserId, ctx.displayName, players.length, gameType === "higher_lower" ? JSON.stringify({ alive: false, streak: 0 }) : gameType === "roulette" ? JSON.stringify({}) : JSON.stringify({ hands: [] })]
     );
     await event(client, table.id, "join", ctx.profileId);
     await client.query("COMMIT");
@@ -626,7 +739,8 @@ async function leaveTable(ctx, gameType, tableId) {
       return { ok: false, statusCode: 404, message: "You are not at this table." };
     }
     if (player.paid) {
-      const refund = await refundStake(client, table, player, gameType === "higher_lower" ? "higherlower_table_leave_refund" : "blackjack_table_leave_refund");
+      const refundType = gameType === "higher_lower" ? "higherlower_table_leave_refund" : gameType === "roulette" ? "roulette_leave_refund" : "blackjack_table_leave_refund";
+      const refund = await refundStake(client, table, player, refundType);
       if (!refund.ok) {
         await client.query("ROLLBACK");
         return { ok: false, statusCode: 409, message: "Server bank cannot cover that refund right now." };
@@ -729,6 +843,274 @@ async function clearBlackjackBet(ctx, tableId) {
     }
     await client.query(`UPDATE casino_table_players SET bet=NULL, paid=FALSE, fee_amount=0, status='joined' WHERE id=$1`, [player.id]);
     await event(client, table.id, "clear_bet", ctx.profileId);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { ok: true, body: await renderTable(db, table, ctx, true) };
+}
+
+async function setRouletteBet(ctx, tableId, body = {}) {
+  await ensureSchema();
+  const stake = parseBet(body.amount);
+  if (!stake) return { ok: false, statusCode: 400, message: `Bet must be between ${MIN_BET} and ${MAX_BET}.` };
+  const parsed = validateRouletteBet(body.betType || body.bet_type, body.betValue ?? body.bet_value);
+  if (!parsed.ok) return { ok: false, statusCode: 400, message: parsed.message };
+  const db = requirePool();
+  const client = await db.connect();
+  let table = null;
+  try {
+    await client.query("BEGIN");
+    const valid = await assertCtx(client, ctx);
+    if (!valid.ok) {
+      await client.query("ROLLBACK");
+      return valid;
+    }
+    table = await loadTable(client, tableId, "roulette");
+    if (!table) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 404, message: "Casino table not found." };
+    }
+    if (table.status !== "lobby") {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: "This Roulette table is closed." };
+    }
+    const player = await playerFor(client, table.id, ctx, true);
+    if (!player) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: "Join this table before betting." };
+    }
+    if (player.paid) {
+      const refund = await refundStake(client, table, player, "roulette_rebet_refund", { reason: "change_bet" });
+      if (!refund.ok) {
+        await client.query("ROLLBACK");
+        return { ok: false, statusCode: 409, message: "Server bank cannot cover the old stake refund right now." };
+      }
+    }
+    const charge = await chargeBet(client, ctx, table, stake, {
+      user: "roulette_bet",
+      bank: "roulette_bank_buyin",
+      feeBank: "roulette_fee_bank_buyin",
+    }, { tableId: table.id, betType: parsed.betType, betValue: parsed.betValue });
+    if (!charge.ok) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 402, message: "Not enough wallet funds for that bet plus fee." };
+    }
+    const result = {
+      betType: parsed.betType,
+      betValue: parsed.betValue,
+      lastBet: { betAmount: stake, betType: parsed.betType, betValue: parsed.betValue },
+      payout: 0,
+      profit: 0,
+      result: null,
+    };
+    await client.query(
+      `UPDATE casino_table_players SET bet=$2, fee_amount=$3, paid=TRUE, status='paid', result_json=result_json || $4::jsonb WHERE id=$1`,
+      [player.id, stake, charge.feeAmount, JSON.stringify(result)]
+    );
+    await event(client, table.id, "roulette_bet", ctx.profileId, { stake, feeAmount: charge.feeAmount, betType: parsed.betType, betValue: parsed.betValue });
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { ok: true, body: await renderTable(db, table, ctx, true) };
+}
+
+async function rouletteLastBet(ctx, tableId) {
+  await ensureSchema();
+  const db = requirePool();
+  const table = await loadTable(db, tableId, "roulette", false);
+  if (!table) return { ok: false, statusCode: 404, message: "Casino table not found." };
+  const player = await playerFor(db, table.id, ctx, false);
+  const last = player?.result_json?.lastBet;
+  if (!last) return { ok: false, statusCode: 409, message: "No last Roulette bet is saved for you at this table." };
+  return setRouletteBet(ctx, tableId, { amount: last.betAmount, betType: last.betType, betValue: last.betValue });
+}
+
+async function clearRouletteBet(ctx, tableId) {
+  await ensureSchema();
+  const db = requirePool();
+  const client = await db.connect();
+  let table = null;
+  try {
+    await client.query("BEGIN");
+    table = await loadTable(client, tableId, "roulette");
+    if (!table) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 404, message: "Casino table not found." };
+    }
+    if (table.status !== "lobby") {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: "This Roulette table is closed." };
+    }
+    const player = await playerFor(client, table.id, ctx, true);
+    if (!player?.paid) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: "You do not have a paid bet to clear." };
+    }
+    const refund = await refundStake(client, table, player, "roulette_clearbet_refund");
+    if (!refund.ok) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: "Server bank cannot cover that refund right now." };
+    }
+    const r = player.result_json || {};
+    await client.query(
+      `UPDATE casino_table_players SET bet=NULL, paid=FALSE, fee_amount=0, status='joined', result_json=$2::jsonb WHERE id=$1`,
+      [player.id, JSON.stringify({ ...r, betType: null, betValue: null, payout: 0, profit: 0, result: null })]
+    );
+    await event(client, table.id, "roulette_clear_bet", ctx.profileId);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { ok: true, body: await renderTable(db, table, ctx, true) };
+}
+
+async function spinRoulette(ctx, tableId) {
+  await ensureSchema();
+  const db = requirePool();
+  const client = await db.connect();
+  let table = null;
+  try {
+    await client.query("BEGIN");
+    table = await loadTable(client, tableId, "roulette");
+    if (!table) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 404, message: "Casino table not found." };
+    }
+    if (table.status !== "lobby") {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: "This Roulette table is closed." };
+    }
+    const players = await playersFor(client, table.id, true);
+    if (!players.length || players.some((p) => !p.paid || !p.bet || !p.result_json?.betType)) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 409, message: "Everyone at the table must have a paid bet before spinning." };
+    }
+    const pocket = crypto.randomInt(0, 37);
+    const color = rouletteColor(pocket);
+    const spinId = id("spin");
+    const results = [];
+    for (const p of players) {
+      const r = p.result_json || {};
+      const stake = Number(p.bet || 0);
+      const win = rouletteWins(r.betType, r.betValue, pocket);
+      const multiplier = rouletteMultiplier(r.betType);
+      const payout = win ? Math.floor(stake * multiplier) : 0;
+      let paid = 0;
+      if (payout > 0) {
+        const pay = await payPlayer(client, table, p, payout, "roulette_payout", {
+          spinId,
+          pocket,
+          color,
+          betType: r.betType,
+          betValue: r.betValue,
+        });
+        paid = pay.paid;
+      }
+      const profit = paid - stake;
+      const playerResult = {
+        profileId: p.profile_id,
+        userId: p.user_id,
+        displayName: p.display_name,
+        betAmount: stake,
+        betType: r.betType,
+        betValue: r.betValue ?? null,
+        won: win && paid > 0,
+        multiplier,
+        payout: paid,
+        profit,
+      };
+      results.push(playerResult);
+      await client.query(
+        `UPDATE casino_table_players
+         SET paid=FALSE,
+             status='joined',
+             bet=NULL,
+             fee_amount=0,
+             result_json=$2::jsonb
+         WHERE id=$1`,
+        [p.id, JSON.stringify({ ...r, betType: null, betValue: null, payout: paid, profit, result: playerResult.won ? "win" : "loss" })]
+      );
+      await recordCasinoProgress(table.guild_id, p.user_id, { played: 1, wins: playerResult.won ? 1 : 0, profit: Math.max(0, profit) });
+    }
+    const now = new Date().toISOString();
+    const lastResult = {
+      spinId,
+      pocket,
+      color,
+      colour: color,
+      durationMs: 4200,
+      results,
+      notes: [],
+      settledAt: now,
+    };
+    const spin = {
+      spinId,
+      pocket,
+      color,
+      colour: color,
+      durationMs: 4200,
+      startedAt: now,
+      settledAt: now,
+    };
+    const state = { ...(table.state_json || {}), lastResult, spin };
+    const updated = await client.query(
+      `UPDATE casino_tables SET state_json=$2::jsonb, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [table.id, JSON.stringify(state)]
+    );
+    table = updated.rows[0];
+    await event(client, table.id, "roulette_spin", ctx.profileId, lastResult);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  return { ok: true, body: await renderTable(db, table, ctx, true) };
+}
+
+async function endRoulette(ctx, tableId) {
+  await ensureSchema();
+  const db = requirePool();
+  const client = await db.connect();
+  let table = null;
+  try {
+    await client.query("BEGIN");
+    table = await loadTable(client, tableId, "roulette");
+    if (!table) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 404, message: "Casino table not found." };
+    }
+    if (table.host_profile_id !== ctx.profileId) {
+      await client.query("ROLLBACK");
+      return { ok: false, statusCode: 403, message: "Only the host can end this table." };
+    }
+    const players = await playersFor(client, table.id, true);
+    for (const p of players.filter((row) => row.paid)) {
+      const refund = await refundStake(client, table, p, "roulette_leave_refund", { reason: "table_end" });
+      if (!refund.ok) {
+        await client.query("ROLLBACK");
+        return { ok: false, statusCode: 409, message: "Server bank cannot cover all paid stake refunds right now." };
+      }
+    }
+    const updated = await client.query(
+      `UPDATE casino_tables SET status='closed', resolved_at=NOW(), updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [table.id]
+    );
+    table = updated.rows[0];
+    await client.query(`UPDATE casino_table_players SET paid=FALSE, bet=NULL, fee_amount=0, status='left', left_at=COALESCE(left_at, NOW()) WHERE table_id=$1`, [table.id]);
+    await event(client, table.id, "roulette_end", ctx.profileId);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
@@ -1160,6 +1542,11 @@ module.exports = {
   leaveTable,
   setTableBet,
   clearBlackjackBet,
+  setRouletteBet,
+  rouletteLastBet,
+  clearRouletteBet,
+  spinRoulette,
+  endRoulette,
   startHigherLower,
   guessHigherLower,
   cashoutHigherLower,

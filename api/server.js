@@ -822,6 +822,55 @@ async function handler(req, res) {
       return;
     }
 
+    const rouletteTablesBase = pathname === "/v1/casino/roulette/tables";
+    if (rouletteTablesBase && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileCasinoTables.listTables(ctx, "roulette");
+      json(res, 200, result.body);
+      return;
+    }
+    if (rouletteTablesBase && req.method === "POST") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileCasinoTables.createTable(ctx, "roulette", { source: body.source || "app" });
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, await tableCreateResponse(ctx, result, Boolean(body.announceToDiscord)));
+      return;
+    }
+
+    const rouletteTableMatch = pathname.match(/^\/v1\/casino\/roulette\/tables\/([^/]+)(?:\/([^/]+))?$/);
+    if (rouletteTableMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const tableId = decodeURIComponent(rouletteTableMatch[1]);
+      const action = rouletteTableMatch[2] ? decodeURIComponent(rouletteTableMatch[2]) : null;
+      let result = null;
+      if (req.method === "GET" && !action) result = await mobileCasinoTables.getTable(ctx, "roulette", tableId);
+      else if (req.method === "POST" && action === "join") result = await mobileCasinoTables.joinTable(ctx, "roulette", tableId);
+      else if (req.method === "POST" && action === "leave") result = await mobileCasinoTables.leaveTable(ctx, "roulette", tableId);
+      else if (req.method === "POST" && action === "bet") result = await mobileCasinoTables.setRouletteBet(ctx, tableId, await readJson(req));
+      else if (req.method === "POST" && action === "last-bet") result = await mobileCasinoTables.rouletteLastBet(ctx, tableId);
+      else if (req.method === "POST" && action === "clear-bet") result = await mobileCasinoTables.clearRouletteBet(ctx, tableId);
+      else if (req.method === "POST" && action === "spin") result = await mobileCasinoTables.spinRoulette(ctx, tableId);
+      else if (req.method === "POST" && action === "end") result = await mobileCasinoTables.endRoulette(ctx, tableId);
+      else {
+        notFound(res);
+        return;
+      }
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      if (req.method === "POST") await maybeUpdateDiscordTable(result.body, action);
+      json(res, 200, result.body);
+      return;
+    }
+
     const blackjackTablesBase = pathname === "/v1/casino/blackjack/tables";
     if (blackjackTablesBase && req.method === "GET") {
       const ctx = await authContext(req, res);
