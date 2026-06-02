@@ -16,6 +16,7 @@ const mobileFarming = require("../utils/mobileFarming");
 const mobileAdminPanel = require("../utils/mobileAdminPanel");
 const mobileCrime = require("../utils/mobileCrime");
 const mobileJail = require("../utils/mobileJail");
+const mobileKeno = require("../utils/mobileKeno");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -809,6 +810,19 @@ async function handler(req, res) {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/v1/casino/keno/draw") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileKeno.playDraw(ctx, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/v1/casino/blackjack/start") {
       const ctx = await authContext(req, res);
       if (!ctx) return;
@@ -1077,6 +1091,7 @@ async function startApiServer({ port = process.env.PORT || DEFAULT_PORT, client 
   await mobileBank.ensureSchema();
   await mobileCasinoTables.ensureSchema();
   await mobileJail.ensureSchema();
+  await mobileKeno.ensureSchema();
 
   const server = http.createServer((req, res) => {
     handler(req, res).catch((error) => {
