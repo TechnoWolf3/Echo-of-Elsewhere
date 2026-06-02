@@ -3,6 +3,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  UserSelectMenuBuilder,
   EmbedBuilder,
   ModalBuilder,
   TextInputBuilder,
@@ -166,6 +167,35 @@ const ACTIONS_BY_CATEGORY = {
   ],
 };
 
+const USER_FIELD_ACTIONS = new Map([
+  ['economy:addbalance', { id: 'user_id', required: true }],
+  ['economy:txlog', { id: 'user_id', required: false }],
+  ['effects:give', { id: 'user_id', required: true }],
+  ['effects:view', { id: 'user_id', required: true }],
+  ['effects:clear', { id: 'user_id', required: true }],
+  ['moderation:setheat', { id: 'user_id', required: false }],
+  ['moderation:setjail', { id: 'user_id', required: true }],
+  ['moderation:cooldown_clear', { id: 'user_id', required: false }],
+  ['moderation:resetach', { id: 'user_id', required: true }],
+  ['shop:inv_remove', { id: 'user_id', required: true }],
+  ['rift:tax', { id: 'user_id', required: true }],
+]);
+
+function isUserField(field) {
+  return field?.type === 'user' || field?.id === 'user_id' || field?.id === 'discord_user_id';
+}
+
+function userFieldForAction(actionId) {
+  return USER_FIELD_ACTIONS.get(String(actionId || '')) || null;
+}
+
+function categoryForAction(actionId) {
+  for (const [category, actions] of Object.entries(ACTIONS_BY_CATEGORY)) {
+    if (actions.some((action) => action.id === actionId)) return category;
+  }
+  return 'economy';
+}
+
 function buildPanelEmbed(category) {
   const cat = CATEGORIES.find(c => c.value === category)?.label ?? 'Economy';
   return new EmbedBuilder()
@@ -220,6 +250,45 @@ function buildPanelMessage({ category = 'economy' } = {}) {
   return {
     embeds: [buildPanelEmbed(category)],
     components: [buildCategoryRow(category), ...buildActionRows(category)],
+  };
+}
+
+function buildUserPickerMessage(actionId) {
+  const field = userFieldForAction(actionId);
+  const category = categoryForAction(actionId);
+  const action = (ACTIONS_BY_CATEGORY[category] || []).find((entry) => entry.id === actionId);
+  const label = action?.label || actionId;
+  return {
+    content: [
+      `Choose the Discord user for **${label}**.`,
+      'The selected value will be submitted as the Discord user ID.',
+      field?.required ? null : 'You can skip the picker to leave this user field blank.',
+    ].filter(Boolean).join('\n'),
+    embeds: [],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new UserSelectMenuBuilder()
+          .setCustomId(`adminpanel:userpick:${actionId}`)
+          .setPlaceholder('Search/select a Discord user')
+          .setMinValues(field?.required ? 1 : 0)
+          .setMaxValues(1)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`adminpanel:manual:${actionId}`)
+          .setLabel('Manual ID')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`adminpanel:skipuser:${actionId}`)
+          .setLabel('Skip User')
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(Boolean(field?.required)),
+        new ButtonBuilder()
+          .setCustomId(`adminpanel:back:${category}`)
+          .setLabel('Back')
+          .setStyle(ButtonStyle.Secondary)
+      ),
+    ],
   };
 }
 
@@ -570,7 +639,7 @@ async function runLegacyCommand({ interaction, commandFile, subcommand = null, v
   return cmd.execute(interaction);
 }
 
-function buildModal(actionId) {
+function buildModal(actionId, presetFields = {}) {
   const MAX_MODAL_TITLE = 45;
   const MAX_INPUT_LABEL = 45;
   const MAX_INPUT_PLACEHOLDER = 100;
@@ -578,15 +647,18 @@ function buildModal(actionId) {
   const modal = new ModalBuilder().setCustomId(`adminpanel:modal:${actionId}`).setTitle('Admin Panel');
   const setTitle = (title) => modal.setTitle(trimForDiscord(title, MAX_MODAL_TITLE));
 
-  const addInput = (customId, label, style, required = true, placeholder = '') =>
-    new ActionRowBuilder().addComponents(
-      new TextInputBuilder()
-        .setCustomId(customId)
-        .setLabel(trimForDiscord(label, MAX_INPUT_LABEL))
-        .setStyle(style)
-        .setRequired(required)
-        .setPlaceholder(trimForDiscord(placeholder, MAX_INPUT_PLACEHOLDER))
-    );
+  const addInput = (customId, label, style, required = true, placeholder = '') => {
+    const input = new TextInputBuilder()
+      .setCustomId(customId)
+      .setLabel(trimForDiscord(label, MAX_INPUT_LABEL))
+      .setStyle(style)
+      .setRequired(required)
+      .setPlaceholder(trimForDiscord(placeholder, MAX_INPUT_PLACEHOLDER));
+    if (presetFields[customId] !== undefined && presetFields[customId] !== null && String(presetFields[customId]).length > 0) {
+      input.setValue(trimForDiscord(presetFields[customId], style === TextInputStyle.Paragraph ? 4000 : 4000));
+    }
+    return new ActionRowBuilder().addComponents(input);
+  };
 
   // Economy
   if (actionId === 'economy:addbalance') {
@@ -984,6 +1056,11 @@ async function handleInteraction(interaction) {
     // Buttons
     if (interaction.isButton?.() && cid.startsWith('adminpanel:btn:')) {
       const actionId = cid.slice('adminpanel:btn:'.length);
+      if (userFieldForAction(actionId)) {
+        await interaction.update(buildUserPickerMessage(actionId));
+        return true;
+      }
+
       const modal = buildModal(actionId);
       if (modal) {
         await interaction.showModal(modal);
@@ -993,6 +1070,51 @@ async function handleInteraction(interaction) {
       // No modal: run action now
       await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
       await runActionFromId({ interaction, actionId, fields: {} });
+      return true;
+    }
+
+    if (interaction.isButton?.() && cid.startsWith('adminpanel:manual:')) {
+      const actionId = cid.slice('adminpanel:manual:'.length);
+      const modal = buildModal(actionId);
+      if (modal) {
+        await interaction.showModal(modal);
+        return true;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      await runActionFromId({ interaction, actionId, fields: {} });
+      return true;
+    }
+
+    if (interaction.isButton?.() && cid.startsWith('adminpanel:skipuser:')) {
+      const actionId = cid.slice('adminpanel:skipuser:'.length);
+      const modal = buildModal(actionId, { user_id: '' });
+      if (modal) {
+        await interaction.showModal(modal);
+        return true;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      await runActionFromId({ interaction, actionId, fields: {} });
+      return true;
+    }
+
+    if (interaction.isButton?.() && cid.startsWith('adminpanel:back:')) {
+      const category = cid.slice('adminpanel:back:'.length) || 'economy';
+      await interaction.update(buildPanelMessage({ category }));
+      return true;
+    }
+
+    if (interaction.isUserSelectMenu?.() && cid.startsWith('adminpanel:userpick:')) {
+      const actionId = cid.slice('adminpanel:userpick:'.length);
+      const field = userFieldForAction(actionId) || { id: 'user_id' };
+      const selectedUserId = interaction.values?.[0] || '';
+      const preset = isUserField(field) ? { [field.id]: selectedUserId } : {};
+      const modal = buildModal(actionId, preset);
+      if (modal) {
+        await interaction.showModal(modal);
+        return true;
+      }
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
+      await runActionFromId({ interaction, actionId, fields: preset });
       return true;
     }
 
