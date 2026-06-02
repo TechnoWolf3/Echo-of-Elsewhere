@@ -361,8 +361,10 @@ function buildHeistPlan() {
   return plan;
 }
 
-function renderSession(row) {
+function renderSession(row, options = {}) {
   const state = row.state_json || {};
+  const localHeat = Number(state.heat ?? state.currentHeat ?? 0);
+  const displayHeat = Number.isFinite(Number(options.displayHeat)) ? Number(options.displayHeat) : localHeat;
   const current = state.plan?.[state.step || 0] || null;
   let prompt = current?.scenario?.prompt || current?.scenario?.text || state.prompt || "";
   let choices = (current?.scenario?.choices || state.choices || []).map(publicChoice);
@@ -401,11 +403,13 @@ function renderSession(row) {
     message: state.message || null,
     choices,
     availableActions,
-    currentHeat: Number(state.heat ?? state.currentHeat ?? 0),
-    heat: Number(state.heat ?? state.currentHeat ?? 0),
+    currentHeat: displayHeat,
+    heat: displayHeat,
     state: {
-      currentHeat: Number(state.heat ?? state.currentHeat ?? 0),
-      heat: Number(state.heat ?? state.currentHeat ?? 0),
+      currentHeat: displayHeat,
+      heat: displayHeat,
+      localHeat,
+      runHeat: localHeat,
       persuasion: state.persuasion,
       suspicion: state.suspicion,
       turn: state.turn,
@@ -469,7 +473,7 @@ async function start(ctx, crimeIdRaw) {
     state = { kind: "lay_low", title: "Lay Low", startingHeat: h.heat, heat: h.heat, step: 0, score: 0, scenarios: layLowScenarios(h.heat) };
   }
   const row = await insertSession(ctx, crimeId, state);
-  return { ok: true, body: { session: renderSession(row), profile: await profile(ctx), heatInfo: h, cooldowns: await cooldowns(ctx), message: "Crime session started." } };
+  return { ok: true, body: { session: renderSession(row, { displayHeat: h.heat }), profile: await profile(ctx), heatInfo: h, cooldowns: await cooldowns(ctx), message: "Crime session started." } };
 }
 
 function scamState(target, heat) {
@@ -515,7 +519,8 @@ async function getSession(ctx, sessionId) {
   await ensureSchema();
   const row = await loadSession(ctx, sessionId);
   if (!row.ok) return row;
-  return { ok: true, body: { session: renderSession(row.row), profile: await profile(ctx), heatInfo: await heatInfo(ctx), cooldowns: await cooldowns(ctx) } };
+  const h = await heatInfo(ctx);
+  return { ok: true, body: { session: renderSession(row.row, { displayHeat: h.heat }), profile: await profile(ctx), heatInfo: h, cooldowns: await cooldowns(ctx) } };
 }
 
 async function loadSession(ctx, sessionId, lock = false) {
@@ -551,11 +556,13 @@ async function action(ctx, sessionId, body = {}) {
 
   let row = loaded.row;
   if (row.status !== "active") {
+    const h = await heatInfo(ctx);
     return {
       ok: true,
       body: {
-        session: renderSession(row),
+        session: renderSession(row, { displayHeat: h.heat }),
         result: row.result_json,
+        heatInfo: h,
         message: "Crime session is no longer active.",
       },
     };
@@ -571,20 +578,20 @@ async function action(ctx, sessionId, body = {}) {
   else result = { state, message: "Unknown crime session." };
 
   row = await updateSession(row, result.state, result.result || null, result.status || "active");
+  const nextHeatInfo = await heatInfo(ctx);
   const bodyOut = {
-    session: renderSession(row),
+    session: renderSession(row, { displayHeat: nextHeatInfo.heat }),
     result: result.result || null,
+    heatInfo: nextHeatInfo,
     message: result.message || null,
   };
 
   if (row.status !== "active" || result.includeProfile) {
-    const [nextProfile, nextHeatInfo, nextCooldowns] = await Promise.all([
+    const [nextProfile, nextCooldowns] = await Promise.all([
       profile(ctx),
-      heatInfo(ctx),
       cooldowns(ctx),
     ]);
     bodyOut.profile = nextProfile;
-    bodyOut.heatInfo = nextHeatInfo;
     bodyOut.cooldowns = nextCooldowns;
   }
 

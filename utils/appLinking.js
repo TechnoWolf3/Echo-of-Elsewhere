@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const { pool } = require("./db");
 const economy = require("./economy");
 const profileIllusions = require("./profileIllusions");
+const crimeHeat = require("./crimeHeat");
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_DAYS = 90;
@@ -365,12 +366,7 @@ async function buildProfileSnapshot(profileIdValue) {
          WHERE guild_id=$1 AND user_id=$2`,
         [guildId, discordUserId]
       ),
-      db.query(
-        `SELECT heat
-         FROM crime_heat
-         WHERE guild_id=$1 AND user_id=$2 AND expires_at > NOW()`,
-        [guildId, discordUserId]
-      ),
+      crimeHeat.getCrimeHeatInfo(guildId, discordUserId),
       db.query(
         `SELECT jailed_until
          FROM jail
@@ -387,7 +383,7 @@ async function buildProfileSnapshot(profileIdValue) {
     serverBankBalance = Number(serverRes.rows?.[0]?.bank_balance || 0);
     jobLevel = Number(jobRes.rows?.[0]?.level || 1);
     jobXp = Number(jobRes.rows?.[0]?.xp || 0);
-    heat = Number(heatRes.rows?.[0]?.heat || 0);
+    heat = Number(heatRes.heat || 0);
     jailedUntil = jailRes.rows?.[0]?.jailed_until
       ? new Date(jailRes.rows[0].jailed_until).toISOString()
       : null;

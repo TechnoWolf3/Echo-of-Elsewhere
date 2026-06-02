@@ -26,6 +26,23 @@ function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
 
+function getDisplayCrimeHeat(row) {
+  if (!row || !row.expires_at) return 0;
+
+  const rawHeat = clamp(Number(row.heat) || 0, 0, 100);
+  const now = Date.now();
+  const expiresAt = new Date(row.expires_at).getTime();
+
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+    return 0;
+  }
+
+  const remainingMs = Math.min(MAX_DECAY_WINDOW_MS, expiresAt - now);
+  const ratio = remainingMs / MAX_DECAY_WINDOW_MS;
+
+  return clamp(Math.round(rawHeat * ratio), 0, 100);
+}
+
 /**
  * Returns rich info for UI:
  * { heat, rawHeat, expiresAt, remainingMs }
@@ -44,8 +61,9 @@ async function getCrimeHeatInfo(guildId, userId) {
     return { heat: 0, rawHeat: 0, expiresAt: null, remainingMs: 0 };
   }
 
-  const rawHeat = clamp(Number(res.rows[0].heat) || 0, 0, 100);
-  const expiresAt = new Date(res.rows[0].expires_at);
+  const row = res.rows[0];
+  const rawHeat = clamp(Number(row.heat) || 0, 0, 100);
+  const expiresAt = new Date(row.expires_at);
   const now = Date.now();
 
   const expMs = expiresAt.getTime();
@@ -69,11 +87,14 @@ async function getCrimeHeatInfo(guildId, userId) {
 
   const remainingMs = expMs - now;
 
-  // Progressive decay:
-  // decayedHeat = rawHeat * (remaining / window)
-  // (clamped so it never rises above rawHeat)
-  const decayFactor = Math.min(1, remainingMs / MAX_DECAY_WINDOW_MS);
-  const heat = clamp(Math.round(rawHeat * decayFactor), 0, 100);
+  const heat = getDisplayCrimeHeat(row);
+
+  if (heat <= 0) {
+    await pool
+      .query(`DELETE FROM crime_heat WHERE guild_id=$1 AND user_id=$2`, [guildId, userId])
+      .catch(() => {});
+    return { heat: 0, rawHeat: 0, expiresAt: null, remainingMs: 0 };
+  }
 
   return { heat, rawHeat, expiresAt, remainingMs };
 }
@@ -131,6 +152,7 @@ function heatTTLMinutesForOutcome(outcome, { identified = false } = {}) {
 }
 
 module.exports = {
+  getDisplayCrimeHeat,
   getCrimeHeatInfo, // ✅ NEW for job.js heat bar/timer UI
   getCrimeHeat,
   setCrimeHeat,
