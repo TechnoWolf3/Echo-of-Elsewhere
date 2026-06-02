@@ -15,6 +15,7 @@ const mobileInteractiveRituals = require("../utils/mobileInteractiveRituals");
 const mobileFarming = require("../utils/mobileFarming");
 const mobileAdminPanel = require("../utils/mobileAdminPanel");
 const mobileCrime = require("../utils/mobileCrime");
+const mobileJail = require("../utils/mobileJail");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -349,6 +350,119 @@ async function handler(req, res) {
       const result = await mobileBank.dashboard(ctx);
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/v1/jail") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileJail.overview(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/jail/work") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileJail.work(ctx, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/jail/escape") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileJail.escape(ctx, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/jail/bail") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileJail.bail(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/v1/jail/shop") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileJail.shop(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/jail/shop/buy") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileJail.buy(ctx, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/jail/shop/use") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileJail.use(ctx, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/v1/jail/gamble") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileJail.gambleView(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/v1/jail/gamble") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileJail.gamble(ctx, body);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, result.body || { message: result.message });
         return;
       }
       json(res, 200, result.body);
@@ -913,6 +1027,7 @@ async function startApiServer({ port = process.env.PORT || DEFAULT_PORT, client 
   await mobileInsideTrack.ensureSchema();
   await mobileBank.ensureSchema();
   await mobileCasinoTables.ensureSchema();
+  await mobileJail.ensureSchema();
 
   const server = http.createServer((req, res) => {
     handler(req, res).catch((error) => {
