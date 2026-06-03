@@ -17,6 +17,7 @@ const mobileAdminPanel = require("../utils/mobileAdminPanel");
 const mobileCrime = require("../utils/mobileCrime");
 const mobileJail = require("../utils/mobileJail");
 const mobileKeno = require("../utils/mobileKeno");
+const mobileNightWalker = require("../utils/mobileNightWalker");
 
 const DEFAULT_PORT = 3000;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -537,6 +538,58 @@ async function handler(req, res) {
       const ctx = await authContext(req, res);
       if (!ctx) return;
       const result = await mobileCrime.overview(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    if (pathname === "/v1/jobs/nightwalker" && req.method === "GET") {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileNightWalker.overview(ctx);
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const nightWalkerStartMatch = pathname.match(/^\/v1\/jobs\/nightwalker\/([^/]+)\/start$/);
+    if (req.method === "POST" && nightWalkerStartMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileNightWalker.start(ctx, decodeURIComponent(nightWalkerStartMatch[1]));
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const nightWalkerSessionMatch = pathname.match(/^\/v1\/jobs\/nightwalker\/sessions\/([^/]+)$/);
+    if (req.method === "GET" && nightWalkerSessionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const result = await mobileNightWalker.getSession(ctx, decodeURIComponent(nightWalkerSessionMatch[1]));
+      if (!result.ok) {
+        json(res, result.statusCode || 400, { message: result.message });
+        return;
+      }
+      json(res, 200, result.body);
+      return;
+    }
+
+    const nightWalkerActionMatch = pathname.match(/^\/v1\/jobs\/nightwalker\/sessions\/([^/]+)\/action$/);
+    if (req.method === "POST" && nightWalkerActionMatch) {
+      const ctx = await authContext(req, res);
+      if (!ctx) return;
+      const body = await readJson(req);
+      const result = await mobileNightWalker.action(ctx, decodeURIComponent(nightWalkerActionMatch[1]), body);
       if (!result.ok) {
         json(res, result.statusCode || 400, { message: result.message });
         return;
@@ -1092,6 +1145,7 @@ async function startApiServer({ port = process.env.PORT || DEFAULT_PORT, client 
   await mobileCasinoTables.ensureSchema();
   await mobileJail.ensureSchema();
   await mobileKeno.ensureSchema();
+  await mobileNightWalker.ensureSchema();
 
   const server = http.createServer((req, res) => {
     handler(req, res).catch((error) => {
