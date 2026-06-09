@@ -3,6 +3,9 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } = require("discord.js");
 const appLinking = require("./appLinking");
 const guildConfig = require("./guildConfig");
@@ -20,6 +23,10 @@ function compactId(action, gameType, tableId) {
   return `${PREFIX}:${action}:${gameType}:${tableId}`;
 }
 
+function betModalId(gameType, tableId) {
+  return compactId("betmodal", gameType, tableId);
+}
+
 async function discordCtx(interaction) {
   const displayName = interaction.member?.displayName || interaction.user?.globalName || interaction.user?.username || "Echo Player";
   return appLinking.getOrCreateDiscordContext({
@@ -31,6 +38,15 @@ async function discordCtx(interaction) {
 
 function money(n) {
   return `$${Number(n || 0).toLocaleString()}`;
+}
+
+function parseAmount(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return NaN;
+  const cleaned = raw.replace(/[$,\s]/g, "");
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return NaN;
+  return Math.floor(n);
 }
 
 function cardLabel(card) {
@@ -137,7 +153,7 @@ function actionRows(table) {
   if (table.status === "lobby") {
     rows.push(new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(compactId("join", table.gameType, table.tableId)).setLabel("Join Table").setStyle(ButtonStyle.Primary).setDisabled(disabled),
-      new ButtonBuilder().setCustomId(compactId("bet500", table.gameType, table.tableId)).setLabel("Bet $500").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
+      new ButtonBuilder().setCustomId(compactId("bet", table.gameType, table.tableId)).setLabel("Set Bet").setStyle(ButtonStyle.Secondary).setDisabled(disabled),
       new ButtonBuilder().setCustomId(compactId("start", table.gameType, table.tableId)).setLabel("Start").setStyle(ButtonStyle.Success).setDisabled(disabled),
       new ButtonBuilder().setCustomId(compactId("leave", table.gameType, table.tableId)).setLabel("Leave").setStyle(ButtonStyle.Danger).setDisabled(disabled)
     ));
@@ -243,9 +259,62 @@ async function dispatch(ctx, gameType, tableId, action) {
   return { ok: false, statusCode: 400, message: "Unknown table action." };
 }
 
+async function showBetModal(interaction, gameType, tableId) {
+  if (!["higher_lower", "blackjack"].includes(gameType)) {
+    await interaction.reply({ content: "Set bets for this table in the app.", ephemeral: true }).catch(() => {});
+    return true;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(betModalId(gameType, tableId))
+    .setTitle(`Set ${gameName(gameType)} Bet`)
+    .addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("amount")
+          .setLabel("Bet amount")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("e.g. 5000")
+          .setRequired(true)
+      )
+    );
+
+  await interaction.showModal(modal);
+  return true;
+}
+
+async function handleBetModal(interaction) {
+  const [, action, gameType, tableId] = String(interaction.customId || "").split(":");
+  if (action !== "betmodal") return false;
+
+  await interaction.deferReply({ ephemeral: true }).catch(() => {});
+  try {
+    const ctx = await discordCtx(interaction);
+    const amount = parseAmount(interaction.fields.getTextInputValue("amount"));
+    const result = await mobileCasinoTables.setTableBet(ctx, gameType, tableId, amount);
+    if (!result.ok) {
+      await interaction.editReply(result.message || "That bet could not be placed.").catch(() => {});
+      return true;
+    }
+
+    await updateTableMessage(interaction.client, result.body, `${interaction.member?.displayName || interaction.user.username}: bet ${money(amount)}`);
+    await interaction.editReply(`Bet placed: ${money(amount)}.`).catch(() => {});
+    return true;
+  } catch (error) {
+    console.error("[railcasino] bet modal failed:", error);
+    await interaction.editReply("Railway could not place that bet.").catch(() => {});
+    return true;
+  }
+}
+
 async function handleInteraction(interaction) {
-  if (!interaction.isButton?.() || !String(interaction.customId || "").startsWith(`${PREFIX}:`)) return false;
+  if (!String(interaction.customId || "").startsWith(`${PREFIX}:`)) return false;
+  if (interaction.isModalSubmit?.()) return handleBetModal(interaction);
+  if (!interaction.isButton?.()) return false;
+
   const [, action, gameType, tableId] = String(interaction.customId).split(":");
+  if (action === "bet") return showBetModal(interaction, gameType, tableId);
+
   await interaction.deferUpdate();
   try {
     const ctx = await discordCtx(interaction);
