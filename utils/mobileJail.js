@@ -6,6 +6,7 @@ const npcs = require("../data/jail/npcs");
 
 const WORK_KEY = "jail:work";
 const ESCAPE_KEY = "jail:escape";
+let schemaReady = false;
 
 function ok(body) {
   return { ok: true, body };
@@ -30,6 +31,7 @@ function remainingSeconds(session) {
 }
 
 async function ensureSchema() {
+  if (schemaReady) return;
   await jail.ensureJailSchema();
   await pool.query(`
     CREATE TABLE IF NOT EXISTS cooldowns (
@@ -39,7 +41,11 @@ async function ensureSchema() {
       next_claim_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id, key)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_cooldowns_next_claim
+    ON cooldowns (next_claim_at);
   `);
+  schemaReady = true;
 }
 
 async function getCooldown(guildId, userId, key) {

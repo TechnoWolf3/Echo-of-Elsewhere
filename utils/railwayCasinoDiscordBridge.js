@@ -207,7 +207,12 @@ async function announceTable(client, table, ctx) {
   const content = `${table.hostDisplayName || ctx.displayName || "Someone"} has started a ${gameName(table.gameType)} table.`;
   const message = await channel.send(messagePayload(table, null, content));
   await mobileCasinoTables.setDiscordMessage(table.tableId, channel.id, message.id);
-  return { posted: true, channelId: channel.id, messageId: message.id };
+  return {
+    posted: true,
+    channelId: channel.id,
+    messageId: message.id,
+    table: { ...table, discordChannelId: channel.id, discordMessageId: message.id },
+  };
 }
 
 async function startTableFromDiscord(interaction, gameType) {
@@ -227,8 +232,6 @@ async function startTableFromDiscord(interaction, gameType) {
   const content = `${result.body.hostDisplayName || ctx.displayName || "Someone"} has started a ${gameName(gameType)} table.`;
   const message = await interaction.channel.send(messagePayload(result.body, null, content));
   await mobileCasinoTables.setDiscordMessage(result.body.tableId, interaction.channel.id, message.id);
-  const refreshed = await mobileCasinoTables.getTable(ctx, gameType, result.body.tableId);
-  if (refreshed.ok) await message.edit(messagePayload(refreshed.body, null, content)).catch(() => {});
 
   const ack = { content: "Railway table created. It is now visible to the app and Discord.", ephemeral: true };
   if (interaction.deferred || interaction.replied) await interaction.followUp(ack).catch(() => {});

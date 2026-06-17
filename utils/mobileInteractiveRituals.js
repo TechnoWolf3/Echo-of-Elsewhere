@@ -98,6 +98,9 @@ async function ensureSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_ritual_sessions_owner_active
     ON ritual_sessions (guild_id, user_id, ritual_id, status, expires_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_ritual_sessions_status_expires
+    ON ritual_sessions (status, expires_at);
   `);
   schemaReady = true;
 }

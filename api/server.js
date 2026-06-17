@@ -158,8 +158,11 @@ async function tableCreateResponse(ctx, tableResult, announceToDiscord) {
       return { posted: false, reason: "Discord announcement failed." };
     });
     if (discordAnnouncement.posted) {
-      const refreshed = await mobileCasinoTables.getTable(ctx, table.gameType, table.tableId);
-      if (refreshed.ok) table = refreshed.body;
+      table = discordAnnouncement.table || {
+        ...table,
+        discordChannelId: discordAnnouncement.channelId || table.discordChannelId || null,
+        discordMessageId: discordAnnouncement.messageId || table.discordMessageId || null,
+      };
     }
   }
   return { ...table, table, discordAnnouncement };

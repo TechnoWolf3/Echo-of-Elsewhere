@@ -13,6 +13,7 @@ const SUITS = ["Clubs", "Diamonds", "Hearts", "Spades"];
 const RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
 const ROULETTE_WHEEL_ORDER = [0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5, 24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26];
 const ROULETTE_REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+let schemaReady = false;
 
 function requirePool() {
   if (!pool || typeof pool.query !== "function") throw new Error("DATABASE_URL is not configured.");
@@ -121,6 +122,7 @@ function rouletteWins(betType, betValue, pocket) {
 }
 
 async function ensureSchema() {
+  if (schemaReady) return;
   await appLinking.ensureSchema();
   const db = requirePool();
   await db.query(`
@@ -148,6 +150,12 @@ async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_casino_tables_game_status
     ON casino_tables (game_type, status, updated_at DESC);
 
+    CREATE INDEX IF NOT EXISTS idx_casino_tables_status_expires
+    ON casino_tables (status, expires_at);
+
+    CREATE INDEX IF NOT EXISTS idx_casino_tables_game_created
+    ON casino_tables (game_type, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS casino_table_players (
       id TEXT PRIMARY KEY,
       table_id TEXT NOT NULL REFERENCES casino_tables(id) ON DELETE CASCADE,
@@ -168,6 +176,9 @@ async function ensureSchema() {
     CREATE INDEX IF NOT EXISTS idx_casino_table_players_table
     ON casino_table_players (table_id, seat_index);
 
+    CREATE INDEX IF NOT EXISTS idx_casino_table_players_user
+    ON casino_table_players (user_id, table_id);
+
     CREATE TABLE IF NOT EXISTS casino_table_events (
       id BIGSERIAL PRIMARY KEY,
       table_id TEXT NOT NULL REFERENCES casino_tables(id) ON DELETE CASCADE,
@@ -176,11 +187,15 @@ async function ensureSchema() {
       payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    CREATE INDEX IF NOT EXISTS idx_casino_table_events_table_created
+    ON casino_table_events (table_id, created_at DESC);
   `);
   await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'app'`);
   await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS discord_channel_id TEXT NULL`);
   await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS discord_message_id TEXT NULL`);
   await db.query(`ALTER TABLE casino_tables ADD COLUMN IF NOT EXISTS min_players INT NOT NULL DEFAULT 1`);
+  schemaReady = true;
 }
 
 async function expireOldTables(client = requirePool()) {
@@ -231,6 +246,25 @@ async function playersFor(client, tableId, lock = false) {
     [tableId]
   );
   return res.rows || [];
+}
+
+async function playersForTables(client, tableIds) {
+  const ids = [...new Set((tableIds || []).map((value) => String(value || "")).filter(Boolean))];
+  if (!ids.length) return new Map();
+  const res = await client.query(
+    `SELECT *
+       FROM casino_table_players
+      WHERE table_id = ANY($1::text[])
+        AND left_at IS NULL
+      ORDER BY table_id ASC, seat_index ASC`,
+    [ids]
+  );
+  const byTable = new Map(ids.map((tableId) => [tableId, []]));
+  for (const row of res.rows || []) {
+    const list = byTable.get(row.table_id);
+    if (list) list.push(row);
+  }
+  return byTable;
 }
 
 async function playerFor(client, tableId, ctx, lock = false) {
@@ -510,11 +544,19 @@ function publicRoulette(table, players, profile = null, currentProfileId = null)
 }
 
 async function renderTable(client, table, ctx = null, includeProfile = false) {
-  const players = await playersFor(client, table.id);
-  const profile = includeProfile && ctx ? await appLinking.buildProfileSnapshot(ctx.profileId) : undefined;
+  const [players, profile] = await Promise.all([
+    playersFor(client, table.id),
+    includeProfile && ctx ? appLinking.buildProfileSnapshot(ctx.profileId) : Promise.resolve(undefined),
+  ]);
   if (table.game_type === "higher_lower") return publicHigherLower(table, players, profile);
   if (table.game_type === "roulette") return publicRoulette(table, players, profile, ctx?.profileId);
   return publicBlackjack(table, players, profile, ctx?.profileId);
+}
+
+function publicTableFor(table, players, ctx = null) {
+  if (table.game_type === "higher_lower") return publicHigherLower(table, players);
+  if (table.game_type === "roulette") return publicRoulette(table, players, null, ctx?.profileId);
+  return publicBlackjack(table, players, null, ctx?.profileId);
 }
 
 async function listTables(ctx, gameType) {
@@ -528,13 +570,9 @@ async function listTables(ctx, gameType) {
      LIMIT 25`,
     [gameType]
   );
-  const tables = [];
-  for (const table of res.rows || []) {
-    const players = await playersFor(db, table.id);
-    if (gameType === "higher_lower") tables.push(publicHigherLower(table, players));
-    else if (gameType === "roulette") tables.push(publicRoulette(table, players, null, ctx?.profileId));
-    else tables.push(publicBlackjack(table, players, null, ctx?.profileId));
-  }
+  const rows = res.rows || [];
+  const playersByTable = await playersForTables(db, rows.map((table) => table.id));
+  const tables = rows.map((table) => publicTableFor(table, playersByTable.get(table.id) || [], ctx));
   return { ok: true, body: { tables } };
 }
 
@@ -548,13 +586,9 @@ async function listOpenTables(ctx) {
      ORDER BY created_at DESC
      LIMIT 50`
   );
-  const tables = [];
-  for (const table of res.rows || []) {
-    const players = await playersFor(db, table.id);
-    if (table.game_type === "higher_lower") tables.push(publicHigherLower(table, players));
-    else if (table.game_type === "roulette") tables.push(publicRoulette(table, players, null, ctx?.profileId));
-    else tables.push(publicBlackjack(table, players, null, ctx?.profileId));
-  }
+  const rows = res.rows || [];
+  const playersByTable = await playersForTables(db, rows.map((table) => table.id));
+  const tables = rows.map((table) => publicTableFor(table, playersByTable.get(table.id) || [], ctx));
   return { ok: true, body: { tables } };
 }
 

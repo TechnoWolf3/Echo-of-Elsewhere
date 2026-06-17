@@ -7,12 +7,32 @@ class RailwayApiError extends Error {
   }
 }
 
+const GET_CACHE_TTL_MS = Number(process.env.ECHO_DISCORD_API_GET_CACHE_MS || 15_000);
+const getCache = new Map();
+const inFlight = new Map();
+
 function apiBaseUrl() {
   return String(
     process.env.ECHO_API_URL ||
       process.env.EXPO_PUBLIC_ECHO_API_URL ||
       `http://127.0.0.1:${process.env.PORT || 3000}`
   ).replace(/\/+$/g, "");
+}
+
+function cacheKey(baseUrl, path, headers) {
+  return [
+    baseUrl,
+    path,
+    headers["X-Echo-Guild-Id"] || "",
+    headers["X-Echo-Discord-User-Id"] || "",
+  ].join("|");
+}
+
+function pruneCache(now = Date.now()) {
+  if (getCache.size <= 100) return;
+  for (const [key, entry] of getCache) {
+    if (!entry || entry.expiresAt <= now) getCache.delete(key);
+  }
 }
 
 function internalApiToken() {
@@ -78,22 +98,46 @@ async function discordRequest(source, path, options = {}) {
     body = JSON.stringify(body);
   }
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: options.method || "GET",
-    headers,
-    body,
-  });
-  const payload = await readResponse(response);
+  const method = String(options.method || "GET").toUpperCase();
+  const useGetCache = method === "GET" && GET_CACHE_TTL_MS > 0 && options.cache !== false;
+  const key = useGetCache ? cacheKey(baseUrl, path, headers) : null;
+  const now = Date.now();
 
-  if (!response.ok) {
-    throw new RailwayApiError(
-      payload?.message || payload?.error || `Railway API returned ${response.status}.`,
-      response.status,
-      payload
-    );
+  if (key) {
+    const cached = getCache.get(key);
+    if (cached && cached.expiresAt > now) return cached.payload;
+    if (inFlight.has(key)) return inFlight.get(key);
   }
 
-  return payload;
+  const request = (async () => {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method,
+      headers,
+      body,
+    });
+    const payload = await readResponse(response);
+
+    if (!response.ok) {
+      throw new RailwayApiError(
+        payload?.message || payload?.error || `Railway API returned ${response.status}.`,
+        response.status,
+        payload
+      );
+    }
+
+    if (key) {
+      pruneCache();
+      getCache.set(key, { payload, expiresAt: Date.now() + GET_CACHE_TTL_MS });
+    }
+    return payload;
+  })();
+
+  if (key) inFlight.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (key) inFlight.delete(key);
+  }
 }
 
 function listRituals(source) {
@@ -127,12 +171,26 @@ function getGameConfig(source) {
   if (source) return discordRequest(source, "/v1/game-config");
   const baseUrl = apiBaseUrl();
   if (!baseUrl) throw new RailwayApiError("Railway API URL is not configured.", 500);
-  return fetch(`${baseUrl}/v1/game-config`).then(async (response) => {
+  const path = "/v1/game-config";
+  const key = GET_CACHE_TTL_MS > 0 ? cacheKey(baseUrl, path, {}) : null;
+  const cached = key ? getCache.get(key) : null;
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.payload);
+  if (key && inFlight.has(key)) return inFlight.get(key);
+
+  const request = fetch(`${baseUrl}${path}`).then(async (response) => {
     const payload = await readResponse(response);
     if (!response.ok) {
       throw new RailwayApiError(payload?.message || `Railway API returned ${response.status}.`, response.status, payload);
     }
+    if (key) {
+      pruneCache();
+      getCache.set(key, { payload, expiresAt: Date.now() + GET_CACHE_TTL_MS });
+    }
     return payload;
+  });
+  if (key) inFlight.set(key, request);
+  return request.finally(() => {
+    if (key) inFlight.delete(key);
   });
 }
 

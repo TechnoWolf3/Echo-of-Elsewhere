@@ -6,6 +6,9 @@ const crimeHeat = require("./crimeHeat");
 
 const CODE_TTL_MS = 10 * 60 * 1000;
 const SESSION_TTL_DAYS = 90;
+const DISCORD_CONTEXT_CACHE_TTL_MS = Number(process.env.ECHO_DISCORD_CONTEXT_CACHE_MS || 60_000);
+let schemaReady = false;
+const discordContextCache = new Map();
 
 function requirePool() {
   if (!pool || typeof pool.query !== "function") {
@@ -48,6 +51,7 @@ function generateLinkCode() {
 }
 
 async function ensureSchema() {
+  if (schemaReady) return;
   const db = requirePool();
   await db.query(`
     CREATE TABLE IF NOT EXISTS guilds (
@@ -101,6 +105,9 @@ async function ensureSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_transactions_guild_user_created
     ON transactions (guild_id, user_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_transactions_guild_created
+    ON transactions (guild_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS profiles (
       id TEXT PRIMARY KEY,
@@ -159,7 +166,12 @@ async function ensureSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_app_sessions_profile
     ON app_sessions (profile_id);
+
+    CREATE INDEX IF NOT EXISTS idx_app_sessions_token_active
+    ON app_sessions (token_hash, expires_at)
+    WHERE revoked_at IS NULL;
   `);
+  schemaReady = true;
 }
 
 async function createLinkCode() {
@@ -492,6 +504,15 @@ async function getSessionContext(token) {
 
 async function getOrCreateDiscordContext({ discordUserId, displayName, guildId = null }) {
   await ensureSchema();
+  const cacheKey = `${primaryGuildId(guildId)}:${String(discordUserId)}`;
+  const cached = discordContextCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return {
+      ...cached.ctx,
+      displayName: displayName || cached.ctx.displayName,
+    };
+  }
+
   const db = requirePool();
   const client = await db.connect();
   try {
@@ -502,12 +523,15 @@ async function getOrCreateDiscordContext({ discordUserId, displayName, guildId =
       guildId,
     });
     await client.query("COMMIT");
-    return {
+    const ctx = {
       profileId: profile.id,
       guildId: primaryGuildId(profile.guildId || guildId),
       discordUserId: String(discordUserId),
       displayName: profile.displayName || displayName || "Echo Player",
     };
+    if (discordContextCache.size > 500) discordContextCache.clear();
+    discordContextCache.set(cacheKey, { ctx, expiresAt: Date.now() + DISCORD_CONTEXT_CACHE_TTL_MS });
+    return ctx;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

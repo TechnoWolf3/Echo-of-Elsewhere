@@ -91,6 +91,7 @@ async function ensureSchema() {
       next_claim_at TIMESTAMPTZ NOT NULL,
       PRIMARY KEY (guild_id, user_id, key)
     );
+    CREATE INDEX IF NOT EXISTS idx_cooldowns_next_claim ON cooldowns (next_claim_at);
 
     CREATE TABLE IF NOT EXISTS job_progress (
       guild_id TEXT NOT NULL,
@@ -119,6 +120,7 @@ async function ensureSchema() {
     );
     CREATE INDEX IF NOT EXISTS idx_nw_sessions_user_status ON nightwalker_sessions (guild_id, user_id, status);
     CREATE INDEX IF NOT EXISTS idx_nw_sessions_expires ON nightwalker_sessions (expires_at);
+    CREATE INDEX IF NOT EXISTS idx_nw_sessions_active_expires ON nightwalker_sessions (guild_id, user_id, status, expires_at);
   `);
   schemaReady = true;
 }
