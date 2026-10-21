@@ -1,0 +1,18 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+version = '0.1.0'
+group = 'place.echo'
+base { archivesName = 'meridian-echo-bridge' }
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+repositories { mavenCentral() }
+neoForge {
+    version = '21.1.219'
+    mods { meridian_bridge { sourceSet sourceSets.main } }
+}
+dependencies {
+    compileOnly files('libs/cobblemon.jar')
+    compileOnly 'org.jetbrains.kotlin:kotlin-stdlib:2.2.20'
+}
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }

@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const http = require("http");
+const meridianBridge = require("../utils/meridianBridge");
 const { URL } = require("url");
 const appLinking = require("../utils/appLinking");
 const mobileBlackjack = require("../utils/mobileBlackjack");
@@ -177,6 +178,7 @@ async function maybeUpdateDiscordTable(table, notice = null) {
 }
 
 async function handler(req, res) {
+  if (await meridianBridge.handle(req, res)) return;
   if (req.method === "OPTIONS") {
     json(res, 204, {});
     return;
@@ -1166,6 +1168,8 @@ async function startApiServer({ port = process.env.PORT || DEFAULT_PORT, client 
   });
 
   console.log(`[API] Echo API listening on port ${port}`);
+  const stopMeridianBridge = meridianBridge.start(client);
+  server.once("close", stopMeridianBridge);
   return server;
 }
 

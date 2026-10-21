@@ -1,0 +1,26 @@
+modLoader="javafml"
+loaderVersion="[4,)"
+license="All Rights Reserved"
+[[mods]]
+modId="meridian_bridge"
+version="0.1.0"
+displayName="Meridian Echo Bridge"
+description='''Connects Meridian to the existing Echo service.'''
+[[dependencies.meridian_bridge]]
+modId="neoforge"
+type="required"
+versionRange="[21.1,)"
+ordering="NONE"
+side="SERVER"
+[[dependencies.meridian_bridge]]
+modId="minecraft"
+type="required"
+versionRange="[1.21.1,1.21.2)"
+ordering="NONE"
+side="SERVER"
+[[dependencies.meridian_bridge]]
+modId="cobblemon"
+type="required"
+versionRange="[1.7.3,1.8)"
+ordering="AFTER"
+side="SERVER"

@@ -400,3 +400,13 @@ Do not run `npm start` casually if the real Discord token is present; it logs th
 - Data is stored in the `channel_purge_jobs` table and started from `index.js` on boot.
 - After each scheduled purge, `utils/channelPurger.js` asks `utils/lottery.js` to repost the current Powerball panel if the purged channel is the configured/current Powerball post channel.
 - The repost uses the normal lottery post builder/state, so ticket counts, jackpot, buttons, and stored `post_message_id` stay in sync.
+
+### Meridian Minecraft Bridge
+
+- API routes `/v1/meridian/*` and Discord relay live in `utils/meridianBridge.js`.
+- Started with the Discord client after the existing API starts; detached on HTTP server close.
+- Disabled unless `MERIDIAN_BRIDGE_TOKEN` has at least 32 characters. Uses a separate secret from Discord/API authentication.
+- Live Feed: `1562601698315206726`; Meridian Events: `1562601993556594729`.
+- No database or slash-command schema changes. Two-way messages use expiring, bounded memory queues.
+- Companion server-only NeoForge 1.21.1 mod targets Cobblemon 1.7.3. See `MERIDIAN_SETUP.md`.
+- Tests: `node --test utils/meridianBridge.test.js` (isolated fakes; no live Discord login).
