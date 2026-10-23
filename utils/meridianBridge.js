@@ -4,9 +4,9 @@ const { timingSafeEqual } = require("node:crypto");
 
 const LIVE_CHANNEL = "1562601698315206726";
 const EVENTS_CHANNEL = "1562601993556594729";
-const TYPES = new Set(["chat", "player_join", "player_leave", "server_start", "server_stop", "restart_notice", "shiny_capture", "legendary_capture", "legendary_spawn"]);
+const TYPES = new Set(["chat", "player_join", "player_leave", "server_start", "server_stop", "restart_notice", "shiny_capture", "legendary_capture", "legendary_spawn", "game_event"]);
 const clean = (value, max = 400) => String(value ?? "").replace(/[\u0000-\u001f\u007f§]/g, " ").slice(0, max);
-const markdown = value => clean(value).replace(/([\\*_~`>|])/g, "\\$1");
+const markdown = (value, max = 400) => clean(value, max).replace(/([\\*_~`>|])/g, "\\$1");
 
 function createMeridianBridge({ client, token = process.env.MERIDIAN_BRIDGE_TOKEN || "", now = Date.now, liveChannel = LIVE_CHANNEL, eventsChannel = EVENTS_CHANNEL, log = console } = {}) {
   // Queues deliberately expire: never replay old Discord chat into a new play session.
@@ -50,6 +50,7 @@ function createMeridianBridge({ client, token = process.env.MERIDIAN_BRIDGE_TOKE
       case "server_start": return [eventsChannel, "🟢 **Meridian is online.**"];
       case "server_stop": return [eventsChannel, "🔴 **Meridian has stopped.**"];
       case "restart_notice": return [eventsChannel, `🔄 **Meridian restart:** ${markdown(event.message)}`];
+      case "game_event": return [eventsChannel, `🎮 **Echo Event · Minecraft only**\n${markdown(event.message, 1000)}`];
       case "shiny_capture": return [eventsChannel, `✨ **${player}** caught a shiny **${pokemon}**!`];
       case "legendary_capture": return [eventsChannel, `🏆 **${player}** caught ${event.shiny ? "a shiny " : ""}legendary **${pokemon}**!`];
       case "legendary_spawn": return [eventsChannel, `🌌 A ${event.shiny ? "shiny " : ""}legendary **${pokemon}** has appeared in Meridian!`];
@@ -73,7 +74,7 @@ function createMeridianBridge({ client, token = process.env.MERIDIAN_BRIDGE_TOKE
     if (!event || !TYPES.has(event.type) || !/^[a-zA-Z0-9:_-]{1,160}$/.test(event.id || "")) {
       throw Object.assign(new Error("Invalid event"), { status: 400 });
     }
-    if ((event.type === "chat" || event.type === "restart_notice") && (typeof event.message !== "string" || !event.message.trim() || event.message.length > 1000)) {
+    if ((event.type === "chat" || event.type === "restart_notice" || event.type === "game_event") && (typeof event.message !== "string" || !event.message.trim() || event.message.length > 1000)) {
       throw Object.assign(new Error("Invalid message"), { status: 400 });
     }
     if (seen.has(event.id)) return;
@@ -128,6 +129,7 @@ function createMeridianBridge({ client, token = process.env.MERIDIAN_BRIDGE_TOKE
     if (!connected || now() - lastHeartbeat > 90000) return;
     const text = clean(message.cleanContent, 500).trim();
     if (!text) return;
+    if (/^[!/]guess(?:\s|$)/i.test(text)) return;
     serial = Math.max(serial + 1, now() * 1000);
     queue.push({ id: serial, author: clean(message.member?.displayName || message.author?.username || "Discord", 40), text, expiresAt: now() + 120000 });
     while (queue.length > 200) queue.shift();

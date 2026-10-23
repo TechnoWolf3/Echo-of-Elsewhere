@@ -410,3 +410,4 @@ Do not run `npm start` casually if the real Discord token is present; it logs th
 - No database or slash-command schema changes. Two-way messages use expiring, bounded memory queues.
 - Companion server-only NeoForge 1.21.1 mod targets Cobblemon 1.7.3. See `MERIDIAN_SETUP.md`.
 - Tests: `node --test utils/meridianBridge.test.js` (isolated fakes; no live Discord login).
+- Meridian event mirrors: bridge 0.2.0 accepts authenticated game_event announcements and posts only to Meridian Events. Discord /guess and !guess inputs are excluded from the Live Feed relay; no event gameplay is accepted from Discord. Companion Events 1.1.0 remains independent when the bridge is unavailable.

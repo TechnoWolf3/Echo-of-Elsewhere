@@ -99,3 +99,17 @@ test("failed Discord delivery can be retried", async () => {
   assert.equal(await send(), 200);
   assert.equal(posts.length, 1);
 });
+
+test("event announcements go only to Meridian Events and Discord guesses never enter Minecraft", async () => {
+  const f = fixture();
+  assert.equal((await f.call("events", { id: "event:start", type: "game_event", message: "Who's that Pokémon? @everyone" })).status, 200);
+  assert.equal(f.posts[0].id, EVENTS);
+  assert.match(f.posts[0].content, /Minecraft only/);
+  assert.deepEqual(f.posts[0].allowedMentions.parse, []);
+  await f.call("heartbeat", {});
+  for (const channelId of [LIVE, EVENTS]) for (const cleanContent of ["/guess Pikachu", "!guess Pikachu"]) {
+    f.bridge.onMessage({ channelId, cleanContent, guildId: "guild", author: { username: "Shey" } });
+  }
+  assert.deepEqual((await f.call("messages")).body.messages, []);
+  assert.equal((await f.call("events", { id: "invalid", type: "game_event", message: "" })).status, 400);
+});
