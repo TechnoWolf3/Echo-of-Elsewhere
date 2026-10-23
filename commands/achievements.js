@@ -1,4 +1,4 @@
-// commands/achievements.js
+// ccommands/achievements.js
 const {
   SlashCommandBuilder,
   MessageFlags,
